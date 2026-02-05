@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-01-22T19:35:46.258898",
+  "duration_seconds": 32.48264169692993,
+  "total_frames": 930,
+  "frame_rate": 28.63067630635159,
+  "drowsy_frames": 0,
+  "yawning_frames": 64,
+  "face_not_detected_frames": 115,
+  "alerts_triggered": 2,
+  "blinks_detected": 0,
+  "temporal_delays": {
+    "drowsy_frames": 15,
+    "drowsy_seconds": 0.5,
+    "yawning_frames": 10,
+    "yawning_seconds": 0.3333333333333333
+  }
+}

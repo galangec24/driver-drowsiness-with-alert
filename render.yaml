@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: driver-drowsiness-system
+    env: python
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && gunicorn wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --worker-class eventlet
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.0
+      - key: PORT
+        value: 10000
+      - key: RENDER
+        value: true
+      - key: ENVIRONMENT
+        value: production
+    healthCheckPath: /api/health
+    autoDeploy: true

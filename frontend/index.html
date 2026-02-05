@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Driver Registration System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#000000">
+
+<!-- iOS PWA Support -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="apple-touch-icon" href="/icon-192.png">
+
+<!-- Mobile viewport optimization -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <style>
+        body {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+        }
+          #currentTime {
+            display: none;
+        }
+        .dashboard-card {
+            transition: transform 0.3s, box-shadow 0.3s;
+            border: none;
+            border-radius: 15px;
+            overflow: hidden;
+        }
+        
+        .dashboard-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        .recent-driver-card {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-left: 5px solid #0d6efd;
+            transition: all 0.3s;
+        }
+        
+        .recent-driver-card:hover {
+            transform: translateX(5px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .driver-avatar {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 3px solid #0d6efd;
+        }
+        
+        .stat-card {
+            border-radius: 10px;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        
+        .stat-label {
+            font-size: 1rem;
+            opacity: 0.9;
+        }
+        
+        .bg-gradient-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .bg-gradient-success {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        }
+        
+        .bg-gradient-warning {
+            background: linear-gradient(135deg, #f7971e 0%, #ffd200 100%);
+        }
+        
+        .bg-gradient-info {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+        
+        .time-badge {
+            background: #e9ecef;
+            color: #495057;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<script>
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/service-worker.js')
+            .then(function(registration) {
+                console.log('Service Worker registered with scope:', registration.scope);
+            })
+            .catch(function(error) {
+                console.log('Service Worker registration failed:', error);
+            });
+    });
+}
+</script>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="#">
+                <i class="bi bi-car-front-fill me-2"></i> Driver Registration System
+            </a>
+            <div class="navbar-nav">
+                <a class="nav-link active" href="index.html">
+                    <i class="bi bi-house-door me-1"></i> Dashboard
+                </a>
+                <a class="nav-link" href="registration.html">
+                    <i class="bi bi-person-plus me-1"></i> Register Driver
+                </a>
+                <a class="nav-link" href="#">
+                    <i class="bi bi-people me-1"></i> Driver List
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <!-- Header -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card dashboard-card">
+                    <div class="card-body p-4">
+                        <div class="row align-items-center">
+                            <div class="col-md-8">
+                                <h1 class="display-6 mb-2">Driver Registration System</h1>
+                            </div>
+                            <div class="col-md-4 text-end">
+                                <div class="d-flex justify-content-end align-items-center">
+                                    <div class="me-3">
+                                        <span class="time-badge" id="currentTime"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistics Cards -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="stat-card bg-gradient-primary">
+                    <div class="stat-number" id="totalDrivers">0</div>
+                    <div class="stat-label">Total Drivers</div>
+                    <i class="bi bi-people display-4 mt-3"></i>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card bg-gradient-success">
+                    <div class="stat-number" id="todayRegistrations">0</div>
+                    <div class="stat-label">Registered Today</div>
+                    <i class="bi bi-calendar-check display-4 mt-3"></i>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card bg-gradient-warning">
+                    <div class="stat-number" id="weekRegistrations">0</div>
+                    <div class="stat-label">This Week</div>
+                    <i class="bi bi-calendar-week display-4 mt-3"></i>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card bg-gradient-info">
+                    <div class="stat-number" id="monthRegistrations">0</div>
+                    <div class="stat-label">This Month</div>
+                    <i class="bi bi-calendar-month display-4 mt-3"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="row">
+            <!-- Recently Registered Drivers -->
+            <div class="col-md-8">
+                <div class="card dashboard-card mb-4">
+                    <div class="card-header bg-white border-0 py-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h4 class="mb-0">
+                                <i class="bi bi-clock-history me-2"></i> Recently Registered Drivers
+                            </h4>
+                            <span class="badge bg-primary" id="recentCount">0</span>
+                        </div>
+                    </div>
+                    <div class="card-body p-3">
+                        <div id="recentDrivers">
+                            <div class="text-center py-5">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="text-muted mt-3">Loading recent drivers...</p>
+                            </div>
+                        </div>
+                        <div class="text-center mt-3">
+                            <a href="#" class="btn btn-outline-primary" onclick="loadAllDrivers()">
+                                <i class="bi bi-arrow-clockwise me-2"></i> Load More
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Actions & System Info -->
+            <div class="col-md-4">
+                <!-- Quick Actions -->
+                <div class="card dashboard-card mb-4">
+                    <div class="card-header bg-white border-0 py-3">
+                        <h5 class="mb-0">
+                            <i class="bi bi-lightning-charge me-2"></i> Quick Actions
+                        </h5>
+                    </div>
+                    <div class="card-body p-3">
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-primary" onclick="location.href='registration.html'">
+                                <i class="bi bi-person-plus me-2"></i> Register New Driver
+                            </button>
+                            <button class="btn btn-outline-primary" onclick="refreshDashboard()">
+                                <i class="bi bi-arrow-clockwise me-2"></i> Refresh Dashboard
+                            </button>
+                            <button class="btn btn-outline-success" onclick="exportDrivers()">
+                                <i class="bi bi-download me-2"></i> Export Drivers
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="card dashboard-card mb-4">
+    <div class="card-header bg-white">
+        <h5 class="mb-0"><i class="fas fa-mobile-alt me-2"></i> Mobile Access</h5>
+    </div>
+    <div class="card-body">
+        <p>Guardians can access the mobile app at:</p>
+        <div class="input-group mb-3">
+            <input type="text" class="form-control" 
+                   value="http://localhost:5000/login.html" 
+                   id="mobileUrl" readonly>
+            <button class="btn btn-primary" onclick="copyMobileUrl()">
+                <i class="fas fa-copy"></i>
+            </button>
+        </div>
+        <a href="/login.html" target="_blank" class="btn btn-outline-primary">
+            <i class="fas fa-external-link-alt me-2"></i> Open Mobile Login
+        </a>
+    </div>
+</div>
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <script>
+        const API_BASE = '/api';
+        let driversChart = null;
+        
+        // Update current time
+        function updateCurrentTime() {
+            const now = new Date();
+            const options = { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            };
+            document.getElementById('currentTime').textContent = now.toLocaleDateString('en-US', options);
+        }
+        
+        // Load total drivers count
+        async function loadDriverCount() {
+            try {
+                const response = await fetch(`${API_BASE}/drivers`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const totalDrivers = data.count || data.drivers.length;
+                    document.getElementById('totalDrivers').textContent = totalDrivers;
+                    
+                    // Calculate today's registrations
+                    const today = new Date().toISOString().split('T')[0];
+                    const todayDrivers = data.drivers.filter(driver => 
+                        driver.registration_date && driver.registration_date.startsWith(today)
+                    ).length;
+                    
+                    // Calculate this week's registrations
+                    const oneWeekAgo = new Date();
+                    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+                    const weekDrivers = data.drivers.filter(driver => {
+                        if (!driver.registration_date) return false;
+                        const regDate = new Date(driver.registration_date);
+                        return regDate >= oneWeekAgo;
+                    }).length;
+                    
+                    // Calculate this month's registrations
+                    const startOfMonth = new Date();
+                    startOfMonth.setDate(1);
+                    const monthDrivers = data.drivers.filter(driver => {
+                        if (!driver.registration_date) return false;
+                        const regDate = new Date(driver.registration_date);
+                        return regDate >= startOfMonth;
+                    }).length;
+                    
+                    document.getElementById('todayRegistrations').textContent = todayDrivers;
+                    document.getElementById('weekRegistrations').textContent = weekDrivers;
+                    document.getElementById('monthRegistrations').textContent = monthDrivers;
+                    
+                    updateRecentCount(totalDrivers);
+                }
+            } catch (error) {
+                console.error('Error loading driver count:', error);
+            }
+        }
+        
+        // Load recent drivers
+        async function loadRecentDrivers() {
+        try {
+            const response = await fetch(`${API_BASE}/drivers`);
+            const data = await response.json();
+            
+            if (data.success && data.drivers.length > 0) {
+                const recentDriversDiv = document.getElementById('recentDrivers');
+                const recentDrivers = data.drivers.slice(0, 10); // Get 10 most recent
+                
+                recentDriversDiv.innerHTML = recentDrivers.map(driver => `
+                    <div class="recent-driver-card">
+                        <div class="row align-items-center">
+                            <div class="col-auto">
+                                <img src="./drivers/images/${driver.driver_id}.jpg" 
+                                    alt="${driver.name}" 
+                                    class="driver-avatar"
+                                    onerror="this.onerror=null;this.src='https://via.placeholder.com/60?text=Driver'">
+                            </div>
+                            <div class="col">
+                                <h6 class="mb-1">${driver.name}</h6>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <small class="text-muted">
+                                            <i class="bi bi-card-text"></i> ${driver.license_number}
+                                        </small>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <small class="text-muted">
+                                            <i class="bi bi-telephone"></i> ${driver.phone}
+                                        </small>
+                                    </div>
+                                </div>
+                                <div class="mt-2">
+                                    <span class="badge bg-light text-dark">
+                                        <i class="bi bi-calendar me-1"></i>
+                                        ${driver.registration_date_formatted || 'Unknown date'}
+                                    </span>
+                                    <span class="badge bg-light text-dark ms-2">
+                                        <i class="bi bi-person-badge me-1"></i>
+                                        ${driver.driver_id}
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <button class="btn btn-sm btn-outline-primary" onclick="viewDriverDetails('${driver.driver_id}')">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                document.getElementById('recentDrivers').innerHTML = `
+                    <div class="text-center py-5">
+                        <i class="bi bi-people display-1 text-muted"></i>
+                        <p class="text-muted mt-3">No drivers registered yet</p>
+                        <button class="btn btn-primary mt-2" onclick="location.href='registration.html'">
+                            <i class="bi bi-plus-circle me-2"></i> Register First Driver
+                        </button>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Error loading recent drivers:', error);
+            document.getElementById('recentDrivers').innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    Error loading drivers. Please check your connection.
+                </div>
+            `;
+        }
+    }
+        
+        // Load all drivers
+        async function loadAllDrivers() {
+            try {
+                const response = await fetch(`${API_BASE}/drivers`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(`Total drivers: ${data.drivers.length}\n\nClick OK to view all drivers.`);
+                    // In a real app, you would navigate to a drivers list page
+                    // For now, we'll just show a list in an alert
+                    let driverList = "All Registered Drivers:\n\n";
+                    data.drivers.forEach((driver, index) => {
+                        driverList += `${index + 1}. ${driver.name} (${driver.driver_id})\n`;
+                    });
+                    alert(driverList);
+                }
+            } catch (error) {
+                console.error('Error loading all drivers:', error);
+                alert('Error loading drivers. Please try again.');
+            }
+        }
+        
+        // Update recent count
+        function updateRecentCount(total) {
+            const recentCount = Math.min(total, 10);
+            document.getElementById('recentCount').textContent = recentCount;
+        }
+        
+        // View driver details
+        async function viewDriverDetails(driverId) {
+            try {
+                const response = await fetch(`${API_BASE}/driver/${driverId}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const driver = data.driver;
+                    
+                    // Create modal to show driver details
+                    const modalHTML = `
+                        <div class="modal fade" id="driverDetailsModal" tabindex="-1">
+                            <div class="modal-dialog modal-lg">
+                                <div class="modal-content">
+                                    <div class="modal-header">
+                                        <h5 class="modal-title">Driver Details</h5>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        <div class="row">
+                                            <div class="col-md-4 text-center">
+                                                <img src="${driver.image_url || 'https://via.placeholder.com/200?text=Driver'}" 
+                                                     alt="${driver.name}" 
+                                                     class="img-fluid rounded mb-3">
+                                                <h4>${driver.name}</h4>
+                                                <p class="text-muted">ID: ${driver.driver_id}</p>
+                                            </div>
+                                            <div class="col-md-8">
+                                                <div class="row">
+                                                    <div class="col-6 mb-3">
+                                                        <strong>License Number:</strong>
+                                                        <p>${driver.license_number}</p>
+                                                    </div>
+                                                    <div class="col-6 mb-3">
+                                                        <strong>Phone:</strong>
+                                                        <p>${driver.phone}</p>
+                                                    </div>
+                                                    <div class="col-6 mb-3">
+                                                        <strong>Email:</strong>
+                                                        <p>${driver.email || 'Not provided'}</p>
+                                                    </div>
+                                                    <div class="col-6 mb-3">
+                                                        <strong>Address:</strong>
+                                                        <p>${driver.address}</p>
+                                                    </div>
+                                                    <div class="col-6 mb-3">
+                                                        <strong>Guardian:</strong>
+                                                        <p>${driver.guardian_name}</p>
+                                                    </div>
+                                                    <div class="col-6 mb-3">
+                                                        <strong>Guardian Phone:</strong>
+                                                        <p>${driver.guardian_phone}</p>
+                                                    </div>
+                                                    <div class="col-12 mb-3">
+                                                        <strong>Registered On:</strong>
+                                                        <p>${driver.registration_date_formatted || driver.registration_date}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                        <button type="button" class="btn btn-primary" onclick="printDriverDetails('${driver.driver_id}')">
+                                            <i class="bi bi-printer me-2"></i> Print
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    // Add modal to document
+                    if (!document.getElementById('driverDetailsModal')) {
+                        const modalDiv = document.createElement('div');
+                        modalDiv.innerHTML = modalHTML;
+                        document.body.appendChild(modalDiv);
+                    }
+                    
+                    // Show modal
+                    const modal = new bootstrap.Modal(document.getElementById('driverDetailsModal'));
+                    modal.show();
+                }
+            } catch (error) {
+                console.error('Error viewing driver details:', error);
+                alert('Error loading driver details');
+            }
+        }
+        
+        // Print driver details
+        function printDriverDetails(driverId) {
+            window.open(`${API_BASE}/driver/${driverId}?print=true`, '_blank');
+        }
+        
+        // Refresh dashboard
+        function refreshDashboard() {
+            document.getElementById('recentDrivers').innerHTML = `
+                <div class="text-center py-3">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="text-muted mt-2">Refreshing...</p>
+                </div>
+            `;
+            
+            loadDriverCount();
+            loadRecentDrivers();
+            loadRegistrationChart();
+            updateSystemHealth();
+            
+            document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+            
+            setTimeout(() => {
+                showSuccessMessage('Dashboard refreshed successfully!');
+            }, 1000);
+        }
+        
+        // Export drivers
+        async function exportDrivers() {
+            try {
+                const response = await fetch(`${API_BASE}/drivers`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Create CSV content
+                    let csvContent = "Driver ID,Name,License Number,Phone,Email,Address,Registration Date\n";
+                    
+                    data.drivers.forEach(driver => {
+                        csvContent += `"${driver.driver_id}","${driver.name}","${driver.license_number}","${driver.phone}","${driver.email || ''}","${driver.address}","${driver.registration_date}"\n`;
+                    });
+                    
+                    // Create download link
+                    const blob = new Blob([csvContent], { type: 'text/csv' });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `drivers_export_${new Date().toISOString().split('T')[0]}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                    
+                    showSuccessMessage('Drivers exported successfully!');
+                }
+            } catch (error) {
+                console.error('Error exporting drivers:', error);
+                showErrorMessage('Error exporting drivers');
+            }
+        }
+        
+        // Load registration chart
+        async function loadRegistrationChart() {
+            try {
+                const response = await fetch(`${API_BASE}/drivers`);
+                const data = await response.json();
+                
+                if (data.success && data.drivers.length > 0) {
+                    // Group registrations by month
+                    const registrationsByMonth = {};
+                    const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                    const registrationsByDay = Array(7).fill(0);
+                    
+                    data.drivers.forEach(driver => {
+                        if (driver.registration_date) {
+                            const date = new Date(driver.registration_date);
+                            const monthKey = date.toLocaleString('default', { month: 'short', year: '2-digit' });
+                            
+                            // Count by month
+                            registrationsByMonth[monthKey] = (registrationsByMonth[monthKey] || 0) + 1;
+                            
+                            // Count by day of week
+                            const dayOfWeek = date.getDay();
+                            registrationsByDay[dayOfWeek]++;
+                        }
+                    });
+                    
+                    // Sort months chronologically
+                    const sortedMonths = Object.keys(registrationsByMonth).sort((a, b) => {
+                        return new Date(`01 ${a}`) - new Date(`01 ${b}`);
+                    });
+                    
+                    const monthData = sortedMonths.map(month => registrationsByMonth[month]);
+                    
+                    // Create chart
+                    const ctx = document.createElement('canvas');
+                    document.getElementById('registrationChart').innerHTML = '';
+                    document.getElementById('registrationChart').appendChild(ctx);
+                    
+                    if (driversChart) {
+                        driversChart.destroy();
+                    }
+                    
+                    driversChart = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: sortedMonths,
+                            datasets: [{
+                                label: 'Registrations',
+                                data: monthData,
+                                borderColor: '#667eea',
+                                backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                                borderWidth: 3,
+                                fill: true,
+                                tension: 0.4
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    display: false
+                                },
+                                tooltip: {
+                                    mode: 'index',
+                                    intersect: false
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    ticks: {
+                                        stepSize: 1
+                                    }
+                                }
+                            }
+                        }
+                    });
+                    
+                    // Update statistics
+                    const maxDayIndex = registrationsByDay.indexOf(Math.max(...registrationsByDay));
+                    document.getElementById('mostActiveDay').textContent = daysOfWeek[maxDayIndex];
+                    
+                    // Simple peak hour simulation (in real app, this would come from database)
+                    document.getElementById('peakHour').textContent = '10:00 AM';
+                    document.getElementById('avgDaily').textContent = Math.round(data.drivers.length / 30);
+                    document.getElementById('thisMonth').textContent = monthData[monthData.length - 1] || 0;
+                }
+            } catch (error) {
+                console.error('Error loading registration chart:', error);
+            }
+        }
+        
+        // Check system health
+        async function checkSystemHealth() {
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                const data = await response.json();
+                
+                if (data.status === 'healthy') {
+                    showSuccessMessage('System is healthy and running!');
+                    updateSystemHealth();
+                } else {
+                    showErrorMessage('System health check failed');
+                }
+            } catch (error) {
+                console.error('Error checking system health:', error);
+                showErrorMessage('Cannot connect to server');
+            }
+        }
+        
+        // Update system health status
+        async function updateSystemHealth() {
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                const data = await response.json();
+                
+                document.getElementById('dbStatus').textContent = data.database || 'Unknown';
+                document.getElementById('dbStatus').className = data.database === 'connected' ? 'badge bg-success' : 'badge bg-danger';
+                
+                document.getElementById('storageStatus').textContent = data.images_directory || 'Unknown';
+                document.getElementById('storageStatus').className = data.images_directory === 'exists' ? 'badge bg-success' : 'badge bg-warning';
+                
+                // Check camera status
+                const cameraResponse = await fetch(`${API_BASE}/test-camera`);
+                const cameraData = await cameraResponse.json();
+                
+                if (cameraData.success && cameraData.cameras.length > 0) {
+                    document.getElementById('cameraStatus').textContent = 'Available';
+                    document.getElementById('cameraStatus').className = 'badge bg-success';
+                } else {
+                    document.getElementById('cameraStatus').textContent = 'Unavailable';
+                    document.getElementById('cameraStatus').className = 'badge bg-warning';
+                }
+                
+            } catch (error) {
+                console.error('Error updating system health:', error);
+                document.getElementById('dbStatus').textContent = 'Error';
+                document.getElementById('dbStatus').className = 'badge bg-danger';
+            }
+        }
+        
+        // Show success message
+        function showSuccessMessage(message) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-success alert-dismissible fade show position-fixed top-0 end-0 m-3';
+            alertDiv.style.zIndex = '1050';
+            alertDiv.innerHTML = `
+                <i class="bi bi-check-circle me-2"></i> ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            document.body.appendChild(alertDiv);
+            
+            setTimeout(() => {
+                alertDiv.remove();
+            }, 3000);
+        }
+        
+        // Show error message
+        function showErrorMessage(message) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-danger alert-dismissible fade show position-fixed top-0 end-0 m-3';
+            alertDiv.style.zIndex = '1050';
+            alertDiv.innerHTML = `
+                <i class="bi bi-exclamation-triangle me-2"></i> ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            document.body.appendChild(alertDiv);
+            
+            setTimeout(() => {
+                alertDiv.remove();
+            }, 5000);
+        }
+        
+        // Initialize dashboard
+        window.onload = function() {
+            updateCurrentTime();
+            setInterval(updateCurrentTime, 1000);
+            
+            loadDriverCount();
+            loadRecentDrivers();
+            loadRegistrationChart();
+            updateSystemHealth();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(() => {
+                loadDriverCount();
+                updateSystemHealth();
+                document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+            }, 30000);
+        };
+    </script>
+</body>
+</html>

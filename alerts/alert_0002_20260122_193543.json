@@ -1,0 +1,16 @@
+{
+  "alert_id": 2,
+  "timestamp": "2026-01-22T19:35:43.604836",
+  "alert_type": "YAWNING",
+  "driver": "Driver_1",
+  "confidence": 0.9902161751806672,
+  "metrics": {
+    "ear": 1.0503442216796075,
+    "mar": 0.6358877935178351,
+    "perclos": 0.0,
+    "distance_ratio": 1.0,
+    "face_quality": 0.7011726659529111
+  },
+  "frame_count": 855,
+  "duration": 0.0
+}

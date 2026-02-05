@@ -1,0 +1,59 @@
+<!-- frontend/offline.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Driver Alert - Offline</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #f5f5f5;
+            margin: 0;
+        }
+        .offline-container {
+            text-align: center;
+            padding: 40px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #4e73df;
+        }
+        .icon {
+            font-size: 60px;
+            color: #4e73df;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<script>
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/service-worker.js')
+            .then(function(registration) {
+                console.log('Service Worker registered with scope:', registration.scope);
+            })
+            .catch(function(error) {
+                console.log('Service Worker registration failed:', error);
+            });
+    });
+}
+</script>
+<body>
+    <div class="offline-container">
+        <div class="icon">📱</div>
+        <h1>Driver Alert</h1>
+        <h2>You're Offline</h2>
+        <p>Please check your internet connection.</p>
+        <p>The app will reconnect automatically when back online.</p>
+        <button onclick="location.reload()" style="padding: 10px 20px; background: #4e73df; color: white; border: none; border-radius: 5px; margin-top: 20px; cursor: pointer;">
+            Retry Connection
+        </button>
+    </div>
+</body>
+</html>

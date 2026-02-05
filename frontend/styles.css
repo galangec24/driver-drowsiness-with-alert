@@ -1,0 +1,89 @@
+/* PWA Installation Button Styles */
+.pwa-install-btn {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 1000;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 50px;
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: 600;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.3s ease;
+}
+
+.pwa-install-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
+.pwa-install-btn:active {
+  transform: translateY(0);
+}
+
+.pwa-install-hint {
+  position: fixed;
+  bottom: 80px;
+  right: 20px;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 10px 15px;
+  border-radius: 8px;
+  font-size: 14px;
+  max-width: 200px;
+  text-align: center;
+  animation: fadeInUp 0.5s ease;
+}
+
+/* Animation for PWA button */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pwa-show {
+  animation: fadeInUp 0.5s ease;
+}
+
+/* Mobile-specific adjustments */
+@media (max-width: 768px) {
+  .pwa-install-btn {
+    bottom: 80px; /* Above mobile browser toolbar */
+    right: 15px;
+    padding: 10px 20px;
+    font-size: 14px;
+  }
+  
+  .pwa-install-hint {
+    bottom: 140px;
+    right: 15px;
+    font-size: 12px;
+  }
+}
+
+/* PWA Installed Mode */
+@media all and (display-mode: standalone) {
+  .pwa-install-btn,
+  .pwa-install-hint {
+    display: none !important;
+  }
+  
+  /* Adjust UI for standalone app */
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}

@@ -1,0 +1,545 @@
+<!-- frontend/guardian-register.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Guardian Registration - Driver Alert</title>
+    
+    <!-- Bootstrap 5 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- PWA Configuration -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#4e73df">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Driver Alert">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    
+    <style>
+        :root {
+            --primary-color: #1a237e;
+            --primary-light: #534bae;
+            --secondary-color: #757575;
+            --success-color: #1cc88a;
+            --danger-color: #e74a3b;
+            --gradient-start: #667eea;
+            --gradient-end: #764ba2;
+        }
+        
+        body {
+            background: linear-gradient(135deg, var(--gradient-start) 0%, var(--gradient-end) 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+        }
+        
+        .register-container {
+            max-width: 400px;
+            width: 100%;
+        }
+        
+        .register-card {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            text-align: center;
+            animation: fadeIn 0.5s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .app-logo {
+            width: 100px;
+            height: 100px;
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            color: white;
+            font-size: 40px;
+            box-shadow: 0 8px 20px rgba(26, 35, 126, 0.3);
+        }
+        
+        .app-title {
+            color: var(--primary-color);
+            font-weight: bold;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .app-subtitle {
+            color: var(--secondary-color);
+            margin-bottom: 30px;
+            font-size: 16px;
+        }
+        
+        .form-control {
+            padding: 15px;
+            border-radius: 10px;
+            border: 2px solid #e1e5e9;
+            margin-bottom: 15px;
+            transition: all 0.3s;
+            font-size: 16px;
+        }
+        
+        .form-control:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(26, 35, 126, 0.1);
+        }
+        
+        .btn-register {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            border: none;
+            font-weight: 600;
+            width: 100%;
+            transition: all 0.3s;
+            margin-top: 10px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        
+        .btn-register:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 20px rgba(26, 35, 126, 0.3);
+        }
+        
+        .btn-register:disabled {
+            opacity: 0.7;
+            transform: none;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
+        
+        .error-message {
+            color: var(--danger-color);
+            font-size: 14px;
+            margin-top: 10px;
+            display: none;
+            padding: 10px;
+            background: rgba(231, 74, 59, 0.1);
+            border-radius: 8px;
+            border-left: 4px solid var(--danger-color);
+        }
+        
+        .success-message {
+            color: var(--success-color);
+            font-size: 14px;
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(28, 200, 138, 0.1);
+            border-radius: 8px;
+            border-left: 4px solid var(--success-color);
+        }
+        
+        .login-link {
+            color: var(--primary-color);
+            text-decoration: none;
+            font-weight: 600;
+        }
+        
+        .login-link:hover {
+            text-decoration: underline;
+        }
+        
+        .password-strength {
+            height: 5px;
+            background: #e1e5e9;
+            border-radius: 3px;
+            margin-top: 5px;
+            overflow: hidden;
+        }
+        
+        .strength-bar {
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .terms-check {
+            text-align: left;
+            margin: 15px 0;
+        }
+        
+        .terms-check label {
+            font-size: 14px;
+        }
+        
+        .terms-link {
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+        
+        .terms-link:hover {
+            text-decoration: underline;
+        }
+        
+        @media (max-width: 480px) {
+            .register-card {
+                padding: 25px;
+            }
+            .app-logo {
+                width: 80px;
+                height: 80px;
+                font-size: 32px;
+            }
+            .app-title {
+                font-size: 24px;
+            }
+            .app-subtitle {
+                font-size: 14px;
+            }
+        }
+        
+        /* Loading animation */
+        .loading-dots {
+            display: inline-block;
+        }
+        
+        .loading-dots span {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: white;
+            margin: 0 2px;
+            animation: loading 1.4s infinite ease-in-out both;
+        }
+        
+        .loading-dots span:nth-child(1) {
+            animation-delay: -0.32s;
+        }
+        
+        .loading-dots span:nth-child(2) {
+            animation-delay: -0.16s;
+        }
+        
+        @keyframes loading {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1.0); }
+        }
+    </style>
+</head>
+<script>
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/service-worker.js')
+            .then(function(registration) {
+                console.log('Service Worker registered with scope:', registration.scope);
+            })
+            .catch(function(error) {
+                console.log('Service Worker registration failed:', error);
+            });
+    });
+}
+</script>
+<body>
+    <div class="register-container">
+        <div class="register-card">
+            <!-- App Logo -->
+            <div class="app-logo">
+                <i class="fas fa-user-shield"></i>
+            </div>
+            
+            <h1 class="app-title">Guardian Registration</h1>
+            <p class="app-subtitle">Create your account to monitor drivers</p>
+            
+            <!-- Registration Form -->
+            <form id="guardianRegisterForm">
+                <div class="mb-3">
+                    <input type="text" 
+                           class="form-control" 
+                           id="fullName" 
+                           placeholder="Full Name"
+                           required>
+                </div>
+                
+                <div class="mb-3">
+                    <input type="tel" 
+                           class="form-control" 
+                           id="phoneNumber" 
+                           placeholder="Phone Number"
+                           required
+                           pattern="[0-9]{10,11}"
+                           maxlength="11"
+                           inputmode="numeric">
+                    <small class="text-muted" style="display: block; text-align: left; margin-top: 5px; font-size: 12px;">
+                        10-11 digit phone number (used for login)
+                    </small>
+                </div>
+                
+                <div class="mb-3">
+                    <input type="email" 
+                           class="form-control" 
+                           id="email" 
+                           placeholder="Email Address (Optional)">
+                </div>
+                
+                <div class="mb-3">
+                    <input type="password" 
+                           class="form-control" 
+                           id="password" 
+                           placeholder="Password"
+                           required
+                           minlength="6">
+                    <div class="password-strength">
+                        <div class="strength-bar" id="passwordStrength"></div>
+                    </div>
+                    <small class="text-muted" style="display: block; text-align: left; margin-top: 5px; font-size: 12px;">
+                        Minimum 6 characters
+                    </small>
+                </div>
+                
+                <div class="mb-3">
+                    <input type="password" 
+                           class="form-control" 
+                           id="confirmPassword" 
+                           placeholder="Confirm Password"
+                           required>
+                </div>
+                
+                <div class="mb-3">
+                    <input type="text" 
+                           class="form-control" 
+                           id="address" 
+                           placeholder="Address (Optional)">
+                </div>
+                
+                <div class="terms-check">
+                    <input class="form-check-input" type="checkbox" id="acceptTerms" required>
+                    <label class="form-check-label" for="acceptTerms">
+                        I agree to the <a href="#" class="terms-link" onclick="showTerms()">Terms of Service</a> and 
+                        <a href="#" class="terms-link" onclick="showPrivacy()">Privacy Policy</a>
+                    </label>
+                </div>
+                
+                <button type="submit" class="btn btn-register" id="registerButton">
+                    <i class="fas fa-user-plus me-2"></i> <span id="registerText">Create Account</span>
+                </button>
+                
+                <div class="error-message" id="errorMessage">
+                    <i class="fas fa-exclamation-circle me-2"></i>
+                    <span id="errorText"></span>
+                </div>
+                
+                <div class="success-message" id="successMessage" style="display: none;">
+                    <i class="fas fa-check-circle me-2"></i>
+                    <span id="successText"></span>
+                </div>
+            </form>
+            
+            <!-- Already have account -->
+            <p class="mt-4 text-muted" style="font-size: 14px;">
+                Already have an account? 
+                <a href="/" class="login-link">Login here</a>
+            </p>
+            
+            <!-- Demo Note -->
+            <div class="alert alert-info mt-4" style="font-size: 12px; padding: 10px;">
+                <i class="fas fa-info-circle me-1"></i>
+                <strong>Demo Note:</strong> After registration, you can login and register drivers to monitor.
+            </div>
+        </div>
+    </div>
+    
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Setup form
+            document.getElementById('guardianRegisterForm').addEventListener('submit', handleRegistration);
+            
+            // Password strength indicator
+            document.getElementById('password').addEventListener('input', checkPasswordStrength);
+            
+            // Confirm password validation
+            document.getElementById('confirmPassword').addEventListener('input', validatePasswordMatch);
+            
+            // Auto-focus on name field
+            document.getElementById('fullName').focus();
+        });
+        
+        function checkPasswordStrength() {
+            const password = document.getElementById('password').value;
+            const strengthBar = document.getElementById('passwordStrength');
+            
+            let strength = 0;
+            
+            // Length check
+            if (password.length >= 6) strength += 25;
+            if (password.length >= 8) strength += 25;
+            
+            // Complexity checks
+            if (/[A-Z]/.test(password)) strength += 25;
+            if (/[0-9]/.test(password)) strength += 25;
+            
+            // Update strength bar
+            strengthBar.style.width = strength + '%';
+            
+            // Color coding
+            if (strength < 50) {
+                strengthBar.style.backgroundColor = '#e74a3b'; // Red
+            } else if (strength < 75) {
+                strengthBar.style.backgroundColor = '#f6c23e'; // Yellow
+            } else {
+                strengthBar.style.backgroundColor = '#1cc88a'; // Green
+            }
+        }
+        
+        function validatePasswordMatch() {
+            const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            const confirmField = document.getElementById('confirmPassword');
+            
+            if (confirmPassword && password !== confirmPassword) {
+                confirmField.style.borderColor = '#e74a3b';
+                return false;
+            } else {
+                confirmField.style.borderColor = password ? '#1cc88a' : '#e1e5e9';
+                return true;
+            }
+        }
+        
+        async function handleRegistration(e) {
+            e.preventDefault();
+            
+            // Get form values
+            const fullName = document.getElementById('fullName').value.trim();
+            const phoneNumber = document.getElementById('phoneNumber').value.trim();
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            const address = document.getElementById('address').value.trim();
+            
+            // Validation
+            if (!fullName) {
+                showError('Full name is required');
+                return;
+            }
+            
+            if (!phoneNumber || !/^[0-9]{10,11}$/.test(phoneNumber)) {
+                showError('Valid phone number is required (10-11 digits)');
+                return;
+            }
+            
+            if (password.length < 6) {
+                showError('Password must be at least 6 characters');
+                return;
+            }
+            
+            if (password !== confirmPassword) {
+                showError('Passwords do not match');
+                return;
+            }
+            
+            if (!document.getElementById('acceptTerms').checked) {
+                showError('You must accept the terms and conditions');
+                return;
+            }
+            
+            // Show loading
+            const registerBtn = document.getElementById('registerButton');
+            const registerText = document.getElementById('registerText');
+            const originalText = registerText.innerHTML;
+            registerText.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span>';
+            registerBtn.disabled = true;
+            
+            try {
+                // Prepare registration data
+                const registrationData = {
+                    full_name: fullName,
+                    phone: phoneNumber,
+                    email: email,
+                    password: password,
+                    address: address
+                };
+                
+                // Send registration request
+                const response = await fetch('/api/register-guardian', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(registrationData)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showSuccess('Account created successfully! Redirecting to login...');
+                    
+                    // Auto-login after registration
+                    setTimeout(() => {
+                        // Store phone for auto-fill
+                        localStorage.setItem('registeredPhone', phoneNumber);
+                        
+                        // Redirect to login
+                        window.location.href = '/';
+                    }, 2000);
+                    
+                } else {
+                    throw new Error(result.error || 'Registration failed');
+                }
+                
+            } catch (error) {
+                console.error('Registration error:', error);
+                showError('Registration failed: ' + error.message);
+            } finally {
+                // Restore button
+                registerText.innerHTML = originalText;
+                registerBtn.disabled = false;
+            }
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            const errorText = document.getElementById('errorText');
+            
+            errorText.textContent = message;
+            errorDiv.style.display = 'block';
+            
+            // Hide success message if showing
+            document.getElementById('successMessage').style.display = 'none';
+            
+            // Scroll to error
+            errorDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        
+        function showSuccess(message) {
+            const successDiv = document.getElementById('successMessage');
+            const successText = document.getElementById('successText');
+            
+            successText.textContent = message;
+            successDiv.style.display = 'block';
+            
+            // Hide error message if showing
+            document.getElementById('errorMessage').style.display = 'none';
+        }
+        
+        function showTerms() {
+            alert('Terms of Service:\n\n1. You are responsible for the drivers you register.\n2. Keep your login credentials secure.\n3. Use the system only for legitimate monitoring purposes.\n4. Respect privacy and comply with applicable laws.');
+        }
+        
+        function showPrivacy() {
+            alert('Privacy Policy:\n\n1. We store your information securely.\n2. Your data is only used for driver monitoring alerts.\n3. We do not share your information with third parties.\n4. You can request data deletion at any time.');
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,1864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, minimum-scale=1.0, user-scalable=yes">
+    <title>Driver Registration</title>
+    
+    <!-- Bootstrap 5 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- PWA Configuration -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#4e73df">
+    
+    <!-- iOS PWA Support -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Driver Registration">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    
+    <style>
+        :root {
+            --primary-color: #4e73df;
+            --success-color: #1cc88a;
+            --warning-color: #f6c23e;
+            --danger-color: #e74a3b;
+            --dark-color: #5a5c69;
+        }
+
+        body {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+
+        body.standalone-mode {
+            padding-top: 0;
+        }
+
+        .navbar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            padding-top: max(0.5rem, env(safe-area-inset-top));
+        }
+
+        /* PWA Install Button */
+        #installPrompt {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 9999;
+            animation: slideIn 0.3s ease;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            border-radius: 25px;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
+
+        /* Mobile optimizations */
+        @media (max-width: 768px) {
+            .registration-card {
+                margin: 10px;
+                border-radius: 15px;
+            }
+            
+            .card-header {
+                padding: 20px 15px;
+            }
+            
+            .step {
+                margin: 0 10px;
+            }
+            
+            .camera-container {
+                max-width: 100%;
+            }
+            
+            #video {
+                height: 250px;
+            }
+            
+            .photo-gallery {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .step-navigation {
+                flex-direction: column;
+                gap: 10px;
+            }
+            
+            .step-navigation button {
+                width: 100%;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .navbar-brand {
+                font-size: 1rem;
+            }
+            
+            .card-header h2 {
+                font-size: 1.5rem;
+            }
+            
+            .photo-gallery {
+                grid-template-columns: 1fr;
+            }
+            
+            .camera-controls {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .control-btn {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+
+        /* Standalone mode adjustments */
+        body.standalone-mode .navbar {
+            padding-top: env(safe-area-inset-top);
+            height: calc(56px + env(safe-area-inset-top));
+        }
+        
+        body.standalone-mode .navbar-brand {
+            padding-top: env(safe-area-inset-top);
+        }
+
+        /* Toast notifications */
+        .toast-notification {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            z-index: 9999;
+            max-width: 300px;
+            animation: slideDown 0.3s ease;
+        }
+        
+        @keyframes slideDown {
+            from { transform: translateY(-20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        /* Touch-friendly buttons */
+        .btn, .form-control, .form-select {
+            min-height: 44px; /* Minimum touch target size */
+        }
+        
+        .capture-btn {
+            min-width: 80px;
+            min-height: 80px;
+        }
+
+        .registration-card {
+            background: white;
+            border-radius: 20px;
+            border: none;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.1);
+            overflow: hidden;
+            margin-bottom: 80px; /* Space for install button */
+        }
+
+        .card-header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            border-bottom: none;
+            padding: 25px 30px;
+        }
+
+        .section-title {
+            color: var(--dark-color);
+            border-left: 4px solid var(--primary-color);
+            padding-left: 15px;
+            margin-bottom: 25px;
+            font-weight: 600;
+        }
+
+        .registration-steps {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 30px;
+        }
+
+        .step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0 20px;
+        }
+
+        .step-circle {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #e9ecef;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-bottom: 10px;
+            transition: all 0.3s;
+        }
+
+        .step.active .step-circle {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .step.completed .step-circle {
+            background: var(--success-color);
+            color: white;
+        }
+
+        .step-label {
+            font-size: 14px;
+            color: #6c757d;
+        }
+
+        .step.active .step-label {
+            color: var(--primary-color);
+            font-weight: 600;
+        }
+
+        .step-content {
+            display: none;
+        }
+
+        .step-content.active {
+            display: block;
+            animation: fadeIn 0.5s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .camera-container {
+            position: relative;
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            background: #000;
+        }
+
+        #video {
+            width: 100%;
+            height: 300px;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror effect */
+        }
+
+        #canvas {
+            display: none;
+        }
+
+        .camera-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+        }
+
+        .face-guide {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 200px;
+            height: 250px;
+            border: 3px solid rgba(0, 255, 0, 0.8);
+            border-radius: 10px;
+            box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.5);
+            z-index: 2;
+            pointer-events: none;
+        }
+
+        .camera-status {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            z-index: 10;
+        }
+
+        .face-detection-status {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            z-index: 10;
+        }
+
+        .capture-btn {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            border: none;
+            background: white;
+            color: var(--primary-color);
+            font-size: 24px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            transition: all 0.3s;
+            margin: 20px auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+
+        .capture-btn:hover:not(:disabled) {
+            transform: scale(1.1);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.4);
+        }
+
+        .capture-btn:active:not(:disabled) {
+            transform: scale(0.95);
+        }
+
+        .capture-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .camera-controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        .control-btn {
+            padding: 10px 25px;
+            border-radius: 25px;
+            border: none;
+            font-weight: 600;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .control-btn:hover:not(:disabled) {
+            transform: translateY(-3px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .control-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .photo-gallery {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .photo-thumbnail {
+            width: 100%;
+            height: 100px;
+            object-fit: cover;
+            border-radius: 10px;
+            border: 2px solid #dee2e6;
+            transition: all 0.3s;
+        }
+
+        .photo-thumbnail.captured {
+            border-color: var(--success-color);
+            box-shadow: 0 5px 15px rgba(28, 200, 138, 0.2);
+        }
+
+        .photo-thumbnail.empty {
+            background: #f8f9fa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #6c757d;
+            font-size: 24px;
+        }
+
+        .photo-counter {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+        }
+
+        .form-control, .form-select {
+            border-radius: 10px;
+            border: 2px solid #e1e5e9;
+            padding: 12px 15px;
+            transition: all 0.3s;
+        }
+
+        .form-control:focus, .form-select:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(78, 115, 223, 0.1);
+        }
+
+        .required::after {
+            content: " *";
+            color: var(--danger-color);
+        }
+
+        .loading-spinner {
+            display: none;
+            text-align: center;
+            padding: 30px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid var(--primary-color);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .success-animation {
+            text-align: center;
+            padding: 30px;
+        }
+
+        .checkmark {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            display: block;
+            stroke-width: 2;
+            stroke: #fff;
+            stroke-miterlimit: 10;
+            margin: 0 auto;
+            box-shadow: inset 0px 0px 0px var(--success-color);
+            animation: fill .4s ease-in-out .4s forwards, scale .3s ease-in-out .9s both;
+        }
+
+        .checkmark__circle {
+            stroke-dasharray: 166;
+            stroke-dashoffset: 166;
+            stroke-width: 2;
+            stroke-miterlimit: 10;
+            stroke: var(--success-color);
+            fill: none;
+            animation: stroke 0.6s cubic-bezier(0.65, 0, 0.45, 1) forwards;
+        }
+
+        .checkmark__check {
+            transform-origin: 50% 50%;
+            stroke-dasharray: 48;
+            stroke-dashoffset: 48;
+            animation: stroke 0.3s cubic-bezier(0.65, 0, 0.45, 1) 0.8s forwards;
+        }
+
+        @keyframes stroke {
+            100% { stroke-dashoffset: 0; }
+        }
+
+        @keyframes scale {
+            0%, 100% { transform: none; }
+            50% { transform: scale3d(1.1, 1.1, 1); }
+        }
+
+        @keyframes fill {
+            100% { box-shadow: inset 0px 0px 0px 80px var(--success-color); }
+        }
+
+        .detection-requirements {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            font-size: 14px;
+        }
+
+        .requirement-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+
+        .requirement-item i {
+            margin-right: 8px;
+        }
+
+        .requirement-item.valid {
+            color: var(--success-color);
+        }
+
+        .requirement-item.invalid {
+            color: var(--danger-color);
+        }
+
+        .green-box-label {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -200%);
+            background: rgba(0, 255, 0, 0.9);
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            z-index: 3;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+
+        .guide-box-info {
+            position: absolute;
+            bottom: 10px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            color: white;
+            font-size: 12px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 5px;
+            z-index: 3;
+            pointer-events: none;
+        }
+
+        .step-navigation {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #dee2e6;
+        }
+
+        .photos-needed {
+            text-align: center;
+            font-size: 14px;
+            color: #6c757d;
+            margin-top: 10px;
+        }
+
+        .capture-progress {
+            width: 100%;
+            height: 8px;
+            background: #e9ecef;
+            border-radius: 4px;
+            margin: 20px 0;
+            overflow: hidden;
+        }
+
+        .capture-progress-bar {
+            height: 100%;
+            background: var(--success-color);
+            transition: width 0.3s;
+        }
+
+        .instruction-box {
+            background: #e7f4ff;
+            border-left: 4px solid var(--primary-color);
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        .reference-number-display {
+            background: #f8f9fa;
+            border: 2px dashed #dee2e6;
+            border-radius: 10px;
+            padding: 15px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .reference-number {
+            font-family: monospace;
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--primary-color);
+            letter-spacing: 2px;
+        }
+
+        .reference-label {
+            font-size: 12px;
+            color: #6c757d;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container">
+            <a class="navbar-brand" href="index.html">
+                <i class="fas fa-car me-2"></i> Driver Registration System
+            </a>
+            <div class="d-flex align-items-center">
+                <a href="index.html" class="btn btn-outline-light">
+                    <i class="fas fa-arrow-left me-2"></i> Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4 mb-5">
+        <div class="row">
+            <div class="col-12">
+                <div class="registration-card">
+                    <div class="card-header text-white">
+                        <div class="row align-items-center">
+                            <div class="col-md-8">
+                                <h2 class="mb-2">Driver Registration</h2>
+                                <p class="mb-0 opacity-75">Complete registration in 3 simple steps</p>
+                            </div>
+                            <div class="col-md-4 text-end">
+                                <div class="reference-number-display" style="background: white; padding: 10px 15px;">
+                                    <div class="reference-label">REFERENCE NO.</div>
+                                    <div class="reference-number" id="referenceNumberDisplay">---</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="card-body p-4">
+                        <!-- Registration Steps -->
+                        <div class="registration-steps">
+                            <div class="step active" id="step1">
+                                <div class="step-circle">1</div>
+                                <div class="step-label">Personal Info</div>
+                            </div>
+                            <div class="step" id="step2">
+                                <div class="step-circle">2</div>
+                                <div class="step-label">Guardian Info</div>
+                            </div>
+                            <div class="step" id="step3">
+                                <div class="step-circle">3</div>
+                                <div class="step-label">Face Capture</div>
+                            </div>
+                        </div>
+
+                        <!-- Step 1: Personal Information -->
+                        <div class="step-content active" id="step1-content">
+                            <div class="instruction-box">
+                                <h5><i class="fas fa-info-circle me-2"></i> Step 1: Personal Information</h5>
+                                <p class="mb-0">Please fill in the driver's personal information below. All fields marked with * are required.</p>
+                            </div>
+                            
+                            <form id="personalInfoForm">
+                                <h5 class="section-title">
+                                    <i class="fas fa-id-card me-2"></i> Driver Personal Information
+                                </h5>
+                                
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="driverName" class="form-label required">Full Name</label>
+                                        <input type="text" class="form-control" id="driverName" 
+                                               placeholder="Enter full name" required>
+                                    </div>
+                                    
+                                    <div class="col-md-6 mb-3">
+                                        <label for="phone" class="form-label required">Phone Number</label>
+                                        <input type="tel" class="form-control" id="phone" 
+                                               placeholder="Enter phone number" required>
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="address" class="form-label required">Address</label>
+                                    <textarea class="form-control" id="address" rows="3" 
+                                              placeholder="Enter complete address" required></textarea>
+                                </div>
+                                
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="email" class="form-label">Email Address</label>
+                                        <input type="email" class="form-control" id="email" 
+                                               placeholder="Enter email address">
+                                    </div>
+                                    
+                                    <div class="col-md-6 mb-3">
+                                        <label for="dateOfBirth" class="form-label">Date of Birth</label>
+                                        <input type="date" class="form-control" id="dateOfBirth">
+                                    </div>
+                                </div>
+                                
+                                <div class="step-navigation">
+                                    <div></div> <!-- Empty div for spacing -->
+                                    <button type="button" class="btn btn-primary" onclick="nextStep(2)">
+                                        Next: Guardian Information <i class="fas fa-arrow-right ms-2"></i>
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- Step 2: Guardian Information -->
+                        <div class="step-content" id="step2-content">
+                            <div class="instruction-box">
+                                <h5><i class="fas fa-info-circle me-2"></i> Step 2: Guardian Information</h5>
+                                <p class="mb-0">Please provide guardian information for emergency contact purposes.</p>
+                            </div>
+                            
+                            <form id="guardianInfoForm">
+                                <h5 class="section-title">
+                                    <i class="fas fa-shield-alt me-2"></i> Guardian Information
+                                </h5>
+                                
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="guardianName" class="form-label required">Guardian Name</label>
+                                        <input type="text" class="form-control" id="guardianName" 
+                                               placeholder="Enter guardian's name" required>
+                                    </div>
+                                    
+                                    <div class="col-md-6 mb-3">
+                                        <label for="guardianPhone" class="form-label required">Guardian Phone</label>
+                                        <input type="tel" class="form-control" id="guardianPhone" 
+                                               placeholder="Enter guardian's phone" required>
+                                    </div>
+                                </div>
+                                
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="guardianEmail" class="form-label">Guardian Email</label>
+                                        <input type="email" class="form-control" id="guardianEmail" 
+                                               placeholder="Enter guardian's email">
+                                    </div>
+                                    
+                                    <div class="col-md-6 mb-3">
+                                        <label for="relationship" class="form-label">Relationship</label>
+                                        <select class="form-select" id="relationship">
+                                            <option value="">Select relationship</option>
+                                            <option value="Parent">Parent</option>
+                                            <option value="Spouse">Spouse</option>
+                                            <option value="Sibling">Sibling</option>
+                                            <option value="Friend">Friend</option>
+                                            <option value="Other">Other</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                
+                                <div class="step-navigation">
+                                    <button type="button" class="btn btn-outline-primary" onclick="prevStep(1)">
+                                        <i class="fas fa-arrow-left me-2"></i> Back
+                                    </button>
+                                    <button type="button" class="btn btn-primary" onclick="nextStep(3)">
+                                        Next: Face Capture <i class="fas fa-camera ms-2"></i>
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- Step 3: Face Capture -->
+                        <div class="step-content" id="step3-content">
+                            <div class="instruction-box">
+                                <h5><i class="fas fa-info-circle me-2"></i> Step 3: Face Capture</h5>
+                                <p class="mb-0">Capture 3-5 photos of the driver's face for facial recognition. Ensure face is inside the green box.</p>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <!-- Camera Section -->
+                                    <div class="camera-section mb-4">
+                                        <div class="camera-container">
+                                            <div class="camera-status" id="cameraStatus">
+                                                <i class="fas fa-circle me-1" style="color: #2ed573;"></i>
+                                                Camera Ready
+                                            </div>
+                                            <div class="face-detection-status" id="faceDetectionStatus">
+                                                <i class="fas fa-user me-1"></i>
+                                                No Face Detected
+                                            </div>
+                                            
+                                            <video id="video" autoplay playsinline></video>
+                                            <canvas id="canvas"></canvas>
+                                            
+                                            <div class="camera-overlay">
+                                                <div class="face-guide"></div>
+                                                <div class="green-box-label">GREEN DETECTION AREA</div>
+                                                <div class="guide-box-info">Face must be completely inside green box</div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Capture Progress -->
+                                        <div class="capture-progress">
+                                            <div class="capture-progress-bar" id="captureProgressBar" style="width: 0%"></div>
+                                        </div>
+                                        
+                                        <div class="text-center">
+                                            <button class="capture-btn" id="captureBtn" onclick="capturePhoto()" disabled>
+                                                <i class="fas fa-camera"></i>
+                                            </button>
+                                            
+                                            <div class="photos-needed">
+                                                <i class="fas fa-info-circle me-1"></i>
+                                                <span id="photosCount">0</span> of 3-5 photos captured
+                                            </div>
+                                            
+                                            <div class="camera-controls">
+                                                <button class="control-btn btn btn-outline-warning" onclick="switchCamera()">
+                                                    <i class="fas fa-sync-alt me-2"></i> Switch Camera
+                                                </button>
+                                                <button class="control-btn btn btn-danger" onclick="retakePhotos()" id="retakePhotosBtn" style="display: none;">
+                                                    <i class="fas fa-redo me-2"></i> Retake All
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-md-6">
+                                    <!-- Photo Gallery -->
+                                    <h6 class="mb-3"><i class="fas fa-images me-2"></i> Captured Photos</h6>
+                                    <div class="photo-gallery" id="photoGallery">
+                                        <!-- Photos will be added here dynamically -->
+                                        <div class="photo-item">
+                                            <div class="photo-thumbnail empty">
+                                                <i class="fas fa-camera"></i>
+                                            </div>
+                                        </div>
+                                        <div class="photo-item">
+                                            <div class="photo-thumbnail empty">
+                                                <i class="fas fa-camera"></i>
+                                            </div>
+                                        </div>
+                                        <div class="photo-item">
+                                            <div class="photo-thumbnail empty">
+                                                <i class="fas fa-camera"></i>
+                                            </div>
+                                        </div>
+                                        <div class="photo-item">
+                                            <div class="photo-thumbnail empty">
+                                                <i class="fas fa-camera"></i>
+                                            </div>
+                                        </div>
+                                        <div class="photo-item">
+                                            <div class="photo-thumbnail empty">
+                                                <i class="fas fa-camera"></i>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Face Detection Requirements -->
+                                    <div class="detection-requirements mt-4">
+                                        <p class="mb-2"><strong>Face Detection Requirements:</strong></p>
+                                        <div class="requirement-item" id="reqFaceDetected">
+                                            <i class="fas fa-circle" style="color: #ff4757;"></i>
+                                            <span>Face must be detected</span>
+                                        </div>
+                                        <div class="requirement-item" id="reqFaceCentered">
+                                            <i class="fas fa-circle" style="color: #ff4757;"></i>
+                                            <span>Face must be in green box</span>
+                                        </div>
+                                        <div class="requirement-item" id="reqFaceStable">
+                                            <i class="fas fa-circle" style="color: #ff4757;"></i>
+                                            <span>Face must be stable</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="step-navigation mt-4">
+                                        <button type="button" class="btn btn-outline-primary" onclick="prevStep(2)">
+                                            <i class="fas fa-arrow-left me-2"></i> Back
+                                        </button>
+                                        <button type="button" class="btn btn-success" id="completeRegistrationBtn" onclick="completeRegistration()" disabled>
+                                            <i class="fas fa-user-plus me-2"></i> Complete Registration
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Message Container -->
+                        <div id="message" class="mt-4"></div>
+                        
+                        <!-- Loading Spinner -->
+                        <div class="loading-spinner" id="loadingSpinner">
+                            <div class="spinner"></div>
+                            <p class="mt-2">Processing registration...</p>
+                        </div>
+                        
+                        <!-- Success Animation -->
+                        <div class="success-animation" id="successAnimation" style="display: none;">
+                            <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 52 52">
+                                <circle class="checkmark__circle" cx="26" cy="26" r="25" fill="none"/>
+                                <path class="checkmark__check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8"/>
+                            </svg>
+                            <h4 class="mt-3 text-success">Registration Successful!</h4>
+                            <p id="successMessage" class="mb-3"></p>
+                            <div class="reference-number-display mt-3">
+                                <div class="reference-label">YOUR REFERENCE NUMBER</div>
+                                <div class="reference-number" id="finalReferenceNumber"></div>
+                                <p class="small text-muted mt-2">Save this number for future reference</p>
+                            </div>
+                            <button class="btn btn-primary mt-3" onclick="resetForm()">
+                                <i class="fas fa-plus me-2"></i> Register Another Driver
+                            </button>
+                            <a href="index.html" class="btn btn-outline-primary mt-3 ms-2">
+                                <i class="fas fa-home me-2"></i> Back to Dashboard
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PWA Install Prompt -->
+    <div id="installPrompt" class="alert alert-info d-none">
+        <div class="d-flex align-items-center">
+            <i class="fas fa-download me-2"></i>
+            <span>Install Driver App for better experience</span>
+            <button class="btn btn-sm btn-primary ms-3" id="installBtn">Install</button>
+            <button class="btn btn-sm btn-outline-secondary ms-2" id="dismissInstall">Later</button>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Socket.io for real-time notifications -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.0/socket.io.min.js"></script>
+    
+    <script>
+        // Global variables
+        const API_BASE = 'http://localhost:5000/api';
+        let video = document.getElementById('video');
+        let canvas = document.getElementById('canvas');
+        let context = canvas.getContext('2d');
+        let currentStream = null;
+        let cameraIndex = 0;
+        let isFaceDetected = false;
+        let faceDetectionInterval = null;
+        
+        // Registration data with auto-generated reference number
+        let driverData = {
+            name: '',
+            phone: '',
+            address: '',
+            email: '',
+            dateOfBirth: '',
+            guardian_name: '',
+            guardian_phone: '',
+            guardian_email: '',
+            relationship: '',
+            reference_number: '', // Auto-generated reference number
+            images: [] // Array to store captured images
+        };
+        
+        // Face detection variables
+        let facePositionHistory = [];
+        const MAX_POSITION_HISTORY = 10;
+        let consecutiveNoFaceCount = 0;
+        const MAX_CONSECUTIVE_NO_FACE = 3;
+        const REQUIRED_PHOTOS_MIN = 3;
+        const REQUIRED_PHOTOS_MAX = 5;
+
+        // ==================== PWA FUNCTIONS ====================
+        let deferredPrompt;
+        let socket;
+
+        // Initialize PWA
+        function initPWA() {
+            // Register service worker
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('/service-worker.js')
+                    .then(registration => {
+                        console.log('✅ Service Worker registered:', registration.scope);
+                        
+                        // Request notification permission
+                        if ('Notification' in window && Notification.permission === 'default') {
+                            Notification.requestPermission().then(permission => {
+                                console.log('Notification permission:', permission);
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        console.log('❌ Service Worker registration failed:', error);
+                    });
+            }
+
+            // Check if app is already installed
+            if (window.matchMedia('(display-mode: standalone)').matches) {
+                console.log('✅ App is running in standalone mode');
+                document.body.classList.add('standalone-mode');
+            }
+
+            // Handle install prompt
+            window.addEventListener('beforeinstallprompt', (e) => {
+                e.preventDefault();
+                deferredPrompt = e;
+                
+                // Show install prompt after 3 seconds
+                setTimeout(() => {
+                    if (!window.matchMedia('(display-mode: standalone)').matches) {
+                        showInstallPrompt();
+                    }
+                }, 3000);
+            });
+
+            // Handle app installed
+            window.addEventListener('appinstalled', () => {
+                console.log('✅ App installed successfully');
+                hideInstallPrompt();
+                document.body.classList.add('standalone-mode');
+                
+                // Show success message
+                showToast('App installed successfully!', 'success');
+            });
+
+            // Setup install button
+            document.getElementById('installBtn').addEventListener('click', installApp);
+            document.getElementById('dismissInstall').addEventListener('click', hideInstallPrompt);
+
+            // Initialize real-time notifications
+            initRealTimeNotifications();
+        }
+
+        // Show install prompt
+        function showInstallPrompt() {
+            const installPrompt = document.getElementById('installPrompt');
+            if (installPrompt && deferredPrompt) {
+                installPrompt.classList.remove('d-none');
+            }
+        }
+
+        // Hide install prompt
+        function hideInstallPrompt() {
+            const installPrompt = document.getElementById('installPrompt');
+            if (installPrompt) {
+                installPrompt.classList.add('d-none');
+            }
+        }
+
+        // Install app
+        function installApp() {
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                deferredPrompt.userChoice.then(choice => {
+                    if (choice.outcome === 'accepted') {
+                        console.log('User accepted install');
+                    }
+                    deferredPrompt = null;
+                    hideInstallPrompt();
+                });
+            }
+        }
+
+        // Initialize real-time notifications
+        function initRealTimeNotifications() {
+            // Connect to WebSocket server
+            socket = io('http://' + window.location.hostname + ':5000');
+            
+            socket.on('connect', () => {
+                console.log('✅ Connected to alert server');
+            });
+            
+            socket.on('disconnect', () => {
+                console.log('❌ Disconnected from alert server');
+            });
+            
+            socket.on('alert', (data) => {
+                console.log('🚨 Alert received:', data);
+                showAlertNotification(data);
+            });
+            
+            socket.on('driver_registered', (data) => {
+                console.log('👤 Driver registered:', data);
+                if (window.location.pathname.includes('index.html')) {
+                    // Refresh dashboard if on index page
+                    loadDriverCount();
+                    loadRecentDrivers();
+                }
+            });
+        }
+
+        // Show alert notification
+        function showAlertNotification(data) {
+            // Show browser notification
+            if ('Notification' in window && Notification.permission === 'granted') {
+                const notification = new Notification(`🚨 Drowsiness Alert: ${data.driver_name}`, {
+                    body: data.message || 'Driver needs attention!',
+                    icon: '/icon-192.png',
+                    badge: '/icon-192.png',
+                    tag: 'drowsiness-alert'
+                });
+                
+                notification.onclick = () => {
+                    window.focus();
+                    notification.close();
+                };
+            }
+            
+            // Show in-app toast
+            showToast(`Alert: ${data.driver_name} needs attention!`, 'danger', 10000);
+        }
+
+        // Show toast notification
+        function showToast(message, type = 'info', duration = 5000) {
+            const toastId = 'toast-' + Date.now();
+            const toastHtml = `
+                <div id="${toastId}" class="toast-notification alert alert-${type} alert-dismissible fade show">
+                    <button type="button" class="btn-close" onclick="document.getElementById('${toastId}').remove()"></button>
+                    ${message}
+                </div>
+            `;
+            
+            document.body.insertAdjacentHTML('beforeend', toastHtml);
+            
+            // Auto-remove after duration
+            setTimeout(() => {
+                const toast = document.getElementById(toastId);
+                if (toast) toast.remove();
+            }, duration);
+        }
+
+        // ==================== REGISTRATION FUNCTIONS ====================
+        
+        // Generate a unique reference number
+        function generateReferenceNumber() {
+            // Format: DRV-YYYYMMDD-XXXXX
+            const date = new Date();
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const random = String(Math.floor(10000 + Math.random() * 90000)); // 5-digit random
+            
+            return `DRV-${year}${month}${day}-${random}`;
+        }
+
+        // Update the reference number display
+        function updateReferenceNumberDisplay() {
+            const referenceNumber = generateReferenceNumber();
+            driverData.reference_number = referenceNumber;
+            document.getElementById('referenceNumberDisplay').textContent = referenceNumber;
+        }
+
+        // Check if face is inside the green guide box
+        function isFaceInGuideBox(faceCenterX, faceCenterY, faceSize) {
+            const guideBox = document.querySelector('.face-guide');
+            if (!guideBox) return false;
+            
+            const guideRect = guideBox.getBoundingClientRect();
+            const videoRect = video.getBoundingClientRect();
+            
+            // Convert face coordinates from canvas to screen
+            const canvasScaleX = videoRect.width / canvas.width;
+            const canvasScaleY = videoRect.height / canvas.height;
+            
+            const faceScreenX = videoRect.left + (faceCenterX * canvasScaleX);
+            const faceScreenY = videoRect.top + (faceCenterY * canvasScaleY);
+            
+            // Check if face center is inside guide box with some tolerance
+            const tolerance = 20;
+            return (
+                faceScreenX >= guideRect.left - tolerance &&
+                faceScreenX <= guideRect.right + tolerance &&
+                faceScreenY >= guideRect.top - tolerance &&
+                faceScreenY <= guideRect.bottom + tolerance
+            );
+        }
+
+        // Enhanced face detection
+        function detectFaceEnhanced() {
+            if (!video.srcObject || driverData.images.length >= REQUIRED_PHOTOS_MAX) return;
+
+            try {
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                const data = imageData.data;
+                
+                let skinTonePixels = 0;
+                let faceCenterX = 0;
+                let faceCenterY = 0;
+                let faceMinX = canvas.width;
+                let faceMinY = canvas.height;
+                let faceMaxX = 0;
+                let faceMaxY = 0;
+                
+                // Skin tone detection
+                for (let i = 0; i < data.length; i += 4) {
+                    const r = data[i];
+                    const g = data[i + 1];
+                    const b = data[i + 2];
+                    
+                    // Simple skin tone detection
+                    const isSkinTone = (
+                        r > g && r > b &&
+                        Math.abs(r - g) > 10 &&
+                        r > 50 && r < 230 &&
+                        b < Math.min(r, g) + 20
+                    );
+                    
+                    if (isSkinTone) {
+                        skinTonePixels++;
+                        const x = (i / 4) % canvas.width;
+                        const y = Math.floor((i / 4) / canvas.width);
+                        faceCenterX += x;
+                        faceCenterY += y;
+                        
+                        if (x < faceMinX) faceMinX = x;
+                        if (x > faceMaxX) faceMaxX = x;
+                        if (y < faceMinY) faceMinY = y;
+                        if (y > faceMaxY) faceMaxY = y;
+                    }
+                }
+                
+                const hasFace = skinTonePixels > 150;
+                
+                if (hasFace) {
+                    faceCenterX /= skinTonePixels;
+                    faceCenterY /= skinTonePixels;
+                    
+                    const faceWidth = faceMaxX - faceMinX;
+                    const faceHeight = faceMaxY - faceMinY;
+                    const faceSize = Math.max(faceWidth, faceHeight);
+                    
+                    // Check if face is inside green box
+                    const isInGreenBox = isFaceInGuideBox(faceCenterX, faceCenterY, faceSize);
+                    
+                    // Track face position for stability check
+                    facePositionHistory.push({ x: faceCenterX, y: faceCenterY });
+                    if (facePositionHistory.length > MAX_POSITION_HISTORY) {
+                        facePositionHistory.shift();
+                    }
+                    
+                    // Check face stability
+                    let isStable = false;
+                    if (facePositionHistory.length >= 5) {
+                        const recentPositions = facePositionHistory.slice(-5);
+                        const avgX = recentPositions.reduce((sum, pos) => sum + pos.x, 0) / recentPositions.length;
+                        const avgY = recentPositions.reduce((sum, pos) => sum + pos.y, 0) / recentPositions.length;
+                        
+                        const totalMovement = recentPositions.reduce((sum, pos) => {
+                            return sum + Math.sqrt(Math.pow(pos.x - avgX, 2) + Math.pow(pos.y - avgY, 2));
+                        }, 0);
+                        
+                        const avgMovement = totalMovement / recentPositions.length;
+                        isStable = avgMovement < 15;
+                    }
+                    
+                    consecutiveNoFaceCount = 0;
+                    
+                    // Update face detection status
+                    updateFaceDetectionStatus(true, {
+                        isInGreenBox: isInGreenBox,
+                        isStable: isStable,
+                        faceSize: faceSize
+                    });
+                    
+                    // Enable capture button if all conditions are met
+                    const canCapture = hasFace && isInGreenBox && isStable;
+                    document.getElementById('captureBtn').disabled = !canCapture;
+                    
+                    isFaceDetected = canCapture;
+                    
+                } else {
+                    consecutiveNoFaceCount++;
+                    
+                    if (consecutiveNoFaceCount >= MAX_CONSECUTIVE_NO_FACE) {
+                        updateFaceDetectionStatus(false);
+                        document.getElementById('captureBtn').disabled = true;
+                        isFaceDetected = false;
+                    }
+                }
+                
+            } catch (error) {
+                console.error('Face detection error:', error);
+            }
+        }
+
+        // Update face detection status
+        function updateFaceDetectionStatus(isDetected, metrics = null) {
+            const faceDetectionStatus = document.getElementById('faceDetectionStatus');
+            
+            if (isDetected && metrics) {
+                const { isInGreenBox, isStable } = metrics;
+                
+                if (isInGreenBox && isStable) {
+                    faceDetectionStatus.innerHTML = `<i class="fas fa-check-circle me-1" style="color: #2ed573;"></i> Ready to capture`;
+                    faceDetectionStatus.style.background = 'rgba(46, 213, 115, 0.9)';
+                } else if (isInGreenBox) {
+                    faceDetectionStatus.innerHTML = `<i class="fas fa-exclamation-circle me-1" style="color: #f6c23e;"></i> Stay still`;
+                    faceDetectionStatus.style.background = 'rgba(246, 194, 62, 0.9)';
+                } else {
+                    faceDetectionStatus.innerHTML = `<i class="fas fa-times-circle me-1" style="color: #ff4757;"></i> Move face to green box`;
+                    faceDetectionStatus.style.background = 'rgba(255, 71, 87, 0.9)';
+                }
+                
+                // Update requirements
+                updateRequirementIndicators(true, isInGreenBox, isStable);
+                
+            } else {
+                faceDetectionStatus.innerHTML = `<i class="fas fa-times-circle me-1" style="color: #ff4757;"></i> No face detected`;
+                faceDetectionStatus.style.background = 'rgba(255, 71, 87, 0.9)';
+                updateRequirementIndicators(false, false, false);
+            }
+        }
+
+        // Update requirement indicators
+        function updateRequirementIndicators(faceDetected, faceInGreenBox, faceStable) {
+            const reqFaceDetected = document.getElementById('reqFaceDetected');
+            const reqFaceCentered = document.getElementById('reqFaceCentered');
+            const reqFaceStable = document.getElementById('reqFaceStable');
+            
+            // Update face detected requirement
+            if (faceDetected) {
+                reqFaceDetected.innerHTML = '<i class="fas fa-check-circle" style="color: #2ed573;"></i> Face detected';
+                reqFaceDetected.className = 'requirement-item valid';
+            } else {
+                reqFaceDetected.innerHTML = '<i class="fas fa-times-circle" style="color: #ff4757;"></i> Face must be detected';
+                reqFaceDetected.className = 'requirement-item invalid';
+            }
+            
+            // Update face in green box requirement
+            if (faceInGreenBox) {
+                reqFaceCentered.innerHTML = '<i class="fas fa-check-circle" style="color: #2ed573;"></i> Face in green box';
+                reqFaceCentered.className = 'requirement-item valid';
+            } else {
+                reqFaceCentered.innerHTML = '<i class="fas fa-times-circle" style="color: #ff4757;"></i> Face must be in green box';
+                reqFaceCentered.className = 'requirement-item invalid';
+            }
+            
+            // Update face stable requirement
+            if (faceStable) {
+                reqFaceStable.innerHTML = '<i class="fas fa-check-circle" style="color: #2ed573;"></i> Face stable';
+                reqFaceStable.className = 'requirement-item valid';
+            } else {
+                reqFaceStable.innerHTML = '<i class="fas fa-times-circle" style="color: #ff4757;"></i> Face must be stable';
+                reqFaceStable.className = 'requirement-item invalid';
+            }
+        }
+
+        // Capture photo
+        function capturePhoto() {
+            if (!currentStream || !isFaceDetected) {
+                showMessage('error', 'Cannot capture: Face must be detected and stable inside green box');
+                return;
+            }
+
+            // Get image data
+            const imageData = canvas.toDataURL('image/jpeg', 0.9);
+            
+            // Add to driver data
+            driverData.images.push(imageData);
+            
+            // Update photo gallery
+            updatePhotoGallery();
+            
+            // Update progress
+            updateCaptureProgress();
+            
+            // Show success message
+            const photoNum = driverData.images.length;
+            showMessage('success', `<i class="fas fa-check-circle me-2"></i> Photo ${photoNum} captured successfully!`);
+            
+            // Check if we have enough photos
+            if (driverData.images.length >= REQUIRED_PHOTOS_MIN) {
+                document.getElementById('completeRegistrationBtn').disabled = false;
+            }
+            
+            // Check if we've reached maximum photos
+            if (driverData.images.length >= REQUIRED_PHOTOS_MAX) {
+                document.getElementById('captureBtn').disabled = true;
+                showMessage('info', '<i class="fas fa-info-circle me-2"></i> Maximum photos captured. You can now complete registration.');
+            }
+            
+            // Briefly disable capture to prevent rapid captures
+            document.getElementById('captureBtn').disabled = true;
+            setTimeout(() => {
+                if (isFaceDetected) {
+                    document.getElementById('captureBtn').disabled = false;
+                }
+            }, 1000);
+        }
+
+        // Update photo gallery
+        function updatePhotoGallery() {
+            const gallery = document.getElementById('photoGallery');
+            gallery.innerHTML = '';
+            
+            // Show captured photos
+            driverData.images.forEach((image, index) => {
+                const photoItem = document.createElement('div');
+                photoItem.className = 'photo-item';
+                photoItem.innerHTML = `
+                    <div class="photo-thumbnail captured" style="background-image: url(${image}); background-size: cover;">
+                        <div class="photo-counter">${index + 1}</div>
+                    </div>
+                `;
+                gallery.appendChild(photoItem);
+            });
+            
+            // Show empty slots for remaining photos
+            const remaining = REQUIRED_PHOTOS_MAX - driverData.images.length;
+            for (let i = 0; i < remaining; i++) {
+                const photoItem = document.createElement('div');
+                photoItem.className = 'photo-item';
+                photoItem.innerHTML = '<div class="photo-thumbnail empty"><i class="fas fa-camera"></i></div>';
+                gallery.appendChild(photoItem);
+            }
+            
+            // Update photos count
+            document.getElementById('photosCount').textContent = driverData.images.length;
+            
+            // Show/hide retake button
+            document.getElementById('retakePhotosBtn').style.display = driverData.images.length > 0 ? 'inline-block' : 'none';
+        }
+
+        // Update capture progress
+        function updateCaptureProgress() {
+            const progress = (driverData.images.length / REQUIRED_PHOTOS_MAX) * 100;
+            document.getElementById('captureProgressBar').style.width = `${progress}%`;
+        }
+
+        // Retake all photos
+        function retakePhotos() {
+            driverData.images = [];
+            updatePhotoGallery();
+            updateCaptureProgress();
+            document.getElementById('completeRegistrationBtn').disabled = true;
+            showMessage('info', '<i class="fas fa-info-circle me-2"></i> All photos cleared. You can start capturing again.');
+        }
+
+        // Switch between available cameras
+        async function switchCamera() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                
+                if (videoDevices.length === 0) {
+                    showMessage('error', 'No cameras available');
+                    return;
+                }
+                
+                // Move to next camera
+                cameraIndex = (cameraIndex + 1) % videoDevices.length;
+                
+                // Stop current camera
+                if (currentStream) {
+                    stopCamera();
+                }
+                
+                // Start with new camera
+                setTimeout(() => startCamera(), 300);
+                
+            } catch (error) {
+                console.error('Error switching camera:', error);
+                showMessage('error', 'Error switching camera');
+            }
+        }
+
+        // Start camera
+        async function startCamera() {
+            try {
+                if (currentStream) {
+                    stopCamera();
+                }
+
+                const constraints = {
+                    video: {
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        facingMode: 'user'
+                    },
+                    audio: false
+                };
+
+                // Get all cameras
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                
+                if (videoDevices.length > 0 && cameraIndex < videoDevices.length) {
+                    constraints.video.deviceId = { exact: videoDevices[cameraIndex].deviceId };
+                }
+
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                currentStream = stream;
+                video.srcObject = stream;
+                
+                const track = stream.getVideoTracks()[0];
+                const settings = track.getSettings();
+                canvas.width = settings.width || 640;
+                canvas.height = settings.height || 480;
+                
+                updateCameraStatus(true, 'Camera Active');
+                document.getElementById('captureBtn').disabled = true;
+                
+                startFaceDetection();
+                
+            } catch (error) {
+                console.error('Error starting camera:', error);
+                updateCameraStatus(false, 'Camera Error');
+                
+                showMessage('error', `
+                    <h5><i class="fas fa-exclamation-triangle me-2"></i> Camera Access Required</h5>
+                    <p>Please allow camera access in your browser settings.</p>
+                `);
+            }
+        }
+
+        // Start face detection loop
+        function startFaceDetection() {
+            if (faceDetectionInterval) {
+                clearInterval(faceDetectionInterval);
+            }
+            
+            // Reset face detection state
+            isFaceDetected = false;
+            facePositionHistory = [];
+            consecutiveNoFaceCount = 0;
+            
+            // Run face detection every 200ms
+            faceDetectionInterval = setInterval(detectFaceEnhanced, 200);
+        }
+
+        // Stop camera
+        function stopCamera() {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => {
+                    track.stop();
+                });
+                currentStream = null;
+                video.srcObject = null;
+            }
+            
+            if (faceDetectionInterval) {
+                clearInterval(faceDetectionInterval);
+                faceDetectionInterval = null;
+            }
+            
+            updateCameraStatus(false, 'Camera Offline');
+            document.getElementById('captureBtn').disabled = true;
+        }
+
+        // Update camera status
+        function updateCameraStatus(isActive, message) {
+            const statusDiv = document.getElementById('cameraStatus');
+            if (isActive) {
+                statusDiv.innerHTML = `<i class="fas fa-circle me-1" style="color: #2ed573;"></i> ${message}`;
+            } else {
+                statusDiv.innerHTML = `<i class="fas fa-circle me-1" style="color: #ff4757;"></i> ${message}`;
+            }
+        }
+
+        // Navigation between steps
+        function nextStep(stepNumber) {
+            // Validate current step before proceeding
+            if (stepNumber === 2) {
+                // Validate personal info
+                const requiredFields = ['driverName', 'phone', 'address'];
+                let isValid = true;
+                
+                requiredFields.forEach(fieldId => {
+                    const field = document.getElementById(fieldId);
+                    if (!field.value.trim()) {
+                        field.classList.add('is-invalid');
+                        isValid = false;
+                    } else {
+                        field.classList.remove('is-invalid');
+                    }
+                });
+                
+                if (!isValid) {
+                    showMessage('danger', '<i class="fas fa-exclamation-circle me-2"></i> Please fill all required fields');
+                    return;
+                }
+                
+                // Save personal info
+                driverData.name = document.getElementById('driverName').value.trim();
+                driverData.phone = document.getElementById('phone').value.trim();
+                driverData.address = document.getElementById('address').value.trim();
+                driverData.email = document.getElementById('email').value.trim();
+                driverData.dateOfBirth = document.getElementById('dateOfBirth').value;
+                
+            } else if (stepNumber === 3) {
+                // Validate guardian info
+                const requiredFields = ['guardianName', 'guardianPhone'];
+                let isValid = true;
+                
+                requiredFields.forEach(fieldId => {
+                    const field = document.getElementById(fieldId);
+                    if (!field.value.trim()) {
+                        field.classList.add('is-invalid');
+                        isValid = false;
+                    } else {
+                        field.classList.remove('is-invalid');
+                    }
+                });
+                
+                if (!isValid) {
+                    showMessage('danger', '<i class="fas fa-exclamation-circle me-2"></i> Please fill all required guardian fields');
+                    return;
+                }
+                
+                // Save guardian info
+                driverData.guardian_name = document.getElementById('guardianName').value.trim();
+                driverData.guardian_phone = document.getElementById('guardianPhone').value.trim();
+                driverData.guardian_email = document.getElementById('guardianEmail').value.trim();
+                driverData.relationship = document.getElementById('relationship').value;
+                
+                // Start camera when entering step 3
+                setTimeout(() => startCamera(), 300);
+            }
+            
+            // Update steps
+            document.querySelectorAll('.step').forEach(step => {
+                step.classList.remove('active');
+            });
+            document.querySelectorAll('.step-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            document.getElementById(`step${stepNumber}`).classList.add('active');
+            document.getElementById(`step${stepNumber}-content`).classList.add('active');
+        }
+
+        function prevStep(stepNumber) {
+            // Update steps
+            document.querySelectorAll('.step').forEach(step => {
+                step.classList.remove('active');
+            });
+            document.querySelectorAll('.step-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            document.getElementById(`step${stepNumber}`).classList.add('active');
+            document.getElementById(`step${stepNumber}-content`).classList.add('active');
+        }
+
+        // Complete registration
+        async function completeRegistration() {
+            // Validate we have enough photos
+            if (driverData.images.length < REQUIRED_PHOTOS_MIN) {
+                showMessage('warning', `<i class="fas fa-camera me-2"></i> Please capture at least ${REQUIRED_PHOTOS_MIN} photos`);
+                return;
+            }
+            
+            // Generate a fresh reference number (in case page was open for long)
+            updateReferenceNumberDisplay();
+            
+            // Show loading
+            document.getElementById('loadingSpinner').style.display = 'block';
+            document.getElementById('message').innerHTML = '';
+            
+            try {
+                // Prepare final data WITH reference_number (NOT license_number)
+                const registrationData = {
+                    name: driverData.name,
+                    phone: driverData.phone,
+                    address: driverData.address,
+                    email: driverData.email,
+                    date_of_birth: driverData.dateOfBirth,
+                    guardian_name: driverData.guardian_name,
+                    guardian_phone: driverData.guardian_phone,
+                    guardian_email: driverData.guardian_email,
+                    relationship: driverData.relationship,
+                    reference_number: driverData.reference_number, // AUTO-GENERATED REFERENCE NUMBER
+                    images: driverData.images // Array of base64 images
+                };
+                
+                const response = await fetch(`${API_BASE}/register-driver`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(registrationData)
+                });
+
+                const result = await response.json();
+                
+                document.getElementById('loadingSpinner').style.display = 'none';
+                
+                if (result.success) {
+                    // Hide step content, show success
+                    document.getElementById('step3-content').style.display = 'none';
+                    document.getElementById('successAnimation').style.display = 'block';
+                    document.getElementById('successMessage').innerHTML = `
+                        Driver <strong>${driverData.name}</strong> has been registered successfully!<br>
+                    `;
+                    document.getElementById('finalReferenceNumber').textContent = driverData.reference_number;
+                    
+                    // Stop camera
+                    stopCamera();
+                    
+                    // Show success toast
+                    showToast('Driver registered successfully!', 'success');
+                    
+                    // Notify dashboard via socket
+                    if (socket && socket.connected) {
+                        socket.emit('driver_registered', {
+                            driver_id: result.driver_id,
+                            name: driverData.name,
+                            timestamp: new Date().toISOString()
+                        });
+                    }
+                    
+                } else {
+                    showMessage('danger', `<i class="fas fa-exclamation-triangle me-2"></i> Error: ${result.error}`);
+                    showToast('Registration failed: ' + result.error, 'danger');
+                }
+            } catch (error) {
+                document.getElementById('loadingSpinner').style.display = 'none';
+                showMessage('danger', `<i class="fas fa-exclamation-triangle me-2"></i> Connection error: ${error.message}`);
+                showToast('Connection error: ' + error.message, 'danger');
+            }
+        }
+
+        // Show message
+        function showMessage(type, content) {
+            const messageDiv = document.getElementById('message');
+            messageDiv.innerHTML = `
+                <div class="alert alert-${type} alert-dismissible fade show">
+                    ${content}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            `;
+            
+            // Auto-remove success messages after 5 seconds
+            if (type === 'success') {
+                setTimeout(() => {
+                    const alert = messageDiv.querySelector('.alert');
+                    if (alert) {
+                        alert.remove();
+                    }
+                }, 5000);
+            }
+        }
+
+        // Reset form
+        function resetForm() {
+            // Reset driver data
+            driverData = {
+                name: '',
+                phone: '',
+                address: '',
+                email: '',
+                dateOfBirth: '',
+                guardian_name: '',
+                guardian_phone: '',
+                guardian_email: '',
+                relationship: '',
+                reference_number: '',
+                images: []
+            };
+            
+            // Generate new reference number
+            updateReferenceNumberDisplay();
+            
+            // Reset forms
+            document.getElementById('personalInfoForm').reset();
+            document.getElementById('guardianInfoForm').reset();
+            
+            // Reset photos
+            retakePhotos();
+            
+            // Hide success, show step 1
+            document.getElementById('successAnimation').style.display = 'none';
+            document.getElementById('step3-content').style.display = 'block';
+            
+            // Go back to step 1
+            document.querySelectorAll('.step').forEach(step => {
+                step.classList.remove('active');
+                step.classList.remove('completed');
+            });
+            document.querySelectorAll('.step-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            document.getElementById('step1').classList.add('active');
+            document.getElementById('step1-content').classList.add('active');
+            
+            // Clear messages
+            document.getElementById('message').innerHTML = '';
+            
+            // Restart camera if needed
+            setTimeout(() => {
+                if (currentStream) {
+                    stopCamera();
+                }
+            }, 300);
+        }
+
+        // Initialize page
+        window.onload = function() {
+            // Initialize PWA
+            initPWA();
+            
+            // Generate initial reference number
+            updateReferenceNumberDisplay();
+            
+            // Set max date for date of birth (18 years ago)
+            const today = new Date();
+            const maxDate = new Date(today.getFullYear() - 18, today.getMonth(), today.getDate());
+            document.getElementById('dateOfBirth').max = maxDate.toISOString().split('T')[0];
+            
+            // Add input validation
+            const inputs = document.querySelectorAll('input, textarea, select');
+            inputs.forEach(input => {
+                input.addEventListener('input', function() {
+                    this.classList.remove('is-invalid');
+                });
+            });
+            
+            // Check for offline support
+            window.addEventListener('online', () => {
+                showToast('Back online!', 'success');
+            });
+            
+            window.addEventListener('offline', () => {
+                showToast('You are offline. Some features may not work.', 'warning');
+            });
+        };
+
+        // Handle page visibility change
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                // Only stop camera if we're on step 3
+                if (document.getElementById('step3-content').classList.contains('active')) {
+                    stopCamera();
+                }
+            } else {
+                // Only restart camera if we're on step 3
+                if (document.getElementById('step3-content').classList.contains('active') && !currentStream) {
+                    startCamera();
+                }
+            }
+        });
+    </script>
+</body>
+</html>
