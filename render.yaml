@@ -1,12 +1,12 @@
-services:
+﻿services:
   - type: web
-    name: driver-drowsiness-system
+    name: driver-drowsiness-alert
     env: python
-    buildCommand: pip install -r backend/requirements.txt
+    buildCommand: pip install --upgrade pip && pip install -r backend/requirements.txt
     startCommand: cd backend && gunicorn wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --worker-class eventlet
     envVars:
       - key: PYTHON_VERSION
-        value: 3.9.0
+        value: 3.10.11
       - key: PORT
         value: 10000
       - key: RENDER

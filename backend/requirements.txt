@@ -1,4 +1,4 @@
-# Computer Vision & ML
+﻿# Computer Vision & ML
 opencv-python==4.8.1.78
 mediapipe==0.10.9
 numpy==1.24.3
@@ -16,18 +16,20 @@ Flask-CORS==4.0.0
 Flask-SocketIO==5.3.4
 python-socketio==5.9.0
 eventlet==0.33.3
+gunicorn==21.2.0  #  ADD THIS!
 
 # Utilities
-PyYAML
-pyserial>=3.5
+PyYAML==6.0.1  #  Add version
+pyserial==3.5  #  Add version
 joblib==1.3.1
 matplotlib==3.7.2
 kagglehub==0.2.6
 requests==2.31.0
 Pillow==10.0.0
+python-dotenv==1.0.0  #  ADD THIS for environment variables
 
 # Testing
 pytest==7.4.0
 
-#CERTIFICATION
+# CERTIFICATION
 pyopenssl==23.3.0
