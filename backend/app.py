@@ -1270,14 +1270,14 @@ def serve_home():
     if request.args.get('force') == 'mobile':
         return send_from_directory(FRONTEND_DIR, 'login.html')
     if request.args.get('force') == 'desktop':
-        return send_from_directory(FRONTEND_DIR, 'admin-login.html')
+        return send_from_directory(FRONTEND_DIR, 'admin_login.html')
     
     if is_mobile_device():
         return send_from_directory(FRONTEND_DIR, 'login.html')
     else:
-        return send_from_directory(FRONTEND_DIR, 'admin-login.html')
+        return send_from_directory(FRONTEND_DIR, 'admin_login.html')
 
-@app.route('/admin-login')
+@app.route('/admin_login')
 def serve_admin_login():
     """Admin login page"""
     return send_from_directory(FRONTEND_DIR, 'admin_login.html')
@@ -3237,7 +3237,7 @@ if __name__ == '__main__':
     print(f"🚀 Starting server on {host}:{port}")
     print(f"🌐 WebSocket endpoint: ws://{host}:{port}")
     print(f"📡 Alert endpoint: http://{host}:{port}/api/send-alert")
-    print(f"🔐 Admin login: http://{host}:{port}/admin-login")
+    print(f"🔐 Admin login: http://{host}:{port}/admin_login")
     print(f"👤 Guardian login: http://{host}:{port}/")
     
     # Run the application
