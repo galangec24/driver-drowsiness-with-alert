@@ -1,7 +1,7 @@
 ﻿"""
 CAPSTONE PROJECT - DRIVER ALERT SYSTEM
 Render.com Deployment Ready Version
-Updated with enhanced alert handling for drowsiness detection system
+Enhanced with Admin Authentication and Security Features
 """
 
 from flask import Flask, request, jsonify, send_from_directory, Response, redirect, g
@@ -20,6 +20,7 @@ import hashlib
 import secrets
 import threading
 import time
+import re
 from contextlib import contextmanager
 
 # ==================== RENDER DEPLOYMENT CONFIG ====================
@@ -69,7 +70,7 @@ CORS(app,
          r"/*": {
              "origins": ["*"] if IS_PRODUCTION else ["http://localhost:*", "http://127.0.0.1:*"],
              "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-             "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"]
+             "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "X-Admin-Username", "X-Admin-Token"]
          }
      })
 
@@ -82,6 +83,144 @@ socketio = SocketIO(app,
                    async_handlers=True,
                    logger=not IS_PRODUCTION,
                    engineio_logger=not IS_PRODUCTION)
+
+# ==================== SECURITY CONFIGURATION ====================
+# Admin credentials (In production, use environment variables!)
+ADMIN_CREDENTIALS = {
+    'admin': {
+        'password_hash': '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918',  # sha256 of 'admin123'
+        'full_name': 'System Administrator',
+        'role': 'super_admin',
+        'email': 'admin@driveralert.com',
+        'created_at': datetime.now().isoformat()
+    }
+}
+
+# Rate limiting storage
+admin_rate_limit = {}
+guardian_rate_limit = {}
+
+# Admin sessions storage (in production, use Redis or database)
+admin_sessions = {}
+
+# ==================== SECURITY FUNCTIONS ====================
+def hash_password(password):
+    """Hash password using SHA-256 with salt"""
+    salt = "dr1v3r_@l3rt_s@lt_" + os.environ.get('PEPPER', 'default_pepper')
+    return hashlib.sha256((password + salt).encode()).hexdigest()
+
+def verify_admin_credentials(username, password):
+    """Verify admin login credentials"""
+    if username not in ADMIN_CREDENTIALS:
+        return None
+    
+    # Hash the provided password
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    
+    # Compare with stored hash
+    if password_hash == ADMIN_CREDENTIALS[username]['password_hash']:
+        return {
+            'username': username,
+            'full_name': ADMIN_CREDENTIALS[username]['full_name'],
+            'role': ADMIN_CREDENTIALS[username]['role'],
+            'email': ADMIN_CREDENTIALS[username].get('email', '')
+        }
+    
+    return None
+
+def create_admin_session(username):
+    """Create admin session token"""
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now() + timedelta(hours=8)  # Admin sessions last 8 hours
+    
+    admin_sessions[username] = {
+        'token': token,
+        'expires': expires_at,
+        'created': datetime.now(),
+        'last_activity': datetime.now()
+    }
+    
+    return token, expires_at
+
+def validate_admin_token(username, token):
+    """Validate admin session token"""
+    if username not in admin_sessions:
+        return False
+    
+    session = admin_sessions[username]
+    
+    if (session['token'] == token and 
+        session['expires'] > datetime.now()):
+        # Update last activity
+        admin_sessions[username]['last_activity'] = datetime.now()
+        return True
+    
+    return False
+
+def cleanup_admin_sessions():
+    """Clean up expired admin sessions"""
+    current_time = datetime.now()
+    expired_users = []
+    
+    for username, session in admin_sessions.items():
+        if session['expires'] < current_time:
+            expired_users.append(username)
+    
+    for username in expired_users:
+        del admin_sessions[username]
+    
+    if expired_users and not IS_PRODUCTION:
+        print(f"🧹 Cleaned up {len(expired_users)} expired admin sessions")
+
+def require_admin_auth(f):
+    """Decorator to require admin authentication"""
+    def decorated_function(*args, **kwargs):
+        username = request.headers.get('X-Admin-Username')
+        token = request.headers.get('X-Admin-Token')
+        
+        if not username or not token:
+            return jsonify({
+                'success': False,
+                'error': 'Admin authentication required'
+            }), 401
+        
+        if not validate_admin_token(username, token):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid or expired admin session'
+            }), 401
+        
+        # Apply rate limiting
+        ip = request.remote_addr
+        if rate_limit_exceeded(ip, 'admin'):
+            return jsonify({
+                'success': False,
+                'error': 'Too many requests'
+            }), 429
+        
+        return f(*args, **kwargs)
+    
+    decorated_function.__name__ = f.__name__
+    return decorated_function
+
+def rate_limit_exceeded(ip, endpoint_type='general', limit=100):
+    """Check if rate limit is exceeded"""
+    current_time = time.time()
+    key = f"{ip}_{endpoint_type}"
+    
+    if key not in admin_rate_limit:
+        admin_rate_limit[key] = []
+    
+    # Remove old entries (last minute)
+    admin_rate_limit[key] = [t for t in admin_rate_limit[key] if current_time - t < 60]
+    
+    # Check if too many requests
+    if len(admin_rate_limit[key]) >= limit:
+        return True
+    
+    # Add current request
+    admin_rate_limit[key].append(current_time)
+    return False
 
 # ==================== DATABASE CONNECTION MANAGEMENT ====================
 def get_db():
@@ -151,7 +290,10 @@ def init_db():
                 password_hash TEXT NOT NULL,
                 address TEXT,
                 registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_login TIMESTAMP
+                last_login TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                failed_login_attempts INTEGER DEFAULT 0,
+                locked_until TIMESTAMP
             )
             ''')
             
@@ -167,6 +309,7 @@ def init_db():
                 license_number TEXT,
                 guardian_id INTEGER,
                 registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
                 FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
             )
             ''')
@@ -182,6 +325,7 @@ def init_db():
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 acknowledged BOOLEAN DEFAULT 0,
                 detection_details TEXT,
+                source TEXT DEFAULT 'system',
                 FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
                 FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
             )
@@ -221,8 +365,11 @@ def init_db():
             CREATE TABLE IF NOT EXISTS activity_log (
                 log_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 guardian_id INTEGER,
+                admin_username TEXT,
                 action TEXT,
                 details TEXT,
+                ip_address TEXT,
+                user_agent TEXT,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
             )
@@ -237,24 +384,68 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 expires_at TIMESTAMP,
                 is_valid BOOLEAN DEFAULT 1,
+                ip_address TEXT,
+                user_agent TEXT,
                 FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
             )
             ''')
             
-            # Check and add last_login column if not exists
-            try:
-                cursor.execute("SELECT last_login FROM guardians LIMIT 1")
-            except sqlite3.OperationalError:
-                print("📝 Adding last_login column to guardians table...")
-                cursor.execute('ALTER TABLE guardians ADD COLUMN last_login TIMESTAMP')
+            # Admin activity log table
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admin_activity_log (
+                log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                admin_username TEXT NOT NULL,
+                action TEXT,
+                details TEXT,
+                ip_address TEXT,
+                user_agent TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
+            # Check and add missing columns
+            columns_to_check = [
+                ('guardians', 'is_active'),
+                ('guardians', 'failed_login_attempts'),
+                ('guardians', 'locked_until'),
+                ('drivers', 'is_active'),
+                ('alerts', 'source'),
+                ('activity_log', 'admin_username'),
+                ('activity_log', 'ip_address'),
+                ('activity_log', 'user_agent'),
+                ('session_tokens', 'ip_address'),
+                ('session_tokens', 'user_agent')
+            ]
+            
+            for table, column in columns_to_check:
+                try:
+                    cursor.execute(f"SELECT {column} FROM {table} LIMIT 1")
+                except sqlite3.OperationalError:
+                    if column == 'is_active':
+                        cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} BOOLEAN DEFAULT 1')
+                    elif column == 'failed_login_attempts':
+                        cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} INTEGER DEFAULT 0')
+                    elif column == 'locked_until':
+                        cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} TIMESTAMP')
+                    elif column == 'source':
+                        cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} TEXT DEFAULT "system"')
+                    else:
+                        cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} TEXT')
+                    print(f"📝 Added {column} column to {table} table")
             
             # Create indexes for better performance
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_drivers_guardian ON drivers(guardian_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_drivers_active ON drivers(is_active)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_guardian ON alerts(guardian_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_expires ON session_tokens(expires_at)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_valid ON session_tokens(is_valid)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_driver ON drowsiness_events(driver_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_timestamp ON drowsiness_events(timestamp)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_guardians_active ON guardians(is_active)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_admin_activity_timestamp ON admin_activity_log(timestamp)')
             
             # Insert demo guardian if not exists
             cursor.execute('SELECT COUNT(*) FROM guardians WHERE phone = ?', ('09123456789',))
@@ -279,7 +470,7 @@ def generate_session_token():
     """Generate a secure session token"""
     return secrets.token_urlsafe(32)
 
-def create_session(guardian_id):
+def create_session(guardian_id, ip_address=None, user_agent=None):
     """Create a new session for guardian"""
     token = generate_session_token()
     expires_at = datetime.now() + timedelta(hours=24)
@@ -294,15 +485,16 @@ def create_session(guardian_id):
             
             # Create new session
             cursor.execute('''
-                INSERT INTO session_tokens (guardian_id, token, expires_at)
-                VALUES (?, ?, ?)
-            ''', (guardian_id, token, expires_at))
+                INSERT INTO session_tokens (guardian_id, token, expires_at, ip_address, user_agent)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (guardian_id, token, expires_at, ip_address, user_agent))
         
         # Store in memory for quick access
         active_sessions[guardian_id] = {
             'token': token,
             'expires': expires_at,
-            'created': datetime.now()
+            'created': datetime.now(),
+            'ip_address': ip_address
         }
         
         return token
@@ -382,36 +574,56 @@ def invalidate_session(guardian_id, token=None):
         return False
 
 # ==================== AUTHENTICATION FUNCTIONS ====================
-def hash_password(password):
-    """Hash password using SHA-256 with salt"""
-    salt = "dr1v3r_@l3rt_s@lt_" + os.environ.get('PEPPER', 'default_pepper')
-    return hashlib.sha256((password + salt).encode()).hexdigest()
-
 def verify_guardian_credentials(phone, password):
     """Verify guardian login credentials"""
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Get guardian with password hash
+            # Check if account is locked
             cursor.execute('''
-                SELECT guardian_id, full_name, password_hash 
+                SELECT guardian_id, full_name, password_hash, failed_login_attempts, locked_until
                 FROM guardians 
-                WHERE phone = ?
+                WHERE phone = ? AND is_active = 1
             ''', (phone,))
             
             result = cursor.fetchone()
             
             if result:
-                guardian_id, full_name, stored_hash = result
+                guardian_id, full_name, stored_hash, failed_attempts, locked_until = result
+                
+                # Check if account is locked
+                if locked_until and datetime.fromisoformat(locked_until) > datetime.now():
+                    remaining_time = (datetime.fromisoformat(locked_until) - datetime.now()).seconds // 60
+                    print(f"🔒 Account locked for {remaining_time} minutes")
+                    return {'error': 'Account locked', 'locked_until': locked_until}
+                
                 if hash_password(password) == stored_hash:
-                    # Update last login
+                    # Reset failed attempts on successful login
                     cursor.execute('''
-                        UPDATE guardians SET last_login = ? WHERE guardian_id = ?
+                        UPDATE guardians SET failed_login_attempts = 0, last_login = ? 
+                        WHERE guardian_id = ?
                     ''', (datetime.now(), guardian_id))
                     conn.commit()
                     
                     return {'guardian_id': guardian_id, 'full_name': full_name, 'phone': phone}
+                else:
+                    # Increment failed attempts
+                    failed_attempts += 1
+                    if failed_attempts >= 5:
+                        # Lock account for 30 minutes
+                        locked_until = datetime.now() + timedelta(minutes=30)
+                        cursor.execute('''
+                            UPDATE guardians SET failed_login_attempts = ?, locked_until = ?
+                            WHERE guardian_id = ?
+                        ''', (failed_attempts, locked_until.isoformat(), guardian_id))
+                        print(f"🔒 Account locked for 30 minutes due to {failed_attempts} failed attempts")
+                    else:
+                        cursor.execute('''
+                            UPDATE guardians SET failed_login_attempts = ?
+                            WHERE guardian_id = ?
+                        ''', (failed_attempts, guardian_id))
+                    conn.commit()
     except Exception as e:
         print(f"❌ Error verifying credentials: {e}")
     
@@ -433,14 +645,23 @@ def get_guardian_by_id(guardian_id):
         print(f"❌ Error getting guardian: {e}")
         return None
 
-def log_activity(guardian_id, action, details):
-    """Log guardian activity"""
+def log_activity(guardian_id=None, admin_username=None, action=None, details=None):
+    """Log guardian or admin activity"""
     try:
+        ip_address = request.remote_addr if request else None
+        user_agent = request.headers.get('User-Agent') if request else None
+        
         with get_db_cursor() as cursor:
-            cursor.execute('''
-                INSERT INTO activity_log (guardian_id, action, details)
-                VALUES (?, ?, ?)
-            ''', (guardian_id, action, details))
+            if admin_username:
+                cursor.execute('''
+                    INSERT INTO admin_activity_log (admin_username, action, details, ip_address, user_agent)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (admin_username, action, details, ip_address, user_agent))
+            else:
+                cursor.execute('''
+                    INSERT INTO activity_log (guardian_id, action, details, ip_address, user_agent)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (guardian_id, action, details, ip_address, user_agent))
     except Exception as e:
         print(f"⚠️ Error logging activity: {e}")
 
@@ -499,7 +720,7 @@ def get_guardian_drivers(guardian_id):
                        (SELECT COUNT(*) FROM alerts a WHERE a.driver_id = d.driver_id AND a.acknowledged = 0) as alert_count,
                        (SELECT COUNT(*) FROM face_images f WHERE f.driver_id = d.driver_id) as face_count
                 FROM drivers d
-                WHERE d.guardian_id = ?
+                WHERE d.guardian_id = ? AND d.is_active = 1
                 ORDER BY d.registration_date DESC
             ''', (guardian_id,))
             
@@ -556,7 +777,7 @@ def get_driver_by_name_or_id(identifier):
                 SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
                 FROM drivers d
                 JOIN guardians g ON d.guardian_id = g.guardian_id
-                WHERE d.driver_id = ?
+                WHERE d.driver_id = ? AND d.is_active = 1
             ''', (identifier,))
             
             result = cursor.fetchone()
@@ -567,7 +788,7 @@ def get_driver_by_name_or_id(identifier):
                     SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
                     FROM drivers d
                     JOIN guardians g ON d.guardian_id = g.guardian_id
-                    WHERE d.name LIKE ?
+                    WHERE d.name LIKE ? AND d.is_active = 1
                 ''', (f'%{identifier}%',))
                 result = cursor.fetchone()
             
@@ -575,6 +796,32 @@ def get_driver_by_name_or_id(identifier):
     except Exception as e:
         print(f"❌ Error getting driver: {e}")
         return None
+
+# ==================== SECURITY MIDDLEWARE ====================
+@app.before_request
+def apply_security_headers():
+    """Apply security headers to all responses"""
+    pass  # Headers are applied in after_request
+
+@app.after_request
+def add_security_headers(response):
+    """Add security headers to all responses"""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    
+    # CSP for production
+    if IS_PRODUCTION:
+        response.headers['Content-Security-Policy'] = (
+            "default-src 'self'; "
+            "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+            "style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self' https://cdn.jsdelivr.net; "
+            "connect-src 'self' ws: wss:"
+        )
+    
+    return response
 
 # ==================== SOCKET.IO HANDLERS ====================
 @socketio.on('connect')
@@ -668,43 +915,31 @@ def send_pending_alerts(guardian_id, client_id):
         print(f"❌ Error sending pending alerts: {e}")
 
 # ==================== MAIN ROUTES ====================
-@app.route('/api/test', methods=['GET'])
-def test_endpoint():
-    """Test endpoint for debugging"""
-    try:
-        return jsonify({
-            'success': True,
-            'message': 'Server is running',
-            'environment': 'production' if IS_PRODUCTION else 'development',
-            'deployment': 'render' if IS_RENDER else 'local',
-            'timestamp': datetime.now().isoformat(),
-            'server_time': time.time(),
-            'connected_clients': len(connected_clients),
-            'active_sessions': len(active_sessions),
-            'frontend_dir': FRONTEND_DIR,
-            'database_path': DB_PATH
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
 @app.route('/')
 def serve_home():
-    """Main route - Serves login.html for mobile, index.html for desktop"""
+    """Main route - Redirects to admin login for desktop, mobile login for mobile"""
     
     # Check URL parameter first (for testing)
     if request.args.get('force') == 'mobile':
         return send_from_directory(FRONTEND_DIR, 'login.html')
     if request.args.get('force') == 'desktop':
-        return send_from_directory(FRONTEND_DIR, 'index.html')
+        return send_from_directory(FRONTEND_DIR, 'admin-login.html')
     
     # Device detection
     if is_mobile_device():
         return send_from_directory(FRONTEND_DIR, 'login.html')
     else:
-        return send_from_directory(FRONTEND_DIR, 'index.html')
+        return send_from_directory(FRONTEND_DIR, 'admin-login.html')  # Changed to admin login
+
+@app.route('/admin-login')
+def serve_admin_login():
+    """Admin login page"""
+    return send_from_directory(FRONTEND_DIR, 'admin-login.html')
+
+@app.route('/admin')
+def serve_admin_dashboard():
+    """Admin dashboard page - Check authentication via frontend"""
+    return send_from_directory(FRONTEND_DIR, 'index.html')
 
 @app.route('/guardian-register')
 def serve_guardian_register():
@@ -740,11 +975,6 @@ def serve_register_driver():
         return response
     
     return redirect('/?logged_out=true')
-
-@app.route('/admin')
-def admin_dashboard():
-    """Admin dashboard"""
-    return send_from_directory(FRONTEND_DIR, 'index.html')
 
 # ==================== PWA ROUTES ====================
 @app.route('/manifest.json')
@@ -806,6 +1036,7 @@ def health_check():
             'database': 'connected' if db_status else 'disconnected',
             'connected_clients': len(connected_clients),
             'active_sessions': len(active_sessions),
+            'admin_sessions': len(admin_sessions),
             'statistics': {
                 'guardians': guardian_count,
                 'drivers': driver_count,
@@ -821,6 +1052,466 @@ def health_check():
             'error': str(e)
         }), 500
 
+# ==================== ADMIN AUTHENTICATION ENDPOINTS ====================
+@app.route('/api/admin/login', methods=['POST'])
+def admin_login():
+    """Admin login endpoint"""
+    try:
+        data = request.json
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not username or not password:
+            return jsonify({
+                'success': False,
+                'error': 'Username and password required'
+            }), 400
+        
+        # Apply rate limiting
+        ip = request.remote_addr
+        if rate_limit_exceeded(ip, 'admin_login', limit=5):
+            return jsonify({
+                'success': False,
+                'error': 'Too many login attempts'
+            }), 429
+        
+        admin = verify_admin_credentials(username, password)
+        
+        if admin:
+            # Create session
+            token, expires_at = create_admin_session(username)
+            
+            # Clean up old sessions periodically
+            cleanup_admin_sessions()
+            
+            # Log admin activity
+            log_activity(admin_username=username, action='ADMIN_LOGIN', 
+                        details=f'Admin logged in from {request.remote_addr}')
+            
+            print(f"👑 Admin logged in: {admin['full_name']} ({username})")
+            
+            return jsonify({
+                'success': True,
+                'username': username,
+                'full_name': admin['full_name'],
+                'role': admin['role'],
+                'email': admin['email'],
+                'token': token,
+                'expires': expires_at.isoformat(),
+                'message': 'Admin login successful'
+            })
+        
+        return jsonify({
+            'success': False,
+            'error': 'Invalid admin credentials'
+        }), 401
+        
+    except Exception as e:
+        print(f"❌ Admin login error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/admin/validate', methods=['POST'])
+def admin_validate():
+    """Validate admin session"""
+    try:
+        data = request.json
+        username = data.get('username')
+        token = data.get('token')
+        
+        if not username or not token:
+            return jsonify({
+                'success': False,
+                'valid': False,
+                'error': 'Missing authentication data'
+            }), 400
+        
+        is_valid = validate_admin_token(username, token)
+        
+        if is_valid:
+            admin_info = ADMIN_CREDENTIALS.get(username, {})
+            return jsonify({
+                'success': True,
+                'valid': True,
+                'username': username,
+                'full_name': admin_info.get('full_name', 'Admin'),
+                'role': admin_info.get('role', 'admin'),
+                'expires': admin_sessions[username]['expires'].isoformat() if username in admin_sessions else None,
+                'message': 'Admin session valid'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'valid': False,
+                'error': 'Invalid or expired admin session'
+            }), 401
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'valid': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/admin/logout', methods=['POST'])
+def admin_logout():
+    """Admin logout"""
+    try:
+        data = request.json
+        username = data.get('username')
+        token = data.get('token')
+        
+        if not username or not token:
+            return jsonify({
+                'success': False,
+                'error': 'Missing authentication data'
+            }), 400
+        
+        # Validate before logout
+        if not validate_admin_token(username, token):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid session'
+            }), 401
+        
+        # Remove session
+        if username in admin_sessions:
+            del admin_sessions[username]
+        
+        # Log activity
+        log_activity(admin_username=username, action='ADMIN_LOGOUT', 
+                    details=f'Admin logged out')
+        
+        print(f"👑 Admin logged out: {username}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Admin logged out successfully'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/admin/extend-session', methods=['POST'])
+def admin_extend_session():
+    """Extend admin session"""
+    try:
+        data = request.json
+        username = data.get('username')
+        token = data.get('token')
+        
+        if not username or not token:
+            return jsonify({
+                'success': False,
+                'error': 'Missing authentication data'
+            }), 400
+        
+        if not validate_admin_token(username, token):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid session'
+            }), 401
+        
+        # Extend session by 1 hour
+        if username in admin_sessions:
+            admin_sessions[username]['expires'] = datetime.now() + timedelta(hours=1)
+            admin_sessions[username]['last_activity'] = datetime.now()
+        
+        return jsonify({
+            'success': True,
+            'expires': admin_sessions[username]['expires'].isoformat(),
+            'message': 'Session extended successfully'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# ==================== ADMIN MANAGEMENT ENDPOINTS ====================
+@app.route('/api/admin/db-drivers', methods=['GET'])
+@require_admin_auth
+def admin_get_drivers():
+    """Get all drivers from database - ADMIN ONLY"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
+                FROM drivers d
+                LEFT JOIN guardians g ON d.guardian_id = g.guardian_id
+                ORDER BY d.registration_date DESC
+            ''')
+            drivers = cursor.fetchall()
+            
+            cursor.execute('SELECT COUNT(*) as count FROM drivers')
+            count = cursor.fetchone()['count']
+            
+            cursor.execute('SELECT COUNT(*) as active_count FROM drivers WHERE is_active = 1')
+            active_count = cursor.fetchone()['active_count']
+            
+        return jsonify({
+            'success': True,
+            'count': count,
+            'active_count': active_count,
+            'drivers': [dict(driver) for driver in drivers]
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/db-alerts', methods=['GET'])
+@require_admin_auth
+def admin_get_alerts():
+    """Get all alerts from database - ADMIN ONLY"""
+    try:
+        limit = request.args.get('limit', 100, type=int)
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT a.*, d.name as driver_name, g.full_name as guardian_name
+                FROM alerts a
+                JOIN drivers d ON a.driver_id = d.driver_id
+                JOIN guardians g ON a.guardian_id = g.guardian_id
+                ORDER BY a.timestamp DESC
+                LIMIT ?
+            ''', (limit,))
+            
+            alerts = cursor.fetchall()
+            
+            # Parse detection details
+            result = []
+            for alert in alerts:
+                alert_dict = dict(alert)
+                if alert_dict.get('detection_details'):
+                    try:
+                        alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
+                    except:
+                        pass
+                result.append(alert_dict)
+            
+            cursor.execute('SELECT COUNT(*) as count FROM alerts')
+            count = cursor.fetchone()['count']
+            
+            cursor.execute('SELECT COUNT(*) as unread_count FROM alerts WHERE acknowledged = 0')
+            unread_count = cursor.fetchone()['unread_count']
+            
+            cursor.execute('SELECT COUNT(*) as today_count FROM alerts WHERE DATE(timestamp) = DATE("now")')
+            today_count = cursor.fetchone()['today_count']
+            
+        return jsonify({
+            'success': True,
+            'count': count,
+            'unread_count': unread_count,
+            'today_count': today_count,
+            'alerts': result
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/db-guardians', methods=['GET'])
+@require_admin_auth
+def admin_get_guardians():
+    """Get all guardians from database - ADMIN ONLY"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT g.*, 
+                       (SELECT COUNT(*) FROM drivers d WHERE d.guardian_id = g.guardian_id) as driver_count,
+                       (SELECT COUNT(*) FROM alerts a WHERE a.guardian_id = g.guardian_id) as alert_count
+                FROM guardians g
+                ORDER BY g.registration_date DESC
+            ''')
+            guardians = cursor.fetchall()
+            
+        return jsonify({
+            'success': True,
+            'count': len(guardians),
+            'guardians': [dict(guardian) for guardian in guardians]
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/db-tables', methods=['GET'])
+@require_admin_auth
+def admin_get_tables():
+    """Get all table names and row counts - ADMIN ONLY"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get all tables
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            tables = cursor.fetchall()
+            
+            result = []
+            for table in tables:
+                table_name = table['name']
+                cursor.execute(f'SELECT COUNT(*) as count FROM {table_name}')
+                count = cursor.fetchone()['count']
+                
+                cursor.execute(f'PRAGMA table_info({table_name})')
+                columns = cursor.fetchall()
+                
+                # Get table size info (approximate)
+                cursor.execute(f'SELECT COUNT(*) as row_count FROM {table_name}')
+                row_count = cursor.fetchone()['row_count']
+                
+                result.append({
+                    'table_name': table_name,
+                    'row_count': count,
+                    'columns': [{'name': col['name'], 'type': col['type']} for col in columns],
+                    'estimated_size': f"{(row_count * 100) / 1024:.2f} KB"  # Approximate
+                })
+            
+        return jsonify({
+            'success': True,
+            'tables': result
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/stats', methods=['GET'])
+@require_admin_auth
+def admin_stats():
+    """Admin statistics endpoint - ADMIN ONLY"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get comprehensive statistics
+            cursor.execute('SELECT COUNT(*) as total_alerts FROM alerts')
+            total_alerts = cursor.fetchone()['total_alerts']
+            
+            cursor.execute('SELECT COUNT(*) as today_alerts FROM alerts WHERE DATE(timestamp) = DATE("now")')
+            today_alerts = cursor.fetchone()['today_alerts']
+            
+            cursor.execute('SELECT COUNT(*) as total_drivers FROM drivers')
+            total_drivers = cursor.fetchone()['total_drivers']
+            
+            cursor.execute('SELECT COUNT(*) as total_guardians FROM guardians')
+            total_guardians = cursor.fetchone()['total_guardians']
+            
+            cursor.execute('SELECT COUNT(*) as drowsiness_events FROM drowsiness_events WHERE DATE(timestamp) = DATE("now")')
+            drowsiness_events = cursor.fetchone()['drowsiness_events']
+            
+            cursor.execute('SELECT COUNT(*) as active_sessions FROM session_tokens WHERE is_valid = 1 AND expires_at > ?', 
+                         (datetime.now(),))
+            active_sessions_count = cursor.fetchone()['active_sessions']
+            
+            # Get recent activity
+            cursor.execute('''
+                SELECT action, details, timestamp 
+                FROM activity_log 
+                ORDER BY timestamp DESC 
+                LIMIT 10
+            ''')
+            recent_activity = cursor.fetchall()
+            
+            # Get admin activity
+            cursor.execute('''
+                SELECT admin_username, action, details, timestamp 
+                FROM admin_activity_log 
+                ORDER BY timestamp DESC 
+                LIMIT 10
+            ''')
+            admin_activity = cursor.fetchall()
+            
+            # Get alert statistics by severity
+            cursor.execute('''
+                SELECT severity, COUNT(*) as count 
+                FROM alerts 
+                GROUP BY severity
+            ''')
+            severity_stats = cursor.fetchall()
+            
+            # Get daily alerts for last 7 days
+            cursor.execute('''
+                SELECT DATE(timestamp) as date, COUNT(*) as count
+                FROM alerts 
+                WHERE timestamp >= datetime('now', '-7 days')
+                GROUP BY DATE(timestamp)
+                ORDER BY date DESC
+            ''')
+            weekly_alerts = cursor.fetchall()
+        
+        # Get system status
+        system_status = {
+            'database': 'connected',
+            'connected_clients': len(connected_clients),
+            'admin_sessions': len(admin_sessions),
+            'server_time': datetime.now().isoformat(),
+            'uptime': time.time() - app_start_time if 'app_start_time' in globals() else 0
+        }
+        
+        return jsonify({
+            'success': True,
+            'statistics': {
+                'total_alerts': total_alerts,
+                'today_alerts': today_alerts,
+                'total_drivers': total_drivers,
+                'total_guardians': total_guardians,
+                'drowsiness_events_today': drowsiness_events,
+                'active_sessions': active_sessions_count
+            },
+            'system_status': system_status,
+            'severity_stats': [dict(stat) for stat in severity_stats],
+            'weekly_alerts': [dict(alert) for alert in weekly_alerts],
+            'recent_activity': [dict(activity) for activity in recent_activity],
+            'admin_activity': [dict(activity) for activity in admin_activity]
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/admin/clear-alerts', methods=['POST'])
+@require_admin_auth
+def admin_clear_alerts():
+    """Clear old alerts - ADMIN ONLY"""
+    try:
+        days = request.json.get('days', 30)
+        
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                DELETE FROM alerts 
+                WHERE acknowledged = 1 AND timestamp < datetime('now', ?)
+            ''', (f'-{days} days',))
+            
+            deleted_count = cursor.rowcount
+            
+            # Log activity
+            username = request.headers.get('X-Admin-Username')
+            log_activity(admin_username=username, action='CLEAR_ALERTS', 
+                        details=f'Cleared {deleted_count} alerts older than {days} days')
+        
+        return jsonify({
+            'success': True,
+            'deleted_count': deleted_count,
+            'message': f'Cleared {deleted_count} alerts older than {days} days'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# ==================== GUARDIAN AUTHENTICATION ENDPOINTS ====================
 @app.route('/api/login', methods=['POST'])
 def login():
     """Guardian login"""
@@ -835,14 +1526,31 @@ def login():
                 'error': 'Phone and password required'
             }), 400
         
+        # Apply rate limiting
+        ip = request.remote_addr
+        if rate_limit_exceeded(ip, 'guardian_login', limit=10):
+            return jsonify({
+                'success': False,
+                'error': 'Too many login attempts'
+            }), 429
+        
         guardian = verify_guardian_credentials(phone, password)
         
         if guardian:
+            if 'error' in guardian and guardian['error'] == 'Account locked':
+                return jsonify({
+                    'success': False,
+                    'error': 'Account locked. Please try again later.',
+                    'locked_until': guardian.get('locked_until')
+                }), 423  # 423 Locked
+            
             # Create session
-            token = create_session(guardian['guardian_id'])
+            token = create_session(guardian['guardian_id'], request.remote_addr, 
+                                 request.headers.get('User-Agent'))
             
             if token:
-                log_activity(guardian['guardian_id'], 'LOGIN', 'Guardian logged in')
+                log_activity(guardian['guardian_id'], 'LOGIN', 
+                            f'Guardian logged in from {request.remote_addr}')
                 
                 return jsonify({
                     'success': True,
@@ -956,9 +1664,17 @@ def register_guardian():
                     'error': f'Missing required field: {field}'
                 }), 400
         
+        # Validate phone number
+        phone = data['phone'].strip()
+        if not re.match(r'^\+?[1-9]\d{1,14}$', phone):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid phone number format'
+            }), 400
+        
         with get_db_cursor() as cursor:
             # Check if phone already exists
-            cursor.execute('SELECT guardian_id FROM guardians WHERE phone = ?', (data['phone'],))
+            cursor.execute('SELECT guardian_id FROM guardians WHERE phone = ?', (phone,))
             if cursor.fetchone():
                 return jsonify({
                     'success': False,
@@ -972,7 +1688,7 @@ def register_guardian():
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (
                 data['full_name'],
-                data['phone'],
+                phone,
                 data.get('email', ''),
                 password_hash,
                 data.get('address', ''),
@@ -998,6 +1714,7 @@ def register_guardian():
             'error': str(e)
         }), 500
 
+# ==================== GUARDIAN DASHBOARD ENDPOINTS ====================
 @app.route('/api/guardian/dashboard', methods=['GET'])
 def guardian_dashboard():
     """Get guardian dashboard data"""
@@ -1172,6 +1889,7 @@ def register_driver():
             'redirect': '/?logged_out=true'
         }), 500
 
+# ==================== ALERT ENDPOINTS ====================
 @app.route('/api/send-alert', methods=['POST'])
 def send_alert():
     """Send drowsiness alert - Enhanced version with detailed detection data"""
@@ -1239,9 +1957,9 @@ def send_alert():
         with get_db_cursor() as cursor:
             # Create alert
             cursor.execute('''
-                INSERT INTO alerts (driver_id, guardian_id, severity, message, detection_details)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (driver_id, guardian_id, severity, message, detection_details_json))
+                INSERT INTO alerts (driver_id, guardian_id, severity, message, detection_details, source)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (driver_id, guardian_id, severity, message, detection_details_json, 'drowsiness_detection'))
             alert_id = cursor.lastrowid
             
             # Log drowsiness event with detailed metrics
@@ -1310,148 +2028,6 @@ def send_alert():
             'success': False,
             'error': str(e)
         }), 500
-
-@app.route('/api/admin/db-drivers', methods=['GET'])
-def admin_get_drivers():
-    """Get all drivers from database"""
-    try:
-        auth_token = request.headers.get('X-Admin-Token')
-        if not auth_token or auth_token != os.environ.get('ADMIN_TOKEN', 'admin123'):
-            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
-        
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
-                FROM drivers d
-                LEFT JOIN guardians g ON d.guardian_id = g.guardian_id
-                ORDER BY d.registration_date DESC
-            ''')
-            drivers = cursor.fetchall()
-            
-            cursor.execute('SELECT COUNT(*) as count FROM drivers')
-            count = cursor.fetchone()['count']
-            
-        return jsonify({
-            'success': True,
-            'count': count,
-            'drivers': [dict(driver) for driver in drivers]
-        })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/admin/db-alerts', methods=['GET'])
-def admin_get_alerts():
-    """Get all alerts from database"""
-    try:
-        auth_token = request.headers.get('X-Admin-Token')
-        if not auth_token or auth_token != os.environ.get('ADMIN_TOKEN', 'admin123'):
-            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
-        
-        limit = request.args.get('limit', 100, type=int)
-        
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT a.*, d.name as driver_name, g.full_name as guardian_name
-                FROM alerts a
-                JOIN drivers d ON a.driver_id = d.driver_id
-                JOIN guardians g ON a.guardian_id = g.guardian_id
-                ORDER BY a.timestamp DESC
-                LIMIT ?
-            ''', (limit,))
-            
-            alerts = cursor.fetchall()
-            
-            # Parse detection_details
-            result = []
-            for alert in alerts:
-                alert_dict = dict(alert)
-                if alert_dict.get('detection_details'):
-                    try:
-                        alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
-                    except:
-                        pass
-                result.append(alert_dict)
-            
-            cursor.execute('SELECT COUNT(*) as count FROM alerts')
-            count = cursor.fetchone()['count']
-            
-        return jsonify({
-            'success': True,
-            'count': count,
-            'alerts': result
-        })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/admin/db-guardians', methods=['GET'])
-def admin_get_guardians():
-    """Get all guardians from database"""
-    try:
-        auth_token = request.headers.get('X-Admin-Token')
-        if not auth_token or auth_token != os.environ.get('ADMIN_TOKEN', 'admin123'):
-            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
-        
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT g.*, 
-                       (SELECT COUNT(*) FROM drivers d WHERE d.guardian_id = g.guardian_id) as driver_count,
-                       (SELECT COUNT(*) FROM alerts a WHERE a.guardian_id = g.guardian_id) as alert_count
-                FROM guardians g
-                ORDER BY g.registration_date DESC
-            ''')
-            guardians = cursor.fetchall()
-            
-        return jsonify({
-            'success': True,
-            'count': len(guardians),
-            'guardians': [dict(guardian) for guardian in guardians]
-        })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/admin/db-tables', methods=['GET'])
-def admin_get_tables():
-    """Get all table names and row counts"""
-    try:
-        auth_token = request.headers.get('X-Admin-Token')
-        if not auth_token or auth_token != os.environ.get('ADMIN_TOKEN', 'admin123'):
-            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
-        
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Get all tables
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-            tables = cursor.fetchall()
-            
-            result = []
-            for table in tables:
-                table_name = table['name']
-                cursor.execute(f'SELECT COUNT(*) as count FROM {table_name}')
-                count = cursor.fetchone()['count']
-                
-                cursor.execute(f'PRAGMA table_info({table_name})')
-                columns = cursor.fetchall()
-                
-                result.append({
-                    'table_name': table_name,
-                    'row_count': count,
-                    'columns': [{'name': col['name'], 'type': col['type']} for col in columns]
-                })
-            
-        return jsonify({
-            'success': True,
-            'tables': result
-        })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/guardian/alerts', methods=['GET'])
 def get_guardian_alerts():
@@ -1785,78 +2361,6 @@ def test_alert():
             'error': str(e)
         }), 500
 
-@app.route('/api/admin/stats', methods=['GET'])
-def admin_stats():
-    """Admin statistics endpoint (protected)"""
-    try:
-        # Simple protection - could be enhanced with admin authentication
-        auth_token = request.headers.get('X-Admin-Token')
-        if not auth_token or auth_token != os.environ.get('ADMIN_TOKEN', 'admin123'):
-            return jsonify({
-                'success': False,
-                'error': 'Unauthorized'
-            }), 401
-        
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Get comprehensive statistics
-            cursor.execute('SELECT COUNT(*) as total_alerts FROM alerts')
-            total_alerts = cursor.fetchone()[0]
-            
-            cursor.execute('SELECT COUNT(*) as today_alerts FROM alerts WHERE DATE(timestamp) = DATE("now")')
-            today_alerts = cursor.fetchone()[0]
-            
-            cursor.execute('SELECT COUNT(*) as total_drivers FROM drivers')
-            total_drivers = cursor.fetchone()[0]
-            
-            cursor.execute('SELECT COUNT(*) as total_guardians FROM guardians')
-            total_guardians = cursor.fetchone()[0]
-            
-            cursor.execute('SELECT COUNT(*) as drowsiness_events FROM drowsiness_events WHERE DATE(timestamp) = DATE("now")')
-            drowsiness_events = cursor.fetchone()[0]
-            
-            cursor.execute('SELECT COUNT(*) as active_sessions FROM session_tokens WHERE is_valid = 1 AND expires_at > ?', 
-                         (datetime.now(),))
-            active_sessions_count = cursor.fetchone()[0]
-            
-            # Get recent activity
-            cursor.execute('''
-                SELECT action, details, timestamp 
-                FROM activity_log 
-                ORDER BY timestamp DESC 
-                LIMIT 10
-            ''')
-            recent_activity = cursor.fetchall()
-            
-            # Get system status
-            system_status = {
-                'database': 'connected',
-                'connected_clients': len(connected_clients),
-                'server_time': datetime.now().isoformat(),
-                'uptime': time.time() - app_start_time if 'app_start_time' in globals() else 0
-            }
-        
-        return jsonify({
-            'success': True,
-            'statistics': {
-                'total_alerts': total_alerts,
-                'today_alerts': today_alerts,
-                'total_drivers': total_drivers,
-                'total_guardians': total_guardians,
-                'drowsiness_events_today': drowsiness_events,
-                'active_sessions': active_sessions_count
-            },
-            'system_status': system_status,
-            'recent_activity': [dict(activity) for activity in recent_activity]
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
 # ==================== STATIC FILES ====================
 @app.route('/<path:filename>')
 def serve_static(filename):
@@ -1885,6 +2389,14 @@ def cleanup_expired_sessions():
             ''')
             
             old_events_count = cursor.rowcount
+            
+            # Clean up old activity logs (keep last 90 days)
+            cursor.execute('''
+                DELETE FROM activity_log 
+                WHERE timestamp < datetime('now', '-90 days')
+            ''')
+            
+            old_activity_count = cursor.rowcount
         
         # Clean memory cache
         current_time = datetime.now()
@@ -1896,8 +2408,11 @@ def cleanup_expired_sessions():
         for guardian_id in expired_guards:
             del active_sessions[guardian_id]
         
+        # Clean admin sessions
+        cleanup_admin_sessions()
+        
         if (expired_count > 0 or old_events_count > 0) and not IS_PRODUCTION:
-            print(f"🧹 Cleaned up {expired_count} expired sessions and {old_events_count} old events")
+            print(f"🧹 Cleaned up {expired_count} expired sessions, {old_events_count} old events, {old_activity_count} old activities")
         
         return expired_count
     except Exception as e:
@@ -1919,6 +2434,8 @@ def startup_tasks():
     print(f"🔧 Environment: {'Production' if IS_PRODUCTION else 'Development'}")
     print(f"📁 Frontend Directory: {FRONTEND_DIR}")
     print(f"🗄️  Database Path: {DB_PATH}")
+    print(f"🔐 Admin Username: admin")
+    print(f"🔐 Admin Password: admin123")
     
     # Initialize database
     if init_db():
@@ -1947,6 +2464,7 @@ def startup_tasks():
     print(f"{'='*70}")
     print("🔗 API Endpoints:")
     print("  • POST /api/send-alert - Receive alerts from drowsiness detection")
+    print("  • POST /api/admin/login - Admin login")
     print("  • GET  /api/health - Health check")
     print("  • POST /api/test-alert - Test alert endpoint")
     print(f"{'='*70}\n")
@@ -1967,6 +2485,7 @@ if __name__ == '__main__':
     print(f"🚀 Starting server on {host}:{port}")
     print(f"🌐 WebSocket endpoint: ws://{host}:{port}")
     print(f"📡 Alert endpoint: http://{host}:{port}/api/send-alert")
+    print(f"🔐 Admin login: http://{host}:{port}/admin-login")
     
     # Run the application
     socketio.run(app, 

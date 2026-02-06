@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login - Driver Alert System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            padding-top: 40px;
+            padding-bottom: 40px;
+        }
+        
+        .login-card {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+            max-width: 400px;
+            margin: auto;
+        }
+        
+        .login-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+        }
+        
+        .login-header h1 {
+            font-size: 1.8rem;
+            margin: 0;
+        }
+        
+        .login-header p {
+            opacity: 0.9;
+            margin: 10px 0 0;
+        }
+        
+        .login-body {
+            padding: 40px 30px;
+        }
+        
+        .form-control {
+            border-radius: 10px;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            transition: all 0.3s;
+        }
+        
+        .form-control:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 0.25rem rgba(102, 126, 234, 0.25);
+        }
+        
+        .input-group-text {
+            background: transparent;
+            border: 2px solid #e0e0e0;
+            border-right: none;
+        }
+        
+        .btn-login {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 10px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .btn-login:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .login-footer {
+            padding: 20px;
+            text-align: center;
+            background: #f8f9fa;
+            border-top: 1px solid #e0e0e0;
+        }
+        
+        .logo {
+            width: 80px;
+            height: 80px;
+            background: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .logo i {
+            font-size: 2.5rem;
+            color: #667eea;
+        }
+        
+        .security-badge {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255,255,255,0.2);
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            color: white;
+        }
+        
+        .alert-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+            min-width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Security Badge -->
+    <div class="security-badge">
+        <i class="bi bi-shield-lock me-1"></i> Secure Admin Portal
+    </div>
+    
+    <!-- Alert Container -->
+    <div class="alert-container" id="alertContainer"></div>
+    
+    <!-- Login Card -->
+    <div class="login-card">
+        <div class="login-header">
+            <div class="logo">
+                <i class="bi bi-shield-lock"></i>
+            </div>
+            <h1><i class="bi bi-car-front-fill me-2"></i> Driver Alert System</h1>
+            <p>Admin Portal - Secure Access Required</p>
+        </div>
+        
+        <div class="login-body">
+            <form id="adminLoginForm">
+                <div class="mb-3">
+                    <label for="username" class="form-label">
+                        <i class="bi bi-person-badge me-1"></i> Admin Username
+                    </label>
+                    <div class="input-group">
+                        <span class="input-group-text">
+                            <i class="bi bi-person"></i>
+                        </span>
+                        <input type="text" class="form-control" id="username" 
+                               placeholder="Enter admin username" required>
+                    </div>
+                </div>
+                
+                <div class="mb-4">
+                    <label for="password" class="form-label">
+                        <i class="bi bi-key me-1"></i> Admin Password
+                    </label>
+                    <div class="input-group">
+                        <span class="input-group-text">
+                            <i class="bi bi-lock"></i>
+                        </span>
+                        <input type="password" class="form-control" id="password" 
+                               placeholder="Enter admin password" required>
+                        <button class="btn btn-outline-secondary" type="button" 
+                                onclick="togglePassword()">
+                            <i class="bi bi-eye" id="passwordToggleIcon"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="d-grid mb-3">
+                    <button type="submit" class="btn btn-login" id="loginButton">
+                        <i class="bi bi-box-arrow-in-right me-2"></i> Login to Admin Dashboard
+                    </button>
+                </div>
+                
+                <div class="text-center">
+                    <small class="text-muted">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Contact system administrator for credentials
+                    </small>
+                </div>
+            </form>
+        </div>
+        
+        <div class="login-footer">
+            <small class="text-muted">
+                <i class="bi bi-clock-history me-1"></i>
+                <span id="currentTime"></span> | 
+                <span id="loginAttempts">0</span> attempts
+            </small>
+        </div>
+    </div>
+    
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        const API_BASE = '/api';
+        let loginAttempts = 0;
+        const MAX_ATTEMPTS = 5;
+        
+        // Update current time
+        function updateCurrentTime() {
+            const now = new Date();
+            const options = { 
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            };
+            document.getElementById('currentTime').textContent = now.toLocaleTimeString('en-US', options);
+            document.getElementById('loginAttempts').textContent = loginAttempts;
+        }
+        
+        // Toggle password visibility
+        function togglePassword() {
+            const passwordInput = document.getElementById('password');
+            const icon = document.getElementById('passwordToggleIcon');
+            
+            if (passwordInput.type === 'password') {
+                passwordInput.type = 'text';
+                icon.className = 'bi bi-eye-slash';
+            } else {
+                passwordInput.type = 'password';
+                icon.className = 'bi bi-eye';
+            }
+        }
+        
+        // Show alert message
+        function showAlert(message, type = 'info') {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+            alertDiv.innerHTML = `
+                <i class="bi ${type === 'success' ? 'bi-check-circle' : 'bi-exclamation-triangle'} me-2"></i>
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            
+            document.getElementById('alertContainer').appendChild(alertDiv);
+            
+            // Auto remove after 5 seconds
+            setTimeout(() => {
+                if (alertDiv.parentNode) {
+                    alertDiv.remove();
+                }
+            }, 5000);
+        }
+        
+        // Handle login form submission
+        async function handleLogin(event) {
+            event.preventDefault();
+            
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            const loginButton = document.getElementById('loginButton');
+            
+            // Validation
+            if (!username || !password) {
+                showAlert('Please enter both username and password', 'warning');
+                return;
+            }
+            
+            // Update login attempts
+            loginAttempts++;
+            document.getElementById('loginAttempts').textContent = loginAttempts;
+            
+            // Check if max attempts reached
+            if (loginAttempts >= MAX_ATTEMPTS) {
+                showAlert('Maximum login attempts reached. Please try again later.', 'danger');
+                loginButton.disabled = true;
+                loginButton.innerHTML = '<i class="bi bi-lock me-2"></i> Account Locked';
+                
+                // Lock for 5 minutes
+                setTimeout(() => {
+                    loginAttempts = 0;
+                    loginButton.disabled = false;
+                    loginButton.innerHTML = '<i class="bi bi-box-arrow-in-right me-2"></i> Login to Admin Dashboard';
+                    showAlert('Login unlocked. You may try again.', 'info');
+                }, 5 * 60 * 1000);
+                
+                return;
+            }
+            
+            // Show loading state
+            const originalText = loginButton.innerHTML;
+            loginButton.disabled = true;
+            loginButton.innerHTML = `
+                <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                Authenticating...
+            `;
+            
+            try {
+                // Send login request
+                const response = await fetch(`${API_BASE}/admin/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username: username,
+                        password: password
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Store admin session
+                    localStorage.setItem('adminToken', data.token);
+                    localStorage.setItem('adminUsername', data.username);
+                    localStorage.setItem('adminExpires', data.expires);
+                    
+                    // Show success message
+                    showAlert('Login successful! Redirecting to admin dashboard...', 'success');
+                    
+                    // Redirect after delay
+                    setTimeout(() => {
+                        window.location.href = 'index.html';
+                    }, 1500);
+                    
+                } else {
+                    // Login failed
+                    showAlert(data.error || 'Invalid credentials', 'danger');
+                    loginButton.disabled = false;
+                    loginButton.innerHTML = originalText;
+                    
+                    // Add shake effect to form
+                    document.getElementById('adminLoginForm').classList.add('shake');
+                    setTimeout(() => {
+                        document.getElementById('adminLoginForm').classList.remove('shake');
+                    }, 500);
+                }
+                
+            } catch (error) {
+                console.error('Login error:', error);
+                showAlert('Network error. Please check your connection.', 'danger');
+                loginButton.disabled = false;
+                loginButton.innerHTML = originalText;
+            }
+        }
+        
+        // Check for existing session
+        function checkExistingSession() {
+            const token = localStorage.getItem('adminToken');
+            const expires = localStorage.getItem('adminExpires');
+            
+            if (token && expires) {
+                const now = new Date();
+                const expiryDate = new Date(expires);
+                
+                if (now < expiryDate) {
+                    // Session is valid, redirect to dashboard
+                    showAlert('Session found. Redirecting...', 'info');
+                    setTimeout(() => {
+                        window.location.href = 'index.html';
+                    }, 1000);
+                } else {
+                    // Session expired
+                    localStorage.clear();
+                    showAlert('Session expired. Please login again.', 'warning');
+                }
+            }
+        }
+        
+        // Initialize
+        window.onload = function() {
+            updateCurrentTime();
+            setInterval(updateCurrentTime, 1000);
+            
+            // Check existing session
+            checkExistingSession();
+            
+            // Add shake animation
+            const style = document.createElement('style');
+            style.textContent = `
+                .shake {
+                    animation: shake 0.5s;
+                }
+                @keyframes shake {
+                    0%, 100% { transform: translateX(0); }
+                    10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+                    20%, 40%, 60%, 80% { transform: translateX(5px); }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            // Add form submit handler
+            document.getElementById('adminLoginForm').addEventListener('submit', handleLogin);
+            
+            // Add input focus effects
+            const inputs = document.querySelectorAll('.form-control');
+            inputs.forEach(input => {
+                input.addEventListener('focus', function() {
+                    this.parentElement.classList.add('focused');
+                });
+                input.addEventListener('blur', function() {
+                    this.parentElement.classList.remove('focused');
+                });
+            });
+            
+            // Add demo credentials hint for development
+            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                console.log('Development mode: Demo credentials are admin/admin123');
+            }
+        };
+    </script>
+</body>
+</html>
