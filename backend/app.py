@@ -226,27 +226,34 @@ def get_db_connection():
     """Context manager for database connections"""
     conn = None
     try:
-        database_url = get_database_url()
+        database_url = os.environ.get('DATABASE_URL')
         if not database_url:
             raise Exception("DATABASE_URL not set in environment variables")
         
-        # Parse the URL
+        # Fix URL format
+        if database_url.startswith('postgres://'):
+            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        
+        # Parse URL
         url = urllib.parse.urlparse(database_url)
         
-        # Extract database name
-        db_name = url.path[1:] if url.path.startswith('/') else url.path
+        # Ensure port is set
+        port = url.port or 5432
         
-        # Connect to PostgreSQL
+        # Connect with timeout
         conn = psycopg2.connect(
-            database=db_name,
+            database=url.path[1:] if url.path.startswith('/') else url.path,
             user=url.username,
             password=url.password,
             host=url.hostname,
-            port=url.port or 5432,
+            port=port,
             cursor_factory=RealDictCursor,
-            connect_timeout=10
+            connect_timeout=5
         )
         yield conn
+    except psycopg2.OperationalError as e:
+        print(f"❌ PostgreSQL operational error: {e}")
+        raise Exception(f"Database connection failed: {str(e)}")
     except Exception as e:
         print(f"❌ Database connection error: {e}")
         raise
@@ -260,29 +267,37 @@ def get_db_cursor():
     conn = None
     cursor = None
     try:
-        database_url = get_database_url()
+        database_url = os.environ.get('DATABASE_URL')
         if not database_url:
             raise Exception("DATABASE_URL not set in environment variables")
         
-        # Parse the URL
+        # Fix URL format
+        if database_url.startswith('postgres://'):
+            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        
+        # Parse URL
         url = urllib.parse.urlparse(database_url)
         
-        # Extract database name
-        db_name = url.path[1:] if url.path.startswith('/') else url.path
+        # Ensure port is set
+        port = url.port or 5432
         
-        # Connect to PostgreSQL
+        # Connect with timeout
         conn = psycopg2.connect(
-            database=db_name,
+            database=url.path[1:] if url.path.startswith('/') else url.path,
             user=url.username,
             password=url.password,
             host=url.hostname,
-            port=url.port or 5432,
-            cursor_factory=RealDictCursor
+            port=port
         )
         cursor = conn.cursor()
         
         yield cursor
         conn.commit()
+    except psycopg2.OperationalError as e:
+        if conn:
+            conn.rollback()
+        print(f"❌ PostgreSQL operational error: {e}")
+        raise Exception(f"Database connection failed: {str(e)}")
     except Exception as e:
         if conn:
             conn.rollback()
@@ -1111,35 +1126,51 @@ def health_check():
             'database': 'postgresql',
         }
         
-        # Try to get database info (but don't crash if it fails)
+        # Try to get database info
         try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('SELECT version()')
-                db_version = cursor.fetchone()[0]
-                
-                cursor.execute('SELECT COUNT(*) as count FROM guardians')
-                guardian_count = cursor.fetchone()[0]
-                
-                cursor.execute('SELECT COUNT(*) as count FROM drivers')
-                driver_count = cursor.fetchone()[0]
-                
-                cursor.execute('SELECT COUNT(*) as count FROM alerts')
-                alert_count = cursor.fetchone()[0]
-                
+            database_url = os.environ.get('DATABASE_URL')
+            if not database_url:
                 health_info.update({
-                    'database_status': 'connected',
-                    'database_version': db_version,
-                    'statistics': {
-                        'guardians': guardian_count,
-                        'drivers': driver_count,
-                        'alerts': alert_count,
-                    }
+                    'database_status': 'disconnected',
+                    'database_error': 'DATABASE_URL not set'
                 })
+            else:
+                # Parse URL to get info
+                url = urllib.parse.urlparse(database_url)
+                health_info.update({
+                    'database_host': url.hostname,
+                    'database_port': url.port or 5432,
+                    'database_name': url.path[1:] if url.path.startswith('/') else url.path
+                })
+                
+                # Test connection
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT version()')
+                    db_version = cursor.fetchone()[0]
+                    
+                    cursor.execute('SELECT COUNT(*) as count FROM guardians')
+                    guardian_count = cursor.fetchone()[0]
+                    
+                    cursor.execute('SELECT COUNT(*) as count FROM drivers')
+                    driver_count = cursor.fetchone()[0]
+                    
+                    cursor.execute('SELECT COUNT(*) as count FROM alerts')
+                    alert_count = cursor.fetchone()[0]
+                    
+                    health_info.update({
+                        'database_status': 'connected',
+                        'database_version': db_version,
+                        'statistics': {
+                            'guardians': guardian_count,
+                            'drivers': driver_count,
+                            'alerts': alert_count,
+                        }
+                    })
         except Exception as db_error:
             health_info.update({
                 'database_status': 'disconnected',
-                'database_error': str(db_error)[:100]
+                'database_error': str(db_error)
             })
         
         return jsonify(health_info)
@@ -1150,6 +1181,142 @@ def health_check():
             'status': 'running_with_errors',
             'error': str(e)
         }), 200
+
+@app.route('/api/debug/db', methods=['GET'])
+def debug_database():
+    """Debug endpoint to check database connection details"""
+    try:
+        # Get DATABASE_URL
+        database_url = os.environ.get('DATABASE_URL')
+        
+        if not database_url:
+            return jsonify({
+                'success': False,
+                'error': 'DATABASE_URL not found in environment',
+                'environment_keys': [k for k in os.environ.keys() if 'DATABASE' in k.upper() or 'POSTGRES' in k.upper()]
+            })
+        
+        # Fix URL format
+        if database_url.startswith('postgres://'):
+            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        
+        # Parse URL
+        url = urllib.parse.urlparse(database_url)
+        
+        # Mask password for security
+        masked_url = f"{url.scheme}://{url.username}:****@{url.hostname}:{url.port or 5432}{url.path}"
+        
+        # Try connection
+        try:
+            conn = psycopg2.connect(
+                database=url.path[1:] if url.path.startswith('/') else url.path,
+                user=url.username,
+                password=url.password,
+                host=url.hostname,
+                port=url.port or 5432,
+                connect_timeout=5
+            )
+            
+            cursor = conn.cursor()
+            cursor.execute('SELECT version()')
+            version = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
+            tables = [table[0] for table in cursor.fetchall()]
+            
+            cursor.close()
+            conn.close()
+            
+            return jsonify({
+                'success': True,
+                'connection': 'successful',
+                'database_url_masked': masked_url,
+                'database_version': version,
+                'tables': tables,
+                'tables_count': len(tables),
+                'parsed_url': {
+                    'scheme': url.scheme,
+                    'username': url.username,
+                    'hostname': url.hostname,
+                    'port': url.port or 5432,
+                    'database': url.path[1:] if url.path.startswith('/') else url.path,
+                    'has_password': bool(url.password)
+                }
+            })
+            
+        except Exception as conn_error:
+            return jsonify({
+                'success': False,
+                'connection': 'failed',
+                'database_url_masked': masked_url,
+                'error': str(conn_error),
+                'parsed_url': {
+                    'scheme': url.scheme,
+                    'username': url.username,
+                    'hostname': url.hostname,
+                    'port': url.port or 5432,
+                    'database': url.path[1:] if url.path.startswith('/') else url.path,
+                    'has_password': bool(url.password)
+                }
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'database_url': database_url[:50] + '...' if database_url and len(database_url) > 50 else database_url
+        })
+
+@app.route('/api/test-connection', methods=['GET'])
+def test_connection():
+    """Simple connection test"""
+    database_url = os.environ.get('DATABASE_URL')
+    
+    if not database_url:
+        return jsonify({'success': False, 'error': 'No DATABASE_URL found'})
+    
+    try:
+        # Fix URL if needed
+        if database_url.startswith('postgres://'):
+            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        
+        # Parse
+        url = urllib.parse.urlparse(database_url)
+        
+        # Connect
+        conn = psycopg2.connect(
+            dbname=url.path[1:] if url.path.startswith('/') else url.path,
+            user=url.username,
+            password=url.password,
+            host=url.hostname,
+            port=url.port or 5432,
+            connect_timeout=5
+        )
+        
+        cursor = conn.cursor()
+        cursor.execute('SELECT 1 as test_value')
+        result = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'connected': True,
+            'test_query': result[0] == 1,
+            'database_info': {
+                'host': url.hostname,
+                'port': url.port or 5432,
+                'database': url.path[1:] if url.path.startswith('/') else url.path
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'database_url_preview': database_url[:50] + '...' if len(database_url) > 50 else database_url
+        })
 
 # ==================== ADMIN AUTHENTICATION ENDPOINTS ====================
 @app.route('/api/admin/login', methods=['POST'])
@@ -2582,6 +2749,8 @@ def startup_tasks():
     
     print(f"\n🔗 API Endpoints:")
     print("  • GET  /api/health - Health check")
+    print("  • GET  /api/debug/db - Database debug")
+    print("  • GET  /api/test-connection - Simple connection test")
     print("  • POST /api/send-alert - Receive alerts from drowsiness detection")
     print("  • POST /api/test-alert - Test alert endpoint")
     
