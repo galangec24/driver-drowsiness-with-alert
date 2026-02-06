@@ -59,15 +59,6 @@
     }
   ],
   "categories": ["utilities", "productivity", "safety"],
-  "screenshots": [
-    {
-      "src": "/screenshot-mobile.png",
-      "sizes": "1080x1920",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "Mobile View"
-    }
-  ],
   "shortcuts": [
     {
       "name": "Login",
