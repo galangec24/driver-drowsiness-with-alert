@@ -3,27 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Driver Registration System</title>
+    <title>Driver Registration System - Admin</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#000000">
+    <meta name="theme-color" content="#000000">
 
-<!-- iOS PWA Support -->
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
-<link rel="apple-touch-icon" href="/icon-192.png">
+    <!-- iOS PWA Support -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <link rel="apple-touch-icon" href="/icon-192.png">
 
-<!-- Mobile viewport optimization -->
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- Mobile viewport optimization -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    
     <style>
         body {
             background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
             min-height: 100vh;
         }
-          #currentTime {
+        
+        #currentTime {
             display: none;
         }
+        
         .dashboard-card {
             transition: transform 0.3s, box-shadow 0.3s;
             border: none;
@@ -92,6 +95,10 @@
             background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
         }
         
+        .bg-gradient-danger {
+            background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
+        }
+        
         .time-badge {
             background: #e9ecef;
             color: #495057;
@@ -99,27 +106,56 @@
             border-radius: 20px;
             font-size: 0.8rem;
         }
+        
+        .tab-content {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 10px;
+        }
+        
+        .data-table {
+            width: 100%;
+            font-size: 0.9rem;
+        }
+        
+        .data-table th {
+            background: #f8f9fa;
+            padding: 12px;
+            border-bottom: 2px solid #dee2e6;
+        }
+        
+        .data-table td {
+            padding: 10px;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        .data-table tr:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .json-view {
+            background: #f8f9fa;
+            border-radius: 5px;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .status-badge {
+            font-size: 0.8rem;
+            padding: 4px 8px;
+        }
     </style>
 </head>
-<script>
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', function() {
-        navigator.serviceWorker.register('/service-worker.js')
-            .then(function(registration) {
-                console.log('Service Worker registered with scope:', registration.scope);
-            })
-            .catch(function(error) {
-                console.log('Service Worker registration failed:', error);
-            });
-    });
-}
-</script>
 <body>
     <!-- Navigation -->
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
             <a class="navbar-brand" href="#">
-                <i class="bi bi-car-front-fill me-2"></i> Driver Registration System
+                <i class="bi bi-car-front-fill me-2"></i> Driver Alert System - Admin
             </a>
             <div class="navbar-nav">
                 <a class="nav-link active" href="index.html">
@@ -128,8 +164,8 @@ if ('serviceWorker' in navigator) {
                 <a class="nav-link" href="registration.html">
                     <i class="bi bi-person-plus me-1"></i> Register Driver
                 </a>
-                <a class="nav-link" href="#">
-                    <i class="bi bi-people me-1"></i> Driver List
+                <a class="nav-link" href="#" onclick="showDatabaseViewer()">
+                    <i class="bi bi-database me-1"></i> Database
                 </a>
             </div>
         </div>
@@ -143,13 +179,17 @@ if ('serviceWorker' in navigator) {
                     <div class="card-body p-4">
                         <div class="row align-items-center">
                             <div class="col-md-8">
-                                <h1 class="display-6 mb-2">Driver Registration System</h1>
+                                <h1 class="display-6 mb-2">Driver Alert System - Admin Dashboard</h1>
+                                <p class="text-muted mb-0">Manage drivers, view alerts, and monitor system health</p>
                             </div>
                             <div class="col-md-4 text-end">
                                 <div class="d-flex justify-content-end align-items-center">
                                     <div class="me-3">
                                         <span class="time-badge" id="currentTime"></span>
                                     </div>
+                                    <button class="btn btn-sm btn-outline-light" onclick="refreshAllData()">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -160,70 +200,346 @@ if ('serviceWorker' in navigator) {
 
         <!-- Statistics Cards -->
         <div class="row mb-4">
-            <div class="col-md-3">
-                <div class="stat-card bg-gradient-primary">
+            <div class="col-md-3 col-sm-6 mb-3">
+                <div class="stat-card bg-gradient-primary" onclick="showDriversTab()">
                     <div class="stat-number" id="totalDrivers">0</div>
                     <div class="stat-label">Total Drivers</div>
                     <i class="bi bi-people display-4 mt-3"></i>
                 </div>
             </div>
-            <div class="col-md-3">
-                <div class="stat-card bg-gradient-success">
-                    <div class="stat-number" id="todayRegistrations">0</div>
-                    <div class="stat-label">Registered Today</div>
-                    <i class="bi bi-calendar-check display-4 mt-3"></i>
+            <div class="col-md-3 col-sm-6 mb-3">
+                <div class="stat-card bg-gradient-success" onclick="showAlertsTab()">
+                    <div class="stat-number" id="totalAlerts">0</div>
+                    <div class="stat-label">Total Alerts</div>
+                    <i class="bi bi-bell display-4 mt-3"></i>
                 </div>
             </div>
-            <div class="col-md-3">
-                <div class="stat-card bg-gradient-warning">
-                    <div class="stat-number" id="weekRegistrations">0</div>
-                    <div class="stat-label">This Week</div>
-                    <i class="bi bi-calendar-week display-4 mt-3"></i>
+            <div class="col-md-3 col-sm-6 mb-3">
+                <div class="stat-card bg-gradient-warning" onclick="showDrowsinessTab()">
+                    <div class="stat-number" id="totalDrowsiness">0</div>
+                    <div class="stat-label">Drowsiness Events</div>
+                    <i class="bi bi-eye display-4 mt-3"></i>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-3 col-sm-6 mb-3">
                 <div class="stat-card bg-gradient-info">
-                    <div class="stat-number" id="monthRegistrations">0</div>
-                    <div class="stat-label">This Month</div>
-                    <i class="bi bi-calendar-month display-4 mt-3"></i>
+                    <div class="stat-number" id="activeSessions">0</div>
+                    <div class="stat-label">Active Sessions</div>
+                    <i class="bi bi-person-check display-4 mt-3"></i>
                 </div>
             </div>
         </div>
 
-        <!-- Main Content -->
-        <div class="row">
-            <!-- Recently Registered Drivers -->
-            <div class="col-md-8">
-                <div class="card dashboard-card mb-4">
+        <!-- Database Viewer Section -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card dashboard-card">
                     <div class="card-header bg-white border-0 py-3">
                         <div class="d-flex justify-content-between align-items-center">
                             <h4 class="mb-0">
-                                <i class="bi bi-clock-history me-2"></i> Recently Registered Drivers
+                                <i class="bi bi-database me-2"></i> Database Viewer
                             </h4>
-                            <span class="badge bg-primary" id="recentCount">0</span>
-                        </div>
-                    </div>
-                    <div class="card-body p-3">
-                        <div id="recentDrivers">
-                            <div class="text-center py-5">
-                                <div class="spinner-border text-primary" role="status">
-                                    <span class="visually-hidden">Loading...</span>
-                                </div>
-                                <p class="text-muted mt-3">Loading recent drivers...</p>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-sm btn-outline-primary" onclick="refreshDatabaseViewer()">
+                                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                                </button>
+                                <button class="btn btn-sm btn-outline-success" onclick="exportDatabase()">
+                                    <i class="bi bi-download"></i> Export
+                                </button>
                             </div>
                         </div>
-                        <div class="text-center mt-3">
-                            <a href="#" class="btn btn-outline-primary" onclick="loadAllDrivers()">
-                                <i class="bi bi-arrow-clockwise me-2"></i> Load More
-                            </a>
+                    </div>
+                    <div class="card-body p-0">
+                        <!-- Tabs -->
+                        <ul class="nav nav-tabs" id="dbTabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="drivers-tab" data-bs-toggle="tab" 
+                                        data-bs-target="#drivers" type="button" role="tab">
+                                    <i class="bi bi-people me-1"></i> Drivers
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="alerts-tab" data-bs-toggle="tab" 
+                                        data-bs-target="#alerts" type="button" role="tab">
+                                    <i class="bi bi-bell me-1"></i> Alerts
+                                    <span class="badge bg-danger ms-1" id="unreadAlertsBadge">0</span>
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="guardians-tab" data-bs-toggle="tab" 
+                                        data-bs-target="#guardians" type="button" role="tab">
+                                    <i class="bi bi-shield-check me-1"></i> Guardians
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="events-tab" data-bs-toggle="tab" 
+                                        data-bs-target="#events" type="button" role="tab">
+                                    <i class="bi bi-activity me-1"></i> Drowsiness Events
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="system-tab" data-bs-toggle="tab" 
+                                        data-bs-target="#system" type="button" role="tab">
+                                    <i class="bi bi-gear me-1"></i> System Info
+                                </button>
+                            </li>
+                        </ul>
+
+                        <!-- Tab Content -->
+                        <div class="tab-content p-3" id="dbTabsContent">
+                            <!-- Drivers Tab -->
+                            <div class="tab-pane fade show active" id="drivers" role="tabpanel">
+                                <div class="mb-3">
+                                    <input type="text" class="form-control" id="searchDrivers" 
+                                           placeholder="Search drivers..." onkeyup="searchTable('drivers')">
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="data-table" id="driversTable">
+                                        <thead>
+                                            <tr>
+                                                <th>ID</th>
+                                                <th>Name</th>
+                                                <th>Phone</th>
+                                                <th>Guardian</th>
+                                                <th>Registered</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="driversTableBody">
+                                            <tr>
+                                                <td colspan="6" class="text-center py-4">
+                                                    <div class="spinner-border text-primary" role="status">
+                                                        <span class="visually-hidden">Loading...</span>
+                                                    </div>
+                                                    <p class="text-muted mt-2">Loading drivers...</p>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Alerts Tab -->
+                            <div class="tab-pane fade" id="alerts" role="tabpanel">
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <div>
+                                        <button class="btn btn-sm btn-outline-success" onclick="loadAlerts()">
+                                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger" onclick="clearOldAlerts()">
+                                            <i class="bi bi-trash"></i> Clear Old Alerts
+                                        </button>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="showUnreadOnly">
+                                        <label class="form-check-label" for="showUnreadOnly">
+                                            Show Unread Only
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="data-table" id="alertsTable">
+                                        <thead>
+                                            <tr>
+                                                <th>ID</th>
+                                                <th>Driver</th>
+                                                <th>Type</th>
+                                                <th>Severity</th>
+                                                <th>Time</th>
+                                                <th>Status</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="alertsTableBody">
+                                            <tr>
+                                                <td colspan="7" class="text-center py-4">
+                                                    <div class="spinner-border text-primary" role="status">
+                                                        <span class="visually-hidden">Loading...</span>
+                                                    </div>
+                                                    <p class="text-muted mt-2">Loading alerts...</p>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Guardians Tab -->
+                            <div class="tab-pane fade" id="guardians" role="tabpanel">
+                                <div class="mb-3">
+                                    <input type="text" class="form-control" id="searchGuardians" 
+                                           placeholder="Search guardians..." onkeyup="searchTable('guardians')">
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="data-table" id="guardiansTable">
+                                        <thead>
+                                            <tr>
+                                                <th>ID</th>
+                                                <th>Name</th>
+                                                <th>Phone</th>
+                                                <th>Email</th>
+                                                <th>Drivers</th>
+                                                <th>Alerts</th>
+                                                <th>Last Login</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="guardiansTableBody">
+                                            <tr>
+                                                <td colspan="7" class="text-center py-4">
+                                                    <div class="spinner-border text-primary" role="status">
+                                                        <span class="visually-hidden">Loading...</span>
+                                                    </div>
+                                                    <p class="text-muted mt-2">Loading guardians...</p>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Drowsiness Events Tab -->
+                            <div class="tab-pane fade" id="events" role="tabpanel">
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <div>
+                                        <button class="btn btn-sm btn-outline-primary" onclick="loadDrowsinessEvents()">
+                                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-warning" onclick="showEventStats()">
+                                            <i class="bi bi-graph-up"></i> Statistics
+                                        </button>
+                                    </div>
+                                    <div>
+                                        <select class="form-select form-select-sm" id="eventFilter" onchange="filterEvents()">
+                                            <option value="all">All Events</option>
+                                            <option value="today">Today Only</option>
+                                            <option value="drowsy">Drowsy Only</option>
+                                            <option value="yawning">Yawning Only</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="data-table" id="eventsTable">
+                                        <thead>
+                                            <tr>
+                                                <th>ID</th>
+                                                <th>Driver</th>
+                                                <th>State</th>
+                                                <th>Confidence</th>
+                                                <th>EAR</th>
+                                                <th>MAR</th>
+                                                <th>PERCLOS</th>
+                                                <th>Time</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="eventsTableBody">
+                                            <tr>
+                                                <td colspan="8" class="text-center py-4">
+                                                    <div class="spinner-border text-primary" role="status">
+                                                        <span class="visually-hidden">Loading...</span>
+                                                    </div>
+                                                    <p class="text-muted mt-2">Loading events...</p>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- System Info Tab -->
+                            <div class="tab-pane fade" id="system" role="tabpanel">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="card mb-3">
+                                            <div class="card-header bg-light">
+                                                <h6 class="mb-0"><i class="bi bi-database me-2"></i> Database Status</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <div class="mb-2">
+                                                    <strong>Connection:</strong>
+                                                    <span class="badge bg-success float-end" id="dbConnectionStatus">Connected</span>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <strong>Path:</strong>
+                                                    <code id="dbPath">/app/drivers.db</code>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <strong>Size:</strong>
+                                                    <span id="dbSize">0 MB</span>
+                                                </div>
+                                                <div>
+                                                    <strong>Last Backup:</strong>
+                                                    <span id="lastBackup">Never</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="card mb-3">
+                                            <div class="card-header bg-light">
+                                                <h6 class="mb-0"><i class="bi bi-server me-2"></i> Server Status</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <div class="mb-2">
+                                                    <strong>Status:</strong>
+                                                    <span class="badge bg-success float-end" id="serverStatus">Running</span>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <strong>Uptime:</strong>
+                                                    <span id="serverUptime">0h 0m</span>
+                                                </div>
+                                                <div class="mb-2">
+                                                    <strong>Memory:</strong>
+                                                    <span id="serverMemory">0 MB</span>
+                                                </div>
+                                                <div>
+                                                    <strong>Connected Clients:</strong>
+                                                    <span id="connectedClients">0</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-12">
+                                        <div class="card">
+                                            <div class="card-header bg-light">
+                                                <h6 class="mb-0"><i class="bi bi-table me-2"></i> Database Tables</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <div class="table-responsive">
+                                                    <table class="data-table">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>Table Name</th>
+                                                                <th>Rows</th>
+                                                                <th>Size</th>
+                                                                <th>Created</th>
+                                                                <th>Last Updated</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody id="tablesList">
+                                                            <tr>
+                                                                <td colspan="5" class="text-center py-3">
+                                                                    Loading tables...
+                                                                </td>
+                                                            </tr>
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
+        </div>
 
-            <!-- Quick Actions & System Info -->
+        <!-- Quick Actions & System Info -->
+        <div class="row">
             <div class="col-md-4">
-                <!-- Quick Actions -->
                 <div class="card dashboard-card mb-4">
                     <div class="card-header bg-white border-0 py-3">
                         <h5 class="mb-0">
@@ -241,39 +557,69 @@ if ('serviceWorker' in navigator) {
                             <button class="btn btn-outline-success" onclick="exportDrivers()">
                                 <i class="bi bi-download me-2"></i> Export Drivers
                             </button>
+                            <button class="btn btn-outline-warning" onclick="sendTestAlert()">
+                                <i class="bi bi-bell me-2"></i> Send Test Alert
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-8">
+                <div class="card dashboard-card mb-4">
+                    <div class="card-header bg-white border-0 py-3">
+                        <h5 class="mb-0">
+                            <i class="bi bi-speedometer2 me-2"></i> System Health
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <div class="text-center">
+                                    <div class="mb-2">
+                                        <i class="bi bi-database display-4 text-primary"></i>
+                                    </div>
+                                    <h6>Database</h6>
+                                    <span class="badge bg-success" id="healthDb">Healthy</span>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="text-center">
+                                    <div class="mb-2">
+                                        <i class="bi bi-server display-4 text-success"></i>
+                                    </div>
+                                    <h6>API Server</h6>
+                                    <span class="badge bg-success" id="healthApi">Healthy</span>
+                                </div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <div class="text-center">
+                                    <div class="mb-2">
+                                        <i class="bi bi-wifi display-4 text-info"></i>
+                                    </div>
+                                    <h6>WebSocket</h6>
+                                    <span class="badge bg-success" id="healthWs">Connected</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <button class="btn btn-sm btn-outline-primary" onclick="checkSystemHealth()">
+                                <i class="bi bi-heart-pulse me-1"></i> Run Health Check
+                            </button>
+                            <span class="text-muted ms-2" id="lastHealthCheck">Last check: Never</span>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-    <div class="card dashboard-card mb-4">
-    <div class="card-header bg-white">
-        <h5 class="mb-0"><i class="fas fa-mobile-alt me-2"></i> Mobile Access</h5>
-    </div>
-    <div class="card-body">
-        <p>Guardians can access the mobile app at:</p>
-        <div class="input-group mb-3">
-            <input type="text" class="form-control" 
-                   value="http://localhost:5000/login.html" 
-                   id="mobileUrl" readonly>
-            <button class="btn btn-primary" onclick="copyMobileUrl()">
-                <i class="fas fa-copy"></i>
-            </button>
-        </div>
-        <a href="/login.html" target="_blank" class="btn btn-outline-primary">
-            <i class="fas fa-external-link-alt me-2"></i> Open Mobile Login
-        </a>
-    </div>
-</div>
+
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <script>
         const API_BASE = '/api';
-        let driversChart = null;
+        const ADMIN_TOKEN = 'admin123'; // Change this in production
         
         // Update current time
         function updateCurrentTime() {
@@ -290,443 +636,622 @@ if ('serviceWorker' in navigator) {
             document.getElementById('currentTime').textContent = now.toLocaleDateString('en-US', options);
         }
         
-        // Load total drivers count
-        async function loadDriverCount() {
+        // Load all database data
+        async function loadDatabaseData() {
             try {
-                const response = await fetch(`${API_BASE}/drivers`);
-                const data = await response.json();
-                
-                if (data.success) {
-                    const totalDrivers = data.count || data.drivers.length;
-                    document.getElementById('totalDrivers').textContent = totalDrivers;
-                    
-                    // Calculate today's registrations
-                    const today = new Date().toISOString().split('T')[0];
-                    const todayDrivers = data.drivers.filter(driver => 
-                        driver.registration_date && driver.registration_date.startsWith(today)
-                    ).length;
-                    
-                    // Calculate this week's registrations
-                    const oneWeekAgo = new Date();
-                    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-                    const weekDrivers = data.drivers.filter(driver => {
-                        if (!driver.registration_date) return false;
-                        const regDate = new Date(driver.registration_date);
-                        return regDate >= oneWeekAgo;
-                    }).length;
-                    
-                    // Calculate this month's registrations
-                    const startOfMonth = new Date();
-                    startOfMonth.setDate(1);
-                    const monthDrivers = data.drivers.filter(driver => {
-                        if (!driver.registration_date) return false;
-                        const regDate = new Date(driver.registration_date);
-                        return regDate >= startOfMonth;
-                    }).length;
-                    
-                    document.getElementById('todayRegistrations').textContent = todayDrivers;
-                    document.getElementById('weekRegistrations').textContent = weekDrivers;
-                    document.getElementById('monthRegistrations').textContent = monthDrivers;
-                    
-                    updateRecentCount(totalDrivers);
-                }
+                await Promise.all([
+                    loadDrivers(),
+                    loadAlerts(),
+                    loadGuardians(),
+                    loadDrowsinessEvents(),
+                    loadSystemInfo(),
+                    loadStatistics()
+                ]);
+                showSuccessMessage('Database data loaded successfully!');
             } catch (error) {
-                console.error('Error loading driver count:', error);
+                console.error('Error loading database data:', error);
+                showErrorMessage('Failed to load database data');
             }
         }
         
-        // Load recent drivers
-        async function loadRecentDrivers() {
-        try {
-            const response = await fetch(`${API_BASE}/drivers`);
-            const data = await response.json();
-            
-            if (data.success && data.drivers.length > 0) {
-                const recentDriversDiv = document.getElementById('recentDrivers');
-                const recentDrivers = data.drivers.slice(0, 10); // Get 10 most recent
+        // Load drivers
+        async function loadDrivers() {
+            try {
+                const response = await fetch(`${API_BASE}/admin/db-drivers`, {
+                    headers: {
+                        'X-Admin-Token': ADMIN_TOKEN
+                    }
+                });
+                const data = await response.json();
                 
-                recentDriversDiv.innerHTML = recentDrivers.map(driver => `
-                    <div class="recent-driver-card">
-                        <div class="row align-items-center">
-                            <div class="col-auto">
-                                <img src="./drivers/images/${driver.driver_id}.jpg" 
-                                    alt="${driver.name}" 
-                                    class="driver-avatar"
-                                    onerror="this.onerror=null;this.src='https://via.placeholder.com/60?text=Driver'">
-                            </div>
-                            <div class="col">
-                                <h6 class="mb-1">${driver.name}</h6>
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <small class="text-muted">
-                                            <i class="bi bi-card-text"></i> ${driver.license_number}
-                                        </small>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <small class="text-muted">
-                                            <i class="bi bi-telephone"></i> ${driver.phone}
-                                        </small>
-                                    </div>
-                                </div>
-                                <div class="mt-2">
-                                    <span class="badge bg-light text-dark">
-                                        <i class="bi bi-calendar me-1"></i>
-                                        ${driver.registration_date_formatted || 'Unknown date'}
-                                    </span>
-                                    <span class="badge bg-light text-dark ms-2">
-                                        <i class="bi bi-person-badge me-1"></i>
-                                        ${driver.driver_id}
-                                    </span>
-                                </div>
-                            </div>
-                            <div class="col-auto">
-                                <button class="btn btn-sm btn-outline-primary" onclick="viewDriverDetails('${driver.driver_id}')">
-                                    <i class="bi bi-eye"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                `).join('');
-            } else {
-                document.getElementById('recentDrivers').innerHTML = `
-                    <div class="text-center py-5">
-                        <i class="bi bi-people display-1 text-muted"></i>
-                        <p class="text-muted mt-3">No drivers registered yet</p>
-                        <button class="btn btn-primary mt-2" onclick="location.href='registration.html'">
-                            <i class="bi bi-plus-circle me-2"></i> Register First Driver
-                        </button>
-                    </div>
+                if (data.success) {
+                    document.getElementById('totalDrivers').textContent = data.count;
+                    
+                    const tbody = document.getElementById('driversTableBody');
+                    tbody.innerHTML = '';
+                    
+                    if (data.drivers.length > 0) {
+                        data.drivers.forEach(driver => {
+                            const row = `
+                                <tr>
+                                    <td><code>${driver.driver_id}</code></td>
+                                    <td><strong>${driver.name}</strong></td>
+                                    <td>${driver.phone}</td>
+                                    <td>${driver.guardian_name || 'N/A'}</td>
+                                    <td>${formatDate(driver.registration_date)}</td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-primary" onclick="viewDriverDetails('${driver.driver_id}')">
+                                            <i class="bi bi-eye"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                            `;
+                            tbody.innerHTML += row;
+                        });
+                    } else {
+                        tbody.innerHTML = `
+                            <tr>
+                                <td colspan="6" class="text-center py-4 text-muted">
+                                    <i class="bi bi-people display-6"></i>
+                                    <p class="mt-2">No drivers found</p>
+                                </td>
+                            </tr>
+                        `;
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading drivers:', error);
+                document.getElementById('driversTableBody').innerHTML = `
+                    <tr>
+                        <td colspan="6" class="text-center py-4 text-danger">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <p class="mt-2">Error loading drivers</p>
+                        </td>
+                    </tr>
                 `;
             }
-        } catch (error) {
-            console.error('Error loading recent drivers:', error);
-            document.getElementById('recentDrivers').innerHTML = `
-                <div class="alert alert-danger">
-                    <i class="bi bi-exclamation-triangle me-2"></i>
-                    Error loading drivers. Please check your connection.
-                </div>
-            `;
         }
-    }
         
-        // Load all drivers
-        async function loadAllDrivers() {
+        // Load alerts
+        async function loadAlerts() {
             try {
-                const response = await fetch(`${API_BASE}/drivers`);
-                const data = await response.json();
-                
-                if (data.success) {
-                    alert(`Total drivers: ${data.drivers.length}\n\nClick OK to view all drivers.`);
-                    // In a real app, you would navigate to a drivers list page
-                    // For now, we'll just show a list in an alert
-                    let driverList = "All Registered Drivers:\n\n";
-                    data.drivers.forEach((driver, index) => {
-                        driverList += `${index + 1}. ${driver.name} (${driver.driver_id})\n`;
-                    });
-                    alert(driverList);
-                }
-            } catch (error) {
-                console.error('Error loading all drivers:', error);
-                alert('Error loading drivers. Please try again.');
-            }
-        }
-        
-        // Update recent count
-        function updateRecentCount(total) {
-            const recentCount = Math.min(total, 10);
-            document.getElementById('recentCount').textContent = recentCount;
-        }
-        
-        // View driver details
-        async function viewDriverDetails(driverId) {
-            try {
-                const response = await fetch(`${API_BASE}/driver/${driverId}`);
-                const data = await response.json();
-                
-                if (data.success) {
-                    const driver = data.driver;
-                    
-                    // Create modal to show driver details
-                    const modalHTML = `
-                        <div class="modal fade" id="driverDetailsModal" tabindex="-1">
-                            <div class="modal-dialog modal-lg">
-                                <div class="modal-content">
-                                    <div class="modal-header">
-                                        <h5 class="modal-title">Driver Details</h5>
-                                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                                    </div>
-                                    <div class="modal-body">
-                                        <div class="row">
-                                            <div class="col-md-4 text-center">
-                                                <img src="${driver.image_url || 'https://via.placeholder.com/200?text=Driver'}" 
-                                                     alt="${driver.name}" 
-                                                     class="img-fluid rounded mb-3">
-                                                <h4>${driver.name}</h4>
-                                                <p class="text-muted">ID: ${driver.driver_id}</p>
-                                            </div>
-                                            <div class="col-md-8">
-                                                <div class="row">
-                                                    <div class="col-6 mb-3">
-                                                        <strong>License Number:</strong>
-                                                        <p>${driver.license_number}</p>
-                                                    </div>
-                                                    <div class="col-6 mb-3">
-                                                        <strong>Phone:</strong>
-                                                        <p>${driver.phone}</p>
-                                                    </div>
-                                                    <div class="col-6 mb-3">
-                                                        <strong>Email:</strong>
-                                                        <p>${driver.email || 'Not provided'}</p>
-                                                    </div>
-                                                    <div class="col-6 mb-3">
-                                                        <strong>Address:</strong>
-                                                        <p>${driver.address}</p>
-                                                    </div>
-                                                    <div class="col-6 mb-3">
-                                                        <strong>Guardian:</strong>
-                                                        <p>${driver.guardian_name}</p>
-                                                    </div>
-                                                    <div class="col-6 mb-3">
-                                                        <strong>Guardian Phone:</strong>
-                                                        <p>${driver.guardian_phone}</p>
-                                                    </div>
-                                                    <div class="col-12 mb-3">
-                                                        <strong>Registered On:</strong>
-                                                        <p>${driver.registration_date_formatted || driver.registration_date}</p>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="modal-footer">
-                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                                        <button type="button" class="btn btn-primary" onclick="printDriverDetails('${driver.driver_id}')">
-                                            <i class="bi bi-printer me-2"></i> Print
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    
-                    // Add modal to document
-                    if (!document.getElementById('driverDetailsModal')) {
-                        const modalDiv = document.createElement('div');
-                        modalDiv.innerHTML = modalHTML;
-                        document.body.appendChild(modalDiv);
+                const response = await fetch(`${API_BASE}/admin/db-alerts`, {
+                    headers: {
+                        'X-Admin-Token': ADMIN_TOKEN
                     }
-                    
-                    // Show modal
-                    const modal = new bootstrap.Modal(document.getElementById('driverDetailsModal'));
-                    modal.show();
-                }
-            } catch (error) {
-                console.error('Error viewing driver details:', error);
-                alert('Error loading driver details');
-            }
-        }
-        
-        // Print driver details
-        function printDriverDetails(driverId) {
-            window.open(`${API_BASE}/driver/${driverId}?print=true`, '_blank');
-        }
-        
-        // Refresh dashboard
-        function refreshDashboard() {
-            document.getElementById('recentDrivers').innerHTML = `
-                <div class="text-center py-3">
-                    <div class="spinner-border text-primary" role="status">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
-                    <p class="text-muted mt-2">Refreshing...</p>
-                </div>
-            `;
-            
-            loadDriverCount();
-            loadRecentDrivers();
-            loadRegistrationChart();
-            updateSystemHealth();
-            
-            document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
-            
-            setTimeout(() => {
-                showSuccessMessage('Dashboard refreshed successfully!');
-            }, 1000);
-        }
-        
-        // Export drivers
-        async function exportDrivers() {
-            try {
-                const response = await fetch(`${API_BASE}/drivers`);
+                });
                 const data = await response.json();
                 
                 if (data.success) {
-                    // Create CSV content
-                    let csvContent = "Driver ID,Name,License Number,Phone,Email,Address,Registration Date\n";
+                    document.getElementById('totalAlerts').textContent = data.count;
                     
-                    data.drivers.forEach(driver => {
-                        csvContent += `"${driver.driver_id}","${driver.name}","${driver.license_number}","${driver.phone}","${driver.email || ''}","${driver.address}","${driver.registration_date}"\n`;
-                    });
+                    // Update unread badge
+                    const unreadCount = data.alerts.filter(a => !a.acknowledged).length;
+                    document.getElementById('unreadAlertsBadge').textContent = unreadCount;
                     
-                    // Create download link
-                    const blob = new Blob([csvContent], { type: 'text/csv' });
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `drivers_export_${new Date().toISOString().split('T')[0]}.csv`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    window.URL.revokeObjectURL(url);
+                    const tbody = document.getElementById('alertsTableBody');
+                    tbody.innerHTML = '';
                     
-                    showSuccessMessage('Drivers exported successfully!');
-                }
-            } catch (error) {
-                console.error('Error exporting drivers:', error);
-                showErrorMessage('Error exporting drivers');
-            }
-        }
-        
-        // Load registration chart
-        async function loadRegistrationChart() {
-            try {
-                const response = await fetch(`${API_BASE}/drivers`);
-                const data = await response.json();
-                
-                if (data.success && data.drivers.length > 0) {
-                    // Group registrations by month
-                    const registrationsByMonth = {};
-                    const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-                    const registrationsByDay = Array(7).fill(0);
-                    
-                    data.drivers.forEach(driver => {
-                        if (driver.registration_date) {
-                            const date = new Date(driver.registration_date);
-                            const monthKey = date.toLocaleString('default', { month: 'short', year: '2-digit' });
+                    if (data.alerts.length > 0) {
+                        data.alerts.forEach(alert => {
+                            const severityBadge = alert.severity === 'high' ? 'danger' : 
+                                                alert.severity === 'medium' ? 'warning' : 'info';
+                            const statusBadge = alert.acknowledged ? 'success' : 'warning';
+                            const statusText = alert.acknowledged ? 'Read' : 'Unread';
                             
-                            // Count by month
-                            registrationsByMonth[monthKey] = (registrationsByMonth[monthKey] || 0) + 1;
-                            
-                            // Count by day of week
-                            const dayOfWeek = date.getDay();
-                            registrationsByDay[dayOfWeek]++;
-                        }
-                    });
-                    
-                    // Sort months chronologically
-                    const sortedMonths = Object.keys(registrationsByMonth).sort((a, b) => {
-                        return new Date(`01 ${a}`) - new Date(`01 ${b}`);
-                    });
-                    
-                    const monthData = sortedMonths.map(month => registrationsByMonth[month]);
-                    
-                    // Create chart
-                    const ctx = document.createElement('canvas');
-                    document.getElementById('registrationChart').innerHTML = '';
-                    document.getElementById('registrationChart').appendChild(ctx);
-                    
-                    if (driversChart) {
-                        driversChart.destroy();
-                    }
-                    
-                    driversChart = new Chart(ctx, {
-                        type: 'line',
-                        data: {
-                            labels: sortedMonths,
-                            datasets: [{
-                                label: 'Registrations',
-                                data: monthData,
-                                borderColor: '#667eea',
-                                backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                                borderWidth: 3,
-                                fill: true,
-                                tension: 0.4
-                            }]
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            plugins: {
-                                legend: {
-                                    display: false
-                                },
-                                tooltip: {
-                                    mode: 'index',
-                                    intersect: false
-                                }
-                            },
-                            scales: {
-                                y: {
-                                    beginAtZero: true,
-                                    ticks: {
-                                        stepSize: 1
-                                    }
-                                }
+                            // Get alert type from detection details
+                            let alertType = 'Alert';
+                            if (alert.detection_details) {
+                                alertType = alert.detection_details.state || 'Alert';
                             }
-                        }
-                    });
-                    
-                    // Update statistics
-                    const maxDayIndex = registrationsByDay.indexOf(Math.max(...registrationsByDay));
-                    document.getElementById('mostActiveDay').textContent = daysOfWeek[maxDayIndex];
-                    
-                    // Simple peak hour simulation (in real app, this would come from database)
-                    document.getElementById('peakHour').textContent = '10:00 AM';
-                    document.getElementById('avgDaily').textContent = Math.round(data.drivers.length / 30);
-                    document.getElementById('thisMonth').textContent = monthData[monthData.length - 1] || 0;
+                            
+                            const row = `
+                                <tr>
+                                    <td><code>#${alert.alert_id}</code></td>
+                                    <td><strong>${alert.driver_name}</strong></td>
+                                    <td><span class="badge bg-secondary">${alertType}</span></td>
+                                    <td><span class="badge bg-${severityBadge}">${alert.severity}</span></td>
+                                    <td>${formatTime(alert.timestamp)}</td>
+                                    <td><span class="badge bg-${statusBadge}">${statusText}</span></td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-info" onclick="viewAlertDetails(${alert.alert_id})">
+                                            <i class="bi bi-info-circle"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                            `;
+                            tbody.innerHTML += row;
+                        });
+                    }
                 }
             } catch (error) {
-                console.error('Error loading registration chart:', error);
+                console.error('Error loading alerts:', error);
             }
         }
         
-        // Check system health
-        async function checkSystemHealth() {
+        // Load guardians
+        async function loadGuardians() {
+            try {
+                const response = await fetch(`${API_BASE}/admin/db-guardians`, {
+                    headers: {
+                        'X-Admin-Token': ADMIN_TOKEN
+                    }
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    const tbody = document.getElementById('guardiansTableBody');
+                    tbody.innerHTML = '';
+                    
+                    if (data.guardians.length > 0) {
+                        data.guardians.forEach(guardian => {
+                            const row = `
+                                <tr>
+                                    <td>${guardian.guardian_id}</td>
+                                    <td><strong>${guardian.full_name}</strong></td>
+                                    <td>${guardian.phone}</td>
+                                    <td>${guardian.email || 'N/A'}</td>
+                                    <td><span class="badge bg-primary">${guardian.driver_count || 0}</span></td>
+                                    <td><span class="badge bg-warning">${guardian.alert_count || 0}</span></td>
+                                    <td>${guardian.last_login ? formatTime(guardian.last_login) : 'Never'}</td>
+                                </tr>
+                            `;
+                            tbody.innerHTML += row;
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading guardians:', error);
+            }
+        }
+        
+        // Load drowsiness events
+        async function loadDrowsinessEvents() {
+            try {
+                const response = await fetch(`${API_BASE}/guardian/drowsiness-events?guardian_id=1&token=demo&limit=100`, {
+                    headers: {
+                        'X-Admin-Token': ADMIN_TOKEN
+                    }
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('totalDrowsiness').textContent = data.count || 0;
+                    
+                    const tbody = document.getElementById('eventsTableBody');
+                    tbody.innerHTML = '';
+                    
+                    if (data.events && data.events.length > 0) {
+                        data.events.forEach(event => {
+                            const stateBadge = event.state === 'Drowsy' ? 'danger' : 
+                                            event.state === 'Yawning' ? 'warning' : 'info';
+                            const confidencePercent = Math.round(event.confidence * 100);
+                            const confidenceColor = confidencePercent > 80 ? 'danger' : 
+                                                  confidencePercent > 60 ? 'warning' : 'success';
+                            
+                            const row = `
+                                <tr>
+                                    <td>${event.event_id}</td>
+                                    <td>${event.driver_name}</td>
+                                    <td><span class="badge bg-${stateBadge}">${event.state}</span></td>
+                                    <td>
+                                        <span class="badge bg-${confidenceColor}">
+                                            ${confidencePercent}%
+                                        </span>
+                                    </td>
+                                    <td>${event.ear ? event.ear.toFixed(3) : 'N/A'}</td>
+                                    <td>${event.mar ? event.mar.toFixed(3) : 'N/A'}</td>
+                                    <td>${event.perclos ? (event.perclos * 100).toFixed(1) + '%' : 'N/A'}</td>
+                                    <td>${formatTime(event.timestamp)}</td>
+                                </tr>
+                            `;
+                            tbody.innerHTML += row;
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading drowsiness events:', error);
+            }
+        }
+        
+        // Load system info
+        async function loadSystemInfo() {
+            try {
+                const response = await fetch(`${API_BASE}/admin/stats`, {
+                    headers: {
+                        'X-Admin-Token': ADMIN_TOKEN
+                    }
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('activeSessions').textContent = data.statistics.active_sessions || 0;
+                    document.getElementById('connectedClients').textContent = data.system_status.connected_clients || 0;
+                    
+                    // Update server uptime
+                    const uptime = data.system_status.uptime || 0;
+                    const hours = Math.floor(uptime / 3600);
+                    const minutes = Math.floor((uptime % 3600) / 60);
+                    document.getElementById('serverUptime').textContent = `${hours}h ${minutes}m`;
+                    
+                    // Load tables list
+                    const tablesList = document.getElementById('tablesList');
+                    if (data.tables) {
+                        tablesList.innerHTML = '';
+                        data.tables.forEach(table => {
+                            const row = `
+                                <tr>
+                                    <td><code>${table.table_name}</code></td>
+                                    <td><span class="badge bg-primary">${table.row_count}</span></td>
+                                    <td>${table.size || 'N/A'}</td>
+                                    <td>${table.created || 'N/A'}</td>
+                                    <td>${table.last_updated || 'N/A'}</td>
+                                </tr>
+                            `;
+                            tablesList.innerHTML += row;
+                        });
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading system info:', error);
+            }
+        }
+        
+        // Load statistics
+        async function loadStatistics() {
             try {
                 const response = await fetch(`${API_BASE}/health`);
                 const data = await response.json();
                 
                 if (data.status === 'healthy') {
-                    showSuccessMessage('System is healthy and running!');
-                    updateSystemHealth();
-                } else {
-                    showErrorMessage('System health check failed');
+                    document.getElementById('healthDb').textContent = 'Healthy';
+                    document.getElementById('healthDb').className = 'badge bg-success';
+                    document.getElementById('healthApi').textContent = 'Healthy';
+                    document.getElementById('healthApi').className = 'badge bg-success';
+                    document.getElementById('healthWs').textContent = 'Connected';
+                    document.getElementById('healthWs').className = 'badge bg-success';
+                    
+                    document.getElementById('lastHealthCheck').textContent = 
+                        `Last check: ${new Date().toLocaleTimeString()}`;
                 }
             } catch (error) {
-                console.error('Error checking system health:', error);
-                showErrorMessage('Cannot connect to server');
+                console.error('Error loading statistics:', error);
             }
         }
         
-        // Update system health status
-        async function updateSystemHealth() {
+        // Show database viewer
+        function showDatabaseViewer() {
+            const dbViewer = document.querySelector('.card.dashboard-card');
+            if (dbViewer) {
+                dbViewer.scrollIntoView({ behavior: 'smooth' });
+                loadDatabaseData();
+            }
+        }
+        
+        // Show specific tab
+        function showDriversTab() {
+            const tab = new bootstrap.Tab(document.getElementById('drivers-tab'));
+            tab.show();
+            loadDrivers();
+        }
+        
+        function showAlertsTab() {
+            const tab = new bootstrap.Tab(document.getElementById('alerts-tab'));
+            tab.show();
+            loadAlerts();
+        }
+        
+        function showDrowsinessTab() {
+            const tab = new bootstrap.Tab(document.getElementById('events-tab'));
+            tab.show();
+            loadDrowsinessEvents();
+        }
+        
+        // Search table
+        function searchTable(tableType) {
+            const inputId = `search${tableType.charAt(0).toUpperCase() + tableType.slice(1)}`;
+            const filter = document.getElementById(inputId).value.toLowerCase();
+            const table = document.getElementById(`${tableType}Table`);
+            const rows = table.getElementsByTagName('tr');
+            
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                const text = row.textContent.toLowerCase();
+                row.style.display = text.includes(filter) ? '' : 'none';
+            }
+        }
+        
+        // Filter events
+        function filterEvents() {
+            const filter = document.getElementById('eventFilter').value;
+            const rows = document.querySelectorAll('#eventsTableBody tr');
+            
+            rows.forEach(row => {
+                const stateCell = row.cells[2];
+                if (stateCell) {
+                    const state = stateCell.textContent.trim().toLowerCase();
+                    const today = new Date().toDateString();
+                    const timeCell = row.cells[7];
+                    const eventDate = timeCell ? new Date(timeCell.textContent).toDateString() : '';
+                    
+                    let show = true;
+                    
+                    switch(filter) {
+                        case 'today':
+                            show = eventDate === today;
+                            break;
+                        case 'drowsy':
+                            show = state.includes('drowsy');
+                            break;
+                        case 'yawning':
+                            show = state.includes('yawning');
+                            break;
+                    }
+                    
+                    row.style.display = show ? '' : 'none';
+                }
+            });
+        }
+        
+        // View alert details
+        async function viewAlertDetails(alertId) {
             try {
-                const response = await fetch(`${API_BASE}/health`);
+                const response = await fetch(`${API_BASE}/admin/db-alerts`, {
+                    headers: {
+                        'X-Admin-Token': ADMIN_TOKEN
+                    }
+                });
                 const data = await response.json();
                 
-                document.getElementById('dbStatus').textContent = data.database || 'Unknown';
-                document.getElementById('dbStatus').className = data.database === 'connected' ? 'badge bg-success' : 'badge bg-danger';
+                if (data.success) {
+                    const alert = data.alerts.find(a => a.alert_id === alertId);
+                    if (alert) {
+                        showAlertModal(alert);
+                    }
+                }
+            } catch (error) {
+                console.error('Error viewing alert details:', error);
+            }
+        }
+        
+        // Show alert modal
+        function showAlertModal(alert) {
+            const modalHTML = `
+                <div class="modal fade" id="alertDetailsModal">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">Alert Details #${alert.alert_id}</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <h6>Basic Info</h6>
+                                        <p><strong>Driver:</strong> ${alert.driver_name}</p>
+                                        <p><strong>Guardian:</strong> ${alert.guardian_name}</p>
+                                        <p><strong>Severity:</strong> 
+                                            <span class="badge bg-${alert.severity === 'high' ? 'danger' : 'warning'}">
+                                                ${alert.severity}
+                                            </span>
+                                        </p>
+                                        <p><strong>Status:</strong> 
+                                            <span class="badge bg-${alert.acknowledged ? 'success' : 'warning'}">
+                                                ${alert.acknowledged ? 'Acknowledged' : 'Unread'}
+                                            </span>
+                                        </p>
+                                        <p><strong>Time:</strong> ${formatDateTime(alert.timestamp)}</p>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <h6>Message</h6>
+                                        <div class="alert alert-info">
+                                            ${alert.message}
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                ${alert.detection_details ? `
+                                <div class="row mt-3">
+                                    <div class="col-12">
+                                        <h6>Detection Details</h6>
+                                        <div class="json-view">
+                                            ${JSON.stringify(alert.detection_details, null, 2)}
+                                        </div>
+                                    </div>
+                                </div>
+                                ` : ''}
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                <button type="button" class="btn btn-primary" onclick="acknowledgeAlert(${alert.alert_id})">
+                                    <i class="bi bi-check-circle me-1"></i> Acknowledge
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Remove existing modal if any
+            const existingModal = document.getElementById('alertDetailsModal');
+            if (existingModal) {
+                existingModal.remove();
+            }
+            
+            // Add new modal
+            const modalDiv = document.createElement('div');
+            modalDiv.innerHTML = modalHTML;
+            document.body.appendChild(modalDiv);
+            
+            // Show modal
+            const modal = new bootstrap.Modal(document.getElementById('alertDetailsModal'));
+            modal.show();
+        }
+        
+        // Acknowledge alert
+        async function acknowledgeAlert(alertId) {
+            try {
+                const response = await fetch(`${API_BASE}/guardian/acknowledge-alert`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        guardian_id: 1,
+                        token: 'demo',
+                        alert_id: alertId
+                    })
+                });
                 
-                document.getElementById('storageStatus').textContent = data.images_directory || 'Unknown';
-                document.getElementById('storageStatus').className = data.images_directory === 'exists' ? 'badge bg-success' : 'badge bg-warning';
+                const data = await response.json();
                 
-                // Check camera status
-                const cameraResponse = await fetch(`${API_BASE}/test-camera`);
-                const cameraData = await cameraResponse.json();
+                if (data.success) {
+                    showSuccessMessage('Alert acknowledged!');
+                    loadAlerts();
+                    
+                    // Close modal
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('alertDetailsModal'));
+                    if (modal) {
+                        modal.hide();
+                    }
+                }
+            } catch (error) {
+                console.error('Error acknowledging alert:', error);
+                showErrorMessage('Failed to acknowledge alert');
+            }
+        }
+        
+        // Send test alert
+        async function sendTestAlert() {
+            try {
+                const response = await fetch(`${API_BASE}/test-alert`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        driver_name: 'Test Driver',
+                        message: 'This is a test alert from admin panel'
+                    })
+                });
                 
-                if (cameraData.success && cameraData.cameras.length > 0) {
-                    document.getElementById('cameraStatus').textContent = 'Available';
-                    document.getElementById('cameraStatus').className = 'badge bg-success';
-                } else {
-                    document.getElementById('cameraStatus').textContent = 'Unavailable';
-                    document.getElementById('cameraStatus').className = 'badge bg-warning';
+                const data = await response.json();
+                
+                if (data.success) {
+                    showSuccessMessage('Test alert sent!');
+                    // Refresh alerts after 2 seconds
+                    setTimeout(loadAlerts, 2000);
+                }
+            } catch (error) {
+                console.error('Error sending test alert:', error);
+                showErrorMessage('Failed to send test alert');
+            }
+        }
+        
+        // Clear old alerts
+        async function clearOldAlerts() {
+            if (confirm('Are you sure you want to clear all acknowledged alerts older than 30 days?')) {
+                try {
+                    // This would require a new API endpoint
+                    showSuccessMessage('This feature requires API implementation');
+                } catch (error) {
+                    console.error('Error clearing old alerts:', error);
+                    showErrorMessage('Failed to clear old alerts');
+                }
+            }
+        }
+        
+        // Export database
+        async function exportDatabase() {
+            try {
+                const driversResp = await fetch(`${API_BASE}/admin/db-drivers`, {
+                    headers: { 'X-Admin-Token': ADMIN_TOKEN }
+                });
+                const alertsResp = await fetch(`${API_BASE}/admin/db-alerts`, {
+                    headers: { 'X-Admin-Token': ADMIN_TOKEN }
+                });
+                
+                const driversData = await driversResp.json();
+                const alertsData = await alertsResp.json();
+                
+                // Create CSV content
+                let csvContent = "Data Export - Driver Alert System\n\n";
+                
+                // Drivers
+                csvContent += "DRIVERS\n";
+                csvContent += "Driver ID,Name,Phone,Guardian,Registered\n";
+                if (driversData.success) {
+                    driversData.drivers.forEach(driver => {
+                        csvContent += `"${driver.driver_id}","${driver.name}","${driver.phone}","${driver.guardian_name}","${driver.registration_date}"\n`;
+                    });
                 }
                 
+                csvContent += "\nALERTS\n";
+                csvContent += "Alert ID,Driver,Type,Severity,Message,Time,Status\n";
+                if (alertsData.success) {
+                    alertsData.alerts.forEach(alert => {
+                        const alertType = alert.detection_details ? 
+                                        (alert.detection_details.state || 'Alert') : 'Alert';
+                        csvContent += `"${alert.alert_id}","${alert.driver_name}","${alertType}","${alert.severity}","${alert.message}","${alert.timestamp}","${alert.acknowledged ? 'Read' : 'Unread'}"\n`;
+                    });
+                }
+                
+                // Create download link
+                const blob = new Blob([csvContent], { type: 'text/csv' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `driver_alert_export_${new Date().toISOString().split('T')[0]}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+                
+                showSuccessMessage('Database exported successfully!');
             } catch (error) {
-                console.error('Error updating system health:', error);
-                document.getElementById('dbStatus').textContent = 'Error';
-                document.getElementById('dbStatus').className = 'badge bg-danger';
+                console.error('Error exporting database:', error);
+                showErrorMessage('Failed to export database');
             }
+        }
+        
+        // Refresh all data
+        function refreshAllData() {
+            showLoading();
+            Promise.all([
+                loadDatabaseData(),
+                loadStatistics()
+            ]).finally(() => {
+                showSuccessMessage('All data refreshed!');
+            });
+        }
+        
+        // Show loading state
+        function showLoading() {
+            const loaders = document.querySelectorAll('.spinner-border');
+            loaders.forEach(loader => {
+                loader.style.display = 'inline-block';
+            });
+        }
+        
+        // Format date
+        function formatDate(dateString) {
+            if (!dateString) return 'N/A';
+            const date = new Date(dateString);
+            return date.toLocaleDateString();
+        }
+        
+        // Format time
+        function formatTime(dateString) {
+            if (!dateString) return 'N/A';
+            const date = new Date(dateString);
+            return date.toLocaleTimeString();
+        }
+        
+        // Format date and time
+        function formatDateTime(dateString) {
+            if (!dateString) return 'N/A';
+            const date = new Date(dateString);
+            return date.toLocaleString();
         }
         
         // Show success message
@@ -761,22 +1286,20 @@ if ('serviceWorker' in navigator) {
             }, 5000);
         }
         
-        // Initialize dashboard
+        // Initialize
         window.onload = function() {
             updateCurrentTime();
             setInterval(updateCurrentTime, 1000);
             
-            loadDriverCount();
-            loadRecentDrivers();
-            loadRegistrationChart();
-            updateSystemHealth();
+            // Load initial data
+            loadDatabaseData();
+            loadStatistics();
             
-            // Auto-refresh every 30 seconds
+            // Auto-refresh every minute
             setInterval(() => {
-                loadDriverCount();
-                updateSystemHealth();
-                document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
-            }, 30000);
+                loadAlerts();
+                loadStatistics();
+            }, 60000);
         };
     </script>
 </body>

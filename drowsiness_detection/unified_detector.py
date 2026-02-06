@@ -14,6 +14,9 @@ import joblib
 import mediapipe as mp
 import time
 import warnings
+import requests
+from datetime import datetime
+
 warnings.filterwarnings('ignore')
 
 print("="*80)
@@ -36,6 +39,14 @@ class DriverDrowsinessSystem:
         
         # Camera selection
         self.camera_index = self.select_camera()
+        
+        # Alert system configuration
+        self.alert_api_url = "https://driver-drowsiness-with-alert.onrender.com/api/send-alert"
+        # For testing locally with a different backend URL:
+        # self.alert_api_url = "http://localhost:5000/api/send-alert"
+        
+        # Track which alerts have been sent to avoid duplicates
+        self.already_alerted_drivers = {}
         
         print("\n🔍 Loading models...")
         
@@ -198,13 +209,15 @@ class DriverDrowsinessSystem:
             'drowsy_frames': 0,
             'yawning_frames': 0,
             'blinks': 0,
-            'alerts_triggered': 0
+            'alerts_triggered': 0,
+            'alerts_sent': 0
         }
         
         # Face quality metrics
         self.face_quality_threshold = 0.6
         
         print(f"\n📊 System initialized with camera index: {self.camera_index}")
+        print(f"🌐 Alert API URL: {self.alert_api_url}")
         print("✅ Enhanced system ready for detection")
     
     def select_camera(self):
@@ -566,6 +579,96 @@ class DriverDrowsinessSystem:
             print(f"✅ Using CNN detection: {cnn_state}")
         return cnn_state, cnn_conf, ear, mar, perclos
     
+    def send_drowsiness_alert(self, driver_id, driver_name, confidence, state, ear, mar, perclos):
+        """Send alert to backend when drowsiness is detected"""
+        try:
+            # Extract just the driver ID number if it's in format "Driver_X"
+            if driver_id.startswith("Driver_"):
+                # Try to extract numeric ID
+                driver_num = driver_id.replace("Driver_", "")
+                if driver_num.isdigit():
+                    # Convert to the format your backend expects
+                    alert_driver_id = f"DRV{driver_num.zfill(8)}"
+                else:
+                    # Use the driver name as ID
+                    alert_driver_id = driver_name.replace(" ", "_").upper()
+            else:
+                alert_driver_id = driver_id
+            
+            # Check if we already sent an alert for this driver recently
+            current_time = time.time()
+            if alert_driver_id in self.already_alerted_drivers:
+                last_alert_time = self.already_alerted_drivers[alert_driver_id]
+                if current_time - last_alert_time < 60:  # 60-second cooldown
+                    if self.debug_mode:
+                        print(f"⏳ Alert cooldown active for {driver_name}")
+                    return False
+            
+            # Prepare alert data
+            severity = "high" if confidence > 0.8 else "medium"
+            
+            # Create descriptive message based on detection state
+            if state == "Drowsy":
+                message = f"Drowsiness detected for {driver_name}. Eyes closed: {ear:.3f} (PERCLOS: {perclos:.1%})"
+            elif state == "Yawning":
+                message = f"Frequent yawning detected for {driver_name}. Mouth aspect ratio: {mar:.3f}"
+            else:
+                message = f"Alert for {driver_name}: {state}"
+            
+            alert_data = {
+                "driver_id": alert_driver_id,
+                "driver_name": driver_name,
+                "severity": severity,
+                "message": message,
+                "confidence": float(confidence),
+                "timestamp": datetime.now().isoformat(),
+                "detection_details": {
+                    "state": state,
+                    "ear": float(ear),
+                    "mar": float(mar),
+                    "perclos": float(perclos)
+                }
+            }
+            
+            # Send HTTP POST request to backend
+            if self.debug_mode:
+                print(f"📤 Sending alert for {driver_name} to {self.alert_api_url}")
+                print(f"📦 Alert data: {json.dumps(alert_data, indent=2)}")
+            
+            try:
+                response = requests.post(
+                    self.alert_api_url,
+                    json=alert_data,
+                    timeout=5  # 5 second timeout
+                )
+                
+                if response.status_code == 200:
+                    print(f"✅ Alert sent for {driver_name} (ID: {alert_driver_id})")
+                    self.detection_stats['alerts_sent'] += 1
+                    # Track this alert to avoid duplicates
+                    self.already_alerted_drivers[alert_driver_id] = current_time
+                    return True
+                else:
+                    print(f"❌ Failed to send alert: HTTP {response.status_code}")
+                    if hasattr(response, 'text'):
+                        print(f"   Response: {response.text}")
+                    return False
+                    
+            except requests.exceptions.ConnectionError:
+                print(f"❌ Cannot connect to alert server. Make sure backend is running.")
+                print(f"   URL: {self.alert_api_url}")
+                return False
+            except requests.exceptions.Timeout:
+                print(f"❌ Alert request timed out")
+                return False
+            except Exception as e:
+                print(f"❌ Error sending alert: {e}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Error in send_drowsiness_alert: {e}")
+            return False
+    
     def assess_face_quality(self, face_roi, bbox):
         """Assess quality of face detection"""
         try:
@@ -803,6 +906,12 @@ class DriverDrowsinessSystem:
         cv2.putText(frame, quality_text, (frame.shape[1] - 120, 105),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, quality_color, 1)
         
+        # Draw alert sent status
+        if self.detection_stats['alerts_sent'] > 0:
+            alert_text = f"Alerts Sent: {self.detection_stats['alerts_sent']}"
+            cv2.putText(frame, alert_text, (frame.shape[1] - 120, 130),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 100, 100), 1)
+        
         # Draw tracking status if face is lost
         if not hasattr(self, '_has_face') or not self._has_face:
             cv2.putText(frame, "SEARCHING...", (x + 10, y - 120),
@@ -893,6 +1002,7 @@ class DriverDrowsinessSystem:
         print("  • M: Adjust mouth detection threshold")
         print("  • P: Print detection statistics")
         print("  • A: Toggle alert sound (if enabled)")
+        print("  • T: Test alert sending")
         print("="*50)
         
         self.frame_count = 0
@@ -992,8 +1102,20 @@ class DriverDrowsinessSystem:
                                             self.alert_active = True
                                             self.alert_start_time = time.time()
                                             self.detection_stats['alerts_triggered'] += 1
+                                            
                                             print(f"🚨 DROWSINESS ALERT: {driver_name} shows drowsy signs!")
                                             print(f"   PERCLOS: {perclos_value:.1%}, EAR: {ear_value:.3f}")
+                                            
+                                            # Send alert to backend
+                                            self.send_drowsiness_alert(
+                                                driver_id=driver_name,
+                                                driver_name=driver_name,
+                                                confidence=drowsiness_conf,
+                                                state=drowsiness_state,
+                                                ear=ear_value,
+                                                mar=mar_value,
+                                                perclos=perclos_value
+                                            )
                                             
                                             if alert_sound:
                                                 # You can add sound alert here
@@ -1007,8 +1129,20 @@ class DriverDrowsinessSystem:
                                         if not self.alert_active and time.time() - self.alert_start_time > self.alert_cooldown:
                                             self.alert_active = True
                                             self.alert_start_time = time.time()
+                                            
                                             print(f"⚠️ YAWNING ALERT: {driver_name} is yawning frequently!")
                                             print(f"   MAR: {mar_value:.3f}")
+                                            
+                                            # Send alert to backend
+                                            self.send_drowsiness_alert(
+                                                driver_id=driver_name,
+                                                driver_name=driver_name,
+                                                confidence=drowsiness_conf,
+                                                state=drowsiness_state,
+                                                ear=ear_value,
+                                                mar=mar_value,
+                                                perclos=perclos_value
+                                            )
                                 
                                 else:
                                     self.consecutive_drowsy_frames = max(0, self.consecutive_drowsy_frames - 1)
@@ -1079,6 +1213,7 @@ class DriverDrowsinessSystem:
                 self.blink_counter = 0
                 self.blink_history = []
                 self.eye_state_history = []
+                self.already_alerted_drivers = {}
                 print("🔄 System reset: Tracking and alerts cleared")
             elif key == ord('s'):
                 smoothing = not smoothing
@@ -1112,10 +1247,27 @@ class DriverDrowsinessSystem:
                 print(f"  Yawning frames: {self.detection_stats['yawning_frames']} ({self.detection_stats['yawning_frames']/max(1, self.detection_stats['total_frames']):.1%})")
                 print(f"  Blinks detected: {self.detection_stats['blinks']}")
                 print(f"  Alerts triggered: {self.detection_stats['alerts_triggered']}")
+                print(f"  Alerts sent: {self.detection_stats['alerts_sent']}")
                 print(f"  Avg processing time: {avg_processing_time*1000:.1f}ms")
             elif key == ord('a'):
                 alert_sound = not alert_sound
                 print(f"🔊 Alert sound: {'ON' if alert_sound else 'OFF'}")
+            elif key == ord('t'):
+                # Test alert sending
+                print("\n🧪 Testing alert system...")
+                success = self.send_drowsiness_alert(
+                    driver_id="TEST123",
+                    driver_name="Test Driver",
+                    confidence=0.95,
+                    state="Drowsy",
+                    ear=0.15,
+                    mar=0.3,
+                    perclos=0.42
+                )
+                if success:
+                    print("✅ Test alert sent successfully!")
+                else:
+                    print("❌ Test alert failed")
         
         # Cleanup
         cap.release()
@@ -1140,6 +1292,7 @@ class DriverDrowsinessSystem:
         print(f"  • Yawning frames: {self.detection_stats['yawning_frames']} ({self.detection_stats['yawning_frames']/max(1, self.frame_count):.1%})")
         print(f"  • Total blinks: {self.detection_stats['blinks']}")
         print(f"  • Alerts triggered: {self.detection_stats['alerts_triggered']}")
+        print(f"  • Alerts sent to backend: {self.detection_stats['alerts_sent']}")
         
         if self.detection_stats['drowsy_frames'] > 0:
             print(f"\n⚠️ Drowsiness detected in {self.detection_stats['drowsy_frames']/max(1, self.frame_count):.1%} of frames")

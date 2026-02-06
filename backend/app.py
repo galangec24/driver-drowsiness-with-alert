@@ -1,6 +1,7 @@
 ﻿"""
 CAPSTONE PROJECT - DRIVER ALERT SYSTEM
 Render.com Deployment Ready Version
+Updated with enhanced alert handling for drowsiness detection system
 """
 
 from flask import Flask, request, jsonify, send_from_directory, Response, redirect, g
@@ -180,6 +181,7 @@ def init_db():
                 message TEXT,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 acknowledged BOOLEAN DEFAULT 0,
+                detection_details TEXT,
                 FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
                 FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
             )
@@ -203,6 +205,10 @@ def init_db():
                 driver_id TEXT NOT NULL,
                 guardian_id INTEGER,
                 confidence REAL,
+                state TEXT,
+                ear REAL,
+                mar REAL,
+                perclos REAL,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 processed BOOLEAN DEFAULT 0,
                 FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
@@ -248,6 +254,7 @@ def init_db():
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_expires ON session_tokens(expires_at)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_valid ON session_tokens(is_valid)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_driver ON drowsiness_events(driver_id)')
             
             # Insert demo guardian if not exists
             cursor.execute('SELECT COUNT(*) FROM guardians WHERE phone = ?', ('09123456789',))
@@ -509,7 +516,12 @@ def get_recent_alerts(guardian_id, limit=10):
             cursor = conn.cursor()
             
             cursor.execute('''
-                SELECT a.*, d.name as driver_name
+                SELECT a.*, d.name as driver_name,
+                       CASE 
+                           WHEN a.detection_details IS NOT NULL AND a.detection_details != '' 
+                           THEN json_extract(a.detection_details, '$.state')
+                           ELSE 'alert'
+                       END as alert_type
                 FROM alerts a
                 JOIN drivers d ON a.driver_id = d.driver_id
                 WHERE a.guardian_id = ?
@@ -518,10 +530,51 @@ def get_recent_alerts(guardian_id, limit=10):
             ''', (guardian_id, limit))
             
             alerts = cursor.fetchall()
-            return [dict(alert) for alert in alerts]
+            result = []
+            for alert in alerts:
+                alert_dict = dict(alert)
+                # Parse detection details if present
+                if alert_dict.get('detection_details'):
+                    try:
+                        alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
+                    except:
+                        pass
+                result.append(alert_dict)
+            return result
     except Exception as e:
         print(f"❌ Error in get_recent_alerts: {e}")
         return []
+
+def get_driver_by_name_or_id(identifier):
+    """Get driver by name or ID"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Try by ID first
+            cursor.execute('''
+                SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
+                FROM drivers d
+                JOIN guardians g ON d.guardian_id = g.guardian_id
+                WHERE d.driver_id = ?
+            ''', (identifier,))
+            
+            result = cursor.fetchone()
+            
+            # If not found by ID, try by name
+            if not result:
+                cursor.execute('''
+                    SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
+                    FROM drivers d
+                    JOIN guardians g ON d.guardian_id = g.guardian_id
+                    WHERE d.name LIKE ?
+                ''', (f'%{identifier}%',))
+                result = cursor.fetchone()
+            
+            return dict(result) if result else None
+    except Exception as e:
+        print(f"❌ Error getting driver: {e}")
+        return None
 
 # ==================== SOCKET.IO HANDLERS ====================
 @socketio.on('connect')
@@ -569,6 +622,9 @@ def handle_guardian_auth(data):
                 'full_name': guardian['full_name'],
                 'phone': guardian['phone']
             })
+            
+            # Send any pending alerts
+            send_pending_alerts(guardian_id, client_id)
             return
     
     # Authentication failed
@@ -576,6 +632,40 @@ def handle_guardian_auth(data):
         print(f"🔒 WebSocket authentication failed for client {client_id}")
     emit('auth_failed', {'error': 'Authentication failed'})
     socketio.disconnect(client_id)
+
+def send_pending_alerts(guardian_id, client_id):
+    """Send pending alerts to a newly connected guardian"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get unacknowledged alerts from the last hour
+            cursor.execute('''
+                SELECT a.*, d.name as driver_name
+                FROM alerts a
+                JOIN drivers d ON a.driver_id = d.driver_id
+                WHERE a.guardian_id = ? AND a.acknowledged = 0 
+                AND a.timestamp > datetime('now', '-1 hour')
+                ORDER BY a.timestamp DESC
+            ''', (guardian_id,))
+            
+            alerts = cursor.fetchall()
+            
+            for alert in alerts:
+                alert_data = dict(alert)
+                if alert_data.get('detection_details'):
+                    try:
+                        alert_data['detection_details'] = json.loads(alert_data['detection_details'])
+                    except:
+                        pass
+                
+                socketio.emit('guardian_alert', alert_data, room=client_id)
+                
+            if alerts and not IS_PRODUCTION:
+                print(f"📨 Sent {len(alerts)} pending alerts to guardian {guardian_id}")
+                
+    except Exception as e:
+        print(f"❌ Error sending pending alerts: {e}")
 
 # ==================== MAIN ROUTES ====================
 @app.route('/api/test', methods=['GET'])
@@ -699,6 +789,9 @@ def health_check():
             cursor.execute('SELECT COUNT(*) FROM alerts')
             alert_count = cursor.fetchone()[0]
             
+            cursor.execute('SELECT COUNT(*) FROM drowsiness_events WHERE DATE(timestamp) = DATE("now")')
+            drowsiness_events_today = cursor.fetchone()[0]
+            
             cursor.execute('SELECT COUNT(*) FROM session_tokens WHERE is_valid = 1 AND expires_at > ?', 
                          (datetime.now(),))
             active_sessions_count = cursor.fetchone()[0]
@@ -717,6 +810,7 @@ def health_check():
                 'guardians': guardian_count,
                 'drivers': driver_count,
                 'alerts': alert_count,
+                'drowsiness_events_today': drowsiness_events_today,
                 'valid_sessions': active_sessions_count
             }
         })
@@ -954,6 +1048,16 @@ def guardian_dashboard():
                 WHERE guardian_id = ? AND DATE(timestamp) = DATE('now')
             ''', (guardian_id,))
             today_alerts = cursor.fetchone()[0]
+            
+            # Get drowsiness statistics
+            cursor.execute('''
+                SELECT COUNT(*) as drowsy_count,
+                       AVG(confidence) as avg_confidence,
+                       MAX(timestamp) as last_event
+                FROM drowsiness_events 
+                WHERE guardian_id = ? AND DATE(timestamp) = DATE('now')
+            ''', (guardian_id,))
+            drowsiness_stats = cursor.fetchone()
         
         return jsonify({
             'success': True,
@@ -964,6 +1068,7 @@ def guardian_dashboard():
                 'total_alerts': total_alerts,
                 'unread_alerts': unread_alerts,
                 'today_alerts': today_alerts,
+                'drowsiness_stats': dict(drowsiness_stats) if drowsiness_stats else {},
                 'recent_alerts': recent_alerts
             },
             'drivers': drivers
@@ -1069,13 +1174,15 @@ def register_driver():
 
 @app.route('/api/send-alert', methods=['POST'])
 def send_alert():
-    """Send drowsiness alert"""
+    """Send drowsiness alert - Enhanced version with detailed detection data"""
     try:
         data = request.json
         driver_id = data.get('driver_id')
+        driver_name = data.get('driver_name', 'Unknown Driver')
         severity = data.get('severity', 'high')
         message = data.get('message', 'Drowsiness detected!')
         confidence = data.get('confidence', 0.0)
+        detection_details = data.get('detection_details', {})
         
         if not driver_id:
             return jsonify({
@@ -1083,78 +1190,268 @@ def send_alert():
                 'error': 'Driver ID required'
             }), 400
         
-        with get_db_cursor() as cursor:
-            cursor.execute('''
-                SELECT d.name as driver_name, d.guardian_id, g.full_name as guardian_name, g.phone
-                FROM drivers d
-                JOIN guardians g ON d.guardian_id = g.guardian_id
-                WHERE d.driver_id = ?
-            ''', (driver_id,))
-            
-            result = cursor.fetchone()
-            
-            if result:
-                driver_name, guardian_id, guardian_name, guardian_phone = result
-                
-                # Create alert
-                cursor.execute('''
-                    INSERT INTO alerts (driver_id, guardian_id, severity, message)
-                    VALUES (?, ?, ?, ?)
-                ''', (driver_id, guardian_id, severity, message))
-                alert_id = cursor.lastrowid
-                
-                # Log drowsiness event
-                cursor.execute('''
-                    INSERT INTO drowsiness_events (driver_id, guardian_id, confidence)
-                    VALUES (?, ?, ?)
-                ''', (driver_id, guardian_id, confidence))
-                
-                # Log activity
-                cursor.execute('''
-                    INSERT INTO activity_log (guardian_id, action, details)
-                    VALUES (?, ?, ?)
-                ''', (guardian_id, 'ALERT_GENERATED', 
-                    f'Alert for driver {driver_name}: {message}'))
-                
-                alert_data = {
-                    'alert_id': alert_id,
-                    'driver_id': driver_id,
-                    'driver_name': driver_name,
-                    'guardian_id': guardian_id,
-                    'guardian_name': guardian_name,
-                    'severity': severity,
-                    'message': message,
-                    'timestamp': datetime.now().isoformat(),
-                    'confidence': confidence
-                }
-                
-                # Emit socket events
-                socketio.emit('new_alert', alert_data)
-                
-                # Send to specific guardian clients
-                for client_id, client_info in connected_clients.items():
-                    if client_info.get('guardian_id') == guardian_id and client_info.get('authenticated'):
-                        socketio.emit('guardian_alert', alert_data, room=client_id)
-                
-                if not IS_PRODUCTION:
-                    print(f"🚨 Alert sent for {driver_name} -> Guardian: {guardian_name}")
-                
-                return jsonify({
-                    'success': True,
-                    'alert_id': alert_id,
-                    'data': alert_data
-                })
+        print(f"📥 Received alert: Driver={driver_id}, State={detection_details.get('state', 'unknown')}, Conf={confidence:.2%}")
         
-        return jsonify({
-            'success': False,
-            'error': 'Driver not found'
-        }), 404
+        # Try to find the driver in the database
+        driver_info = get_driver_by_name_or_id(driver_id)
+        
+        if driver_info:
+            # Driver found in database
+            driver_id = driver_info['driver_id']
+            driver_name = driver_info['name']
+            guardian_id = driver_info['guardian_id']
+            guardian_name = driver_info['guardian_name']
+            guardian_phone = driver_info['guardian_phone']
+            
+            print(f"✅ Found driver in DB: {driver_name} -> Guardian: {guardian_name}")
+            
+        else:
+            # Driver not found - create a temporary record or use demo guardian
+            print(f"⚠️ Driver not found: {driver_id}. Using demo guardian.")
+            
+            # Find demo guardian
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT guardian_id, full_name, phone FROM guardians WHERE phone = ?', ('09123456789',))
+                demo_guardian = cursor.fetchone()
+                
+                if demo_guardian:
+                    guardian_id, guardian_name, guardian_phone = demo_guardian
+                    
+                    # Create a temporary driver entry if needed
+                    temp_driver_id = f"TEMP{int(time.time())}"
+                    cursor.execute('''
+                        INSERT OR IGNORE INTO drivers (driver_id, name, phone, guardian_id)
+                        VALUES (?, ?, ?, ?)
+                    ''', (temp_driver_id, driver_name, '00000000000', guardian_id))
+                    conn.commit()
+                    
+                    driver_id = temp_driver_id
+                else:
+                    return jsonify({
+                        'success': False,
+                        'error': 'No guardian found for this alert'
+                    }), 404
+        
+        # Convert detection_details to JSON string for storage
+        detection_details_json = json.dumps(detection_details) if detection_details else None
+        
+        with get_db_cursor() as cursor:
+            # Create alert
+            cursor.execute('''
+                INSERT INTO alerts (driver_id, guardian_id, severity, message, detection_details)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (driver_id, guardian_id, severity, message, detection_details_json))
+            alert_id = cursor.lastrowid
+            
+            # Log drowsiness event with detailed metrics
+            cursor.execute('''
+                INSERT INTO drowsiness_events (driver_id, guardian_id, confidence, state, ear, mar, perclos)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                driver_id, 
+                guardian_id, 
+                confidence,
+                detection_details.get('state', 'unknown'),
+                detection_details.get('ear', 0.0),
+                detection_details.get('mar', 0.0),
+                detection_details.get('perclos', 0.0)
+            ))
+            
+            # Log activity
+            cursor.execute('''
+                INSERT INTO activity_log (guardian_id, action, details)
+                VALUES (?, ?, ?)
+            ''', (guardian_id, 'ALERT_GENERATED', 
+                f'Alert for driver {driver_name}: {message} (Confidence: {confidence:.1%})'))
+            
+            # Prepare alert data for WebSocket
+            alert_data = {
+                'alert_id': alert_id,
+                'driver_id': driver_id,
+                'driver_name': driver_name,
+                'guardian_id': guardian_id,
+                'guardian_name': guardian_name,
+                'severity': severity,
+                'message': message,
+                'confidence': confidence,
+                'timestamp': datetime.now().isoformat(),
+                'detection_details': detection_details,
+                'acknowledged': False
+            }
+            
+            # Emit socket events
+            socketio.emit('new_alert', alert_data)
+            
+            # Send to specific guardian clients
+            guardian_clients = []
+            for client_id, client_info in connected_clients.items():
+                if client_info.get('guardian_id') == guardian_id and client_info.get('authenticated'):
+                    socketio.emit('guardian_alert', alert_data, room=client_id)
+                    guardian_clients.append(client_id)
+            
+            print(f"🚨 Alert #{alert_id} sent for {driver_name}")
+            print(f"   → Guardian: {guardian_name} (Phone: {guardian_phone})")
+            print(f"   → Connected clients: {len(guardian_clients)}")
+            print(f"   → Details: {detection_details}")
+            
+            return jsonify({
+                'success': True,
+                'alert_id': alert_id,
+                'data': alert_data,
+                'message': f'Alert sent to guardian {guardian_name}'
+            })
         
     except Exception as e:
+        print(f"❌ Error in send_alert: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e)
         }), 500
+
+@app.route('/api/admin/db-drivers', methods=['GET'])
+def admin_get_drivers():
+    """Get all drivers from database"""
+    try:
+        auth_token = request.headers.get('X-Admin-Token')
+        if not auth_token or auth_token != os.environ.get('ADMIN_TOKEN', 'admin123'):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
+                FROM drivers d
+                LEFT JOIN guardians g ON d.guardian_id = g.guardian_id
+                ORDER BY d.registration_date DESC
+            ''')
+            drivers = cursor.fetchall()
+            
+            cursor.execute('SELECT COUNT(*) as count FROM drivers')
+            count = cursor.fetchone()['count']
+            
+        return jsonify({
+            'success': True,
+            'count': count,
+            'drivers': [dict(driver) for driver in drivers]
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/db-alerts', methods=['GET'])
+def admin_get_alerts():
+    """Get all alerts from database"""
+    try:
+        auth_token = request.headers.get('X-Admin-Token')
+        if not auth_token or auth_token != os.environ.get('ADMIN_TOKEN', 'admin123'):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+        
+        limit = request.args.get('limit', 100, type=int)
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT a.*, d.name as driver_name, g.full_name as guardian_name
+                FROM alerts a
+                JOIN drivers d ON a.driver_id = d.driver_id
+                JOIN guardians g ON a.guardian_id = g.guardian_id
+                ORDER BY a.timestamp DESC
+                LIMIT ?
+            ''', (limit,))
+            
+            alerts = cursor.fetchall()
+            
+            # Parse detection_details
+            result = []
+            for alert in alerts:
+                alert_dict = dict(alert)
+                if alert_dict.get('detection_details'):
+                    try:
+                        alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
+                    except:
+                        pass
+                result.append(alert_dict)
+            
+            cursor.execute('SELECT COUNT(*) as count FROM alerts')
+            count = cursor.fetchone()['count']
+            
+        return jsonify({
+            'success': True,
+            'count': count,
+            'alerts': result
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/db-guardians', methods=['GET'])
+def admin_get_guardians():
+    """Get all guardians from database"""
+    try:
+        auth_token = request.headers.get('X-Admin-Token')
+        if not auth_token or auth_token != os.environ.get('ADMIN_TOKEN', 'admin123'):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT g.*, 
+                       (SELECT COUNT(*) FROM drivers d WHERE d.guardian_id = g.guardian_id) as driver_count,
+                       (SELECT COUNT(*) FROM alerts a WHERE a.guardian_id = g.guardian_id) as alert_count
+                FROM guardians g
+                ORDER BY g.registration_date DESC
+            ''')
+            guardians = cursor.fetchall()
+            
+        return jsonify({
+            'success': True,
+            'count': len(guardians),
+            'guardians': [dict(guardian) for guardian in guardians]
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/db-tables', methods=['GET'])
+def admin_get_tables():
+    """Get all table names and row counts"""
+    try:
+        auth_token = request.headers.get('X-Admin-Token')
+        if not auth_token or auth_token != os.environ.get('ADMIN_TOKEN', 'admin123'):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get all tables
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            tables = cursor.fetchall()
+            
+            result = []
+            for table in tables:
+                table_name = table['name']
+                cursor.execute(f'SELECT COUNT(*) as count FROM {table_name}')
+                count = cursor.fetchone()['count']
+                
+                cursor.execute(f'PRAGMA table_info({table_name})')
+                columns = cursor.fetchall()
+                
+                result.append({
+                    'table_name': table_name,
+                    'row_count': count,
+                    'columns': [{'name': col['name'], 'type': col['type']} for col in columns]
+                })
+            
+        return jsonify({
+            'success': True,
+            'tables': result
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/guardian/alerts', methods=['GET'])
 def get_guardian_alerts():
@@ -1163,6 +1460,7 @@ def get_guardian_alerts():
         guardian_id = request.args.get('guardian_id')
         token = request.args.get('token')
         limit = request.args.get('limit', 20, type=int)
+        acknowledged = request.args.get('acknowledged', type=str)
         
         if not guardian_id or not token:
             return jsonify({
@@ -1181,22 +1479,60 @@ def get_guardian_alerts():
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            cursor.execute('''
-                SELECT a.*, d.name as driver_name
+            # Build query based on acknowledged filter
+            query = '''
+                SELECT a.*, d.name as driver_name,
+                       CASE 
+                           WHEN a.detection_details IS NOT NULL AND a.detection_details != '' 
+                           THEN json_extract(a.detection_details, '$.state')
+                           ELSE 'alert'
+                       END as alert_type
                 FROM alerts a
                 JOIN drivers d ON a.driver_id = d.driver_id
                 WHERE a.guardian_id = ?
-                ORDER BY a.timestamp DESC
-                LIMIT ?
-            ''', (guardian_id, limit))
+            '''
+            
+            params = [guardian_id]
+            
+            if acknowledged is not None:
+                if acknowledged.lower() == 'true':
+                    query += ' AND a.acknowledged = 1'
+                elif acknowledged.lower() == 'false':
+                    query += ' AND a.acknowledged = 0'
+            
+            query += ' ORDER BY a.timestamp DESC LIMIT ?'
+            params.append(limit)
+            
+            cursor.execute(query, params)
             
             alerts = cursor.fetchall()
+            
+            # Parse detection details
+            result_alerts = []
+            for alert in alerts:
+                alert_dict = dict(alert)
+                if alert_dict.get('detection_details'):
+                    try:
+                        alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
+                    except:
+                        pass
+                result_alerts.append(alert_dict)
+            
+            # Get counts
+            cursor.execute('SELECT COUNT(*) FROM alerts WHERE guardian_id = ?', (guardian_id,))
+            total_count = cursor.fetchone()[0]
+            
+            cursor.execute('SELECT COUNT(*) FROM alerts WHERE guardian_id = ? AND acknowledged = 0', 
+                         (guardian_id,))
+            unread_count = cursor.fetchone()[0]
             
             return jsonify({
                 'success': True,
                 'session_valid': True,
                 'count': len(alerts),
-                'alerts': [dict(alert) for alert in alerts]
+                'total_count': total_count,
+                'unread_count': unread_count,
+                'alerts': result_alerts
             })
         
     except Exception as e:
@@ -1204,6 +1540,321 @@ def get_guardian_alerts():
             'success': False,
             'error': str(e),
             'redirect': '/?logged_out=true'
+        }), 500
+
+@app.route('/api/guardian/acknowledge-alert', methods=['POST'])
+def acknowledge_alert():
+    """Acknowledge an alert"""
+    try:
+        data = request.json
+        guardian_id = data.get('guardian_id')
+        token = data.get('token')
+        alert_id = data.get('alert_id')
+        
+        if not guardian_id or not token or not alert_id:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required fields'
+            }), 400
+        
+        # Validate session
+        if not validate_session(guardian_id, token):
+            return jsonify({
+                'success': False,
+                'error': 'Session expired or invalid',
+                'redirect': '/?logged_out=true'
+            }), 401
+        
+        with get_db_cursor() as cursor:
+            # Check if alert belongs to this guardian
+            cursor.execute('''
+                SELECT a.*, d.name as driver_name 
+                FROM alerts a
+                JOIN drivers d ON a.driver_id = d.driver_id
+                WHERE a.alert_id = ? AND a.guardian_id = ?
+            ''', (alert_id, guardian_id))
+            
+            alert = cursor.fetchone()
+            
+            if not alert:
+                return jsonify({
+                    'success': False,
+                    'error': 'Alert not found or not authorized'
+                }), 404
+            
+            # Acknowledge the alert
+            cursor.execute('''
+                UPDATE alerts SET acknowledged = 1 
+                WHERE alert_id = ? AND guardian_id = ?
+            ''', (alert_id, guardian_id))
+            
+            # Log activity
+            cursor.execute('''
+                INSERT INTO activity_log (guardian_id, action, details)
+                VALUES (?, ?, ?)
+            ''', (guardian_id, 'ALERT_ACKNOWLEDGED', 
+                f'Acknowledged alert #{alert_id} for driver {alert["driver_name"]}'))
+            
+            # Prepare response data
+            alert_dict = dict(alert)
+            if alert_dict.get('detection_details'):
+                try:
+                    alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
+                except:
+                    pass
+            
+            # Emit socket event for real-time update
+            socketio.emit('alert_acknowledged', {
+                'alert_id': alert_id,
+                'guardian_id': guardian_id,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            print(f"✅ Alert #{alert_id} acknowledged by guardian {guardian_id}")
+            
+            return jsonify({
+                'success': True,
+                'alert_id': alert_id,
+                'acknowledged': True,
+                'message': 'Alert acknowledged successfully'
+            })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'redirect': '/?logged_out=true'
+        }), 500
+
+@app.route('/api/guardian/drowsiness-events', methods=['GET'])
+def get_drowsiness_events():
+    """Get drowsiness events for a guardian"""
+    try:
+        guardian_id = request.args.get('guardian_id')
+        token = request.args.get('token')
+        limit = request.args.get('limit', 50, type=int)
+        driver_id = request.args.get('driver_id')
+        
+        if not guardian_id or not token:
+            return jsonify({
+                'success': False,
+                'error': 'Authentication required'
+            }), 401
+        
+        # Validate session
+        if not validate_session(guardian_id, token):
+            return jsonify({
+                'success': False,
+                'error': 'Session expired or invalid',
+                'redirect': '/?logged_out=true'
+            }), 401
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Build query
+            query = '''
+                SELECT e.*, d.name as driver_name
+                FROM drowsiness_events e
+                JOIN drivers d ON e.driver_id = d.driver_id
+                WHERE e.guardian_id = ?
+            '''
+            
+            params = [guardian_id]
+            
+            if driver_id:
+                query += ' AND e.driver_id = ?'
+                params.append(driver_id)
+            
+            query += ' ORDER BY e.timestamp DESC LIMIT ?'
+            params.append(limit)
+            
+            cursor.execute(query, params)
+            
+            events = cursor.fetchall()
+            
+            # Get statistics
+            cursor.execute('''
+                SELECT 
+                    COUNT(*) as total_events,
+                    AVG(confidence) as avg_confidence,
+                    COUNT(CASE WHEN state = 'Drowsy' THEN 1 END) as drowsy_count,
+                    COUNT(CASE WHEN state = 'Yawning' THEN 1 END) as yawning_count,
+                    DATE(timestamp) as date
+                FROM drowsiness_events 
+                WHERE guardian_id = ? AND DATE(timestamp) = DATE('now')
+                GROUP BY DATE(timestamp)
+            ''', (guardian_id,))
+            
+            stats = cursor.fetchone()
+            
+            return jsonify({
+                'success': True,
+                'session_valid': True,
+                'count': len(events),
+                'events': [dict(event) for event in events],
+                'statistics': dict(stats) if stats else {
+                    'total_events': 0,
+                    'avg_confidence': 0,
+                    'drowsy_count': 0,
+                    'yawning_count': 0
+                }
+            })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'redirect': '/?logged_out=true'
+        }), 500
+
+@app.route('/api/test-alert', methods=['POST'])
+def test_alert():
+    """Endpoint to test alert sending (for development)"""
+    try:
+        data = request.json or {}
+        
+        # Use demo guardian for testing
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT guardian_id, full_name FROM guardians WHERE phone = ?', ('09123456789',))
+            demo_guardian = cursor.fetchone()
+            
+            if not demo_guardian:
+                return jsonify({
+                    'success': False,
+                    'error': 'Demo guardian not found'
+                }), 404
+            
+            guardian_id, guardian_name = demo_guardian
+            
+            # Create test driver if needed
+            test_driver_id = data.get('driver_id', 'TEST123')
+            test_driver_name = data.get('driver_name', 'Test Driver')
+            
+            cursor.execute('SELECT driver_id FROM drivers WHERE driver_id = ?', (test_driver_id,))
+            if not cursor.fetchone():
+                cursor.execute('''
+                    INSERT OR IGNORE INTO drivers (driver_id, name, phone, guardian_id)
+                    VALUES (?, ?, ?, ?)
+                ''', (test_driver_id, test_driver_name, '00000000000', guardian_id))
+                conn.commit()
+            
+            # Create test alert
+            detection_details = {
+                'state': 'Drowsy',
+                'ear': 0.15,
+                'mar': 0.3,
+                'perclos': 0.42,
+                'test': True
+            }
+            
+            test_data = {
+                'driver_id': test_driver_id,
+                'driver_name': test_driver_name,
+                'severity': 'high',
+                'message': 'Test alert from API endpoint',
+                'confidence': 0.95,
+                'detection_details': detection_details
+            }
+            
+            # Use the send_alert endpoint internally
+            from flask import current_app
+            with current_app.test_request_context():
+                test_request = current_app.test_client()
+                response = test_request.post('/api/send-alert', 
+                                           json=test_data,
+                                           content_type='application/json')
+            
+            if response.status_code == 200:
+                return jsonify({
+                    'success': True,
+                    'message': f'Test alert sent to guardian {guardian_name}',
+                    'alert_data': test_data
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f'Failed to send test alert: {response.status_code}'
+                }), 500
+        
+    except Exception as e:
+        print(f"❌ Test alert error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/admin/stats', methods=['GET'])
+def admin_stats():
+    """Admin statistics endpoint (protected)"""
+    try:
+        # Simple protection - could be enhanced with admin authentication
+        auth_token = request.headers.get('X-Admin-Token')
+        if not auth_token or auth_token != os.environ.get('ADMIN_TOKEN', 'admin123'):
+            return jsonify({
+                'success': False,
+                'error': 'Unauthorized'
+            }), 401
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get comprehensive statistics
+            cursor.execute('SELECT COUNT(*) as total_alerts FROM alerts')
+            total_alerts = cursor.fetchone()[0]
+            
+            cursor.execute('SELECT COUNT(*) as today_alerts FROM alerts WHERE DATE(timestamp) = DATE("now")')
+            today_alerts = cursor.fetchone()[0]
+            
+            cursor.execute('SELECT COUNT(*) as total_drivers FROM drivers')
+            total_drivers = cursor.fetchone()[0]
+            
+            cursor.execute('SELECT COUNT(*) as total_guardians FROM guardians')
+            total_guardians = cursor.fetchone()[0]
+            
+            cursor.execute('SELECT COUNT(*) as drowsiness_events FROM drowsiness_events WHERE DATE(timestamp) = DATE("now")')
+            drowsiness_events = cursor.fetchone()[0]
+            
+            cursor.execute('SELECT COUNT(*) as active_sessions FROM session_tokens WHERE is_valid = 1 AND expires_at > ?', 
+                         (datetime.now(),))
+            active_sessions_count = cursor.fetchone()[0]
+            
+            # Get recent activity
+            cursor.execute('''
+                SELECT action, details, timestamp 
+                FROM activity_log 
+                ORDER BY timestamp DESC 
+                LIMIT 10
+            ''')
+            recent_activity = cursor.fetchall()
+            
+            # Get system status
+            system_status = {
+                'database': 'connected',
+                'connected_clients': len(connected_clients),
+                'server_time': datetime.now().isoformat(),
+                'uptime': time.time() - app_start_time if 'app_start_time' in globals() else 0
+            }
+        
+        return jsonify({
+            'success': True,
+            'statistics': {
+                'total_alerts': total_alerts,
+                'today_alerts': today_alerts,
+                'total_drivers': total_drivers,
+                'total_guardians': total_guardians,
+                'drowsiness_events_today': drowsiness_events,
+                'active_sessions': active_sessions_count
+            },
+            'system_status': system_status,
+            'recent_activity': [dict(activity) for activity in recent_activity]
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
         }), 500
 
 # ==================== STATIC FILES ====================
@@ -1226,6 +1877,14 @@ def cleanup_expired_sessions():
             ''', (datetime.now(),))
             
             expired_count = cursor.rowcount
+            
+            # Clean up old drowsiness events (keep last 30 days)
+            cursor.execute('''
+                DELETE FROM drowsiness_events 
+                WHERE timestamp < datetime('now', '-30 days')
+            ''')
+            
+            old_events_count = cursor.rowcount
         
         # Clean memory cache
         current_time = datetime.now()
@@ -1237,8 +1896,8 @@ def cleanup_expired_sessions():
         for guardian_id in expired_guards:
             del active_sessions[guardian_id]
         
-        if expired_count > 0 and not IS_PRODUCTION:
-            print(f"🧹 Cleaned up {expired_count} expired sessions")
+        if (expired_count > 0 or old_events_count > 0) and not IS_PRODUCTION:
+            print(f"🧹 Cleaned up {expired_count} expired sessions and {old_events_count} old events")
         
         return expired_count
     except Exception as e:
@@ -1254,7 +1913,6 @@ def startup_tasks():
     
     if IS_RENDER:
         print("🌐 DEPLOYMENT: Render.com Cloud")
-        print(f"📱 App URL: https://your-app-name.onrender.com")
     else:
         print("💻 DEPLOYMENT: Local Development")
     
@@ -1286,7 +1944,16 @@ def startup_tasks():
     print("📱 DEMO CREDENTIALS:")
     print("  Phone: 09123456789")
     print("  Password: demo123")
+    print(f"{'='*70}")
+    print("🔗 API Endpoints:")
+    print("  • POST /api/send-alert - Receive alerts from drowsiness detection")
+    print("  • GET  /api/health - Health check")
+    print("  • POST /api/test-alert - Test alert endpoint")
     print(f"{'='*70}\n")
+    
+    # Store app start time for uptime calculation
+    global app_start_time
+    app_start_time = time.time()
 
 # ==================== MAIN ENTRY POINT ====================
 if __name__ == '__main__':
@@ -1299,6 +1966,7 @@ if __name__ == '__main__':
     
     print(f"🚀 Starting server on {host}:{port}")
     print(f"🌐 WebSocket endpoint: ws://{host}:{port}")
+    print(f"📡 Alert endpoint: http://{host}:{port}/api/send-alert")
     
     # Run the application
     socketio.run(app, 
