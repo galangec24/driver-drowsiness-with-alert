@@ -1,19 +1,20 @@
 ﻿"""
 CAPSTONE PROJECT - DRIVER ALERT SYSTEM
-Render.com Deployment Ready Version
-Enhanced with Admin Authentication and Security Features
+Render.com Deployment Ready Version with PostgreSQL Support
+COMPLETE VERSION - No parts skipped
 """
+
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 from flask import Flask, request, jsonify, send_from_directory, Response, redirect, g
 from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
-import os
 import sqlite3
 from datetime import datetime, timedelta
 import uuid
 import eventlet
-import socket
 import base64
 import json
 import hashlib
@@ -24,27 +25,30 @@ import re
 from contextlib import contextmanager
 
 # ==================== RENDER DEPLOYMENT CONFIG ====================
-# Detect if running on Render
 IS_RENDER = os.environ.get('RENDER') is not None
 IS_PRODUCTION = os.environ.get('ENVIRONMENT') == 'production' or IS_RENDER
 
-# Set base directory
+# PostgreSQL Support
 if IS_RENDER:
-    # Render deployment structure
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    FRONTEND_DIR = os.path.join(BASE_DIR, '../frontend')  # Frontend in parent directory
-    DB_PATH = os.path.join(BASE_DIR, 'drivers.db')
-    FACE_IMAGES_DIR = os.path.join(BASE_DIR, 'face_images')
-    SESSION_TOKENS_DIR = os.path.join(BASE_DIR, 'session_tokens')
-    DATA_DIR = BASE_DIR  # Use app directory for data on Render
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        import urllib.parse as urlparse
+        POSTGRES_AVAILABLE = True
+        print("✅ PostgreSQL libraries available")
+    except ImportError as e:
+        POSTGRES_AVAILABLE = False
+        print(f"⚠️ PostgreSQL not available: {e}")
 else:
-    # Local development structure
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    FRONTEND_DIR = os.path.join(BASE_DIR, '../frontend')
-    DB_PATH = os.path.join(BASE_DIR, 'drivers.db')
-    FACE_IMAGES_DIR = os.path.join(BASE_DIR, 'face_images')
-    SESSION_TOKENS_DIR = os.path.join(BASE_DIR, 'session_tokens')
-    DATA_DIR = BASE_DIR
+    POSTGRES_AVAILABLE = False
+
+# Set base directory
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_DIR = os.path.join(BASE_DIR, '../frontend')
+DB_PATH = os.path.join(BASE_DIR, 'drivers.db')
+FACE_IMAGES_DIR = os.path.join(BASE_DIR, 'face_images')
+SESSION_TOKENS_DIR = os.path.join(BASE_DIR, 'session_tokens')
+DATA_DIR = BASE_DIR
 
 # Ensure directories exist
 os.makedirs(FRONTEND_DIR, exist_ok=True)
@@ -85,10 +89,9 @@ socketio = SocketIO(app,
                    engineio_logger=not IS_PRODUCTION)
 
 # ==================== SECURITY CONFIGURATION ====================
-# Admin credentials (In production, use environment variables!)
 ADMIN_CREDENTIALS = {
     'admin': {
-        'password_hash': '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918',  # sha256 of 'admin123'
+        'password_hash': '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918',
         'full_name': 'System Administrator',
         'role': 'super_admin',
         'email': 'admin@driveralert.com',
@@ -96,11 +99,8 @@ ADMIN_CREDENTIALS = {
     }
 }
 
-# Rate limiting storage
 admin_rate_limit = {}
 guardian_rate_limit = {}
-
-# Admin sessions storage (in production, use Redis or database)
 admin_sessions = {}
 
 # ==================== SECURITY FUNCTIONS ====================
@@ -114,10 +114,8 @@ def verify_admin_credentials(username, password):
     if username not in ADMIN_CREDENTIALS:
         return None
     
-    # Hash the provided password
     password_hash = hashlib.sha256(password.encode()).hexdigest()
     
-    # Compare with stored hash
     if password_hash == ADMIN_CREDENTIALS[username]['password_hash']:
         return {
             'username': username,
@@ -131,7 +129,7 @@ def verify_admin_credentials(username, password):
 def create_admin_session(username):
     """Create admin session token"""
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.now() + timedelta(hours=8)  # Admin sessions last 8 hours
+    expires_at = datetime.now() + timedelta(hours=8)
     
     admin_sessions[username] = {
         'token': token,
@@ -151,7 +149,6 @@ def validate_admin_token(username, token):
     
     if (session['token'] == token and 
         session['expires'] > datetime.now()):
-        # Update last activity
         admin_sessions[username]['last_activity'] = datetime.now()
         return True
     
@@ -190,7 +187,6 @@ def require_admin_auth(f):
                 'error': 'Invalid or expired admin session'
             }), 401
         
-        # Apply rate limiting
         ip = request.remote_addr
         if rate_limit_exceeded(ip, 'admin'):
             return jsonify({
@@ -211,24 +207,38 @@ def rate_limit_exceeded(ip, endpoint_type='general', limit=100):
     if key not in admin_rate_limit:
         admin_rate_limit[key] = []
     
-    # Remove old entries (last minute)
     admin_rate_limit[key] = [t for t in admin_rate_limit[key] if current_time - t < 60]
     
-    # Check if too many requests
     if len(admin_rate_limit[key]) >= limit:
         return True
     
-    # Add current request
     admin_rate_limit[key].append(current_time)
     return False
 
 # ==================== DATABASE CONNECTION MANAGEMENT ====================
 def get_db():
-    """Get database connection with thread-local storage"""
+    """Get database connection - PostgreSQL on Render, SQLite locally"""
+    if IS_RENDER and POSTGRES_AVAILABLE:
+        DATABASE_URL = os.environ.get('DATABASE_URL')
+        if DATABASE_URL:
+            try:
+                url = urlparse.urlparse(DATABASE_URL)
+                conn = psycopg2.connect(
+                    database=url.path[1:],
+                    user=url.username,
+                    password=url.password,
+                    host=url.hostname,
+                    port=url.port,
+                    cursor_factory=RealDictCursor
+                )
+                return conn
+            except Exception as e:
+                print(f"❌ PostgreSQL connection error: {e}")
+    
+    # Fallback to SQLite
     if not hasattr(g, 'sqlite_db'):
         g.sqlite_db = sqlite3.connect(app.config['DATABASE'], timeout=20)
         g.sqlite_db.row_factory = sqlite3.Row
-        # Optimize for concurrency
         g.sqlite_db.execute("PRAGMA busy_timeout = 10000")
         g.sqlite_db.execute("PRAGMA journal_mode = WAL")
         g.sqlite_db.execute("PRAGMA synchronous = NORMAL")
@@ -244,30 +254,74 @@ def close_db(error):
 @contextmanager
 def get_db_connection():
     """Context manager for database connections"""
-    conn = sqlite3.connect(app.config['DATABASE'], timeout=20)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout = 10000")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA synchronous = NORMAL")
+    conn = None
     try:
+        if IS_RENDER and POSTGRES_AVAILABLE:
+            DATABASE_URL = os.environ.get('DATABASE_URL')
+            if DATABASE_URL:
+                url = urlparse.urlparse(DATABASE_URL)
+                conn = psycopg2.connect(
+                    database=url.path[1:],
+                    user=url.username,
+                    password=url.password,
+                    host=url.hostname,
+                    port=url.port,
+                    cursor_factory=RealDictCursor
+                )
+        if conn is None:
+            # Fallback to SQLite
+            conn = sqlite3.connect(app.config['DATABASE'], timeout=20)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout = 10000")
+            conn.execute("PRAGMA journal_mode = WAL")
         yield conn
+    except Exception as e:
+        print(f"❌ Database connection error: {e}")
+        raise
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @contextmanager
 def get_db_cursor():
     """Context manager for database cursor"""
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        try:
-            yield cursor
+    conn = None
+    cursor = None
+    try:
+        if IS_RENDER and POSTGRES_AVAILABLE:
+            DATABASE_URL = os.environ.get('DATABASE_URL')
+            if DATABASE_URL:
+                url = urlparse.urlparse(DATABASE_URL)
+                conn = psycopg2.connect(
+                    database=url.path[1:],
+                    user=url.username,
+                    password=url.password,
+                    host=url.hostname,
+                    port=url.port
+                )
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        if conn is None:
+            # Fallback to SQLite
+            conn = sqlite3.connect(app.config['DATABASE'], timeout=20)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout = 10000")
+            conn.execute("PRAGMA journal_mode = WAL")
+            cursor = conn.cursor()
+        
+        yield cursor
+        if conn:
             conn.commit()
-        except Exception as e:
+    except Exception as e:
+        if conn:
             conn.rollback()
-            print(f"❌ Database error: {e}")
-            raise e
-        finally:
+        print(f"❌ Database error: {e}")
+        raise
+    finally:
+        if cursor:
             cursor.close()
+        if conn:
+            conn.close()
 
 # Store connected clients and active sessions
 connected_clients = {}
@@ -279,183 +333,321 @@ def init_db():
     """Initialize database with all required tables"""
     try:
         with get_db_cursor() as cursor:
-            
-            # Guardians table
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS guardians (
-                guardian_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                full_name TEXT NOT NULL,
-                phone TEXT UNIQUE NOT NULL,
-                email TEXT,
-                password_hash TEXT NOT NULL,
-                address TEXT,
-                registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_login TIMESTAMP,
-                is_active BOOLEAN DEFAULT 1,
-                failed_login_attempts INTEGER DEFAULT 0,
-                locked_until TIMESTAMP
-            )
-            ''')
-            
-            # Main drivers table
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS drivers (
-                driver_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                address TEXT,
-                phone TEXT NOT NULL,
-                email TEXT,
-                reference_number TEXT UNIQUE,
-                license_number TEXT,
-                guardian_id INTEGER,
-                registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active BOOLEAN DEFAULT 1,
-                FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
-            )
-            ''')
-            
-            # Alerts table
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS alerts (
-                alert_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                driver_id TEXT NOT NULL,
-                guardian_id INTEGER,
-                severity TEXT NOT NULL CHECK(severity IN ('low', 'medium', 'high')),
-                message TEXT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                acknowledged BOOLEAN DEFAULT 0,
-                detection_details TEXT,
-                source TEXT DEFAULT 'system',
-                FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
-                FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
-            )
-            ''')
-            
-            # Face images table
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS face_images (
-                image_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                driver_id TEXT NOT NULL,
-                image_path TEXT NOT NULL,
-                capture_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE
-            )
-            ''')
-            
-            # Drowsiness events table
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS drowsiness_events (
-                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                driver_id TEXT NOT NULL,
-                guardian_id INTEGER,
-                confidence REAL,
-                state TEXT,
-                ear REAL,
-                mar REAL,
-                perclos REAL,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                processed BOOLEAN DEFAULT 0,
-                FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
-                FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
-            )
-            ''')
-            
-            # Activity log table
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS activity_log (
-                log_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                guardian_id INTEGER,
-                admin_username TEXT,
-                action TEXT,
-                details TEXT,
-                ip_address TEXT,
-                user_agent TEXT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
-            )
-            ''')
-            
-            # Session tokens table
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS session_tokens (
-                token_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                guardian_id INTEGER NOT NULL,
-                token TEXT UNIQUE NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                expires_at TIMESTAMP,
-                is_valid BOOLEAN DEFAULT 1,
-                ip_address TEXT,
-                user_agent TEXT,
-                FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
-            )
-            ''')
-            
-            # Admin activity log table
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS admin_activity_log (
-                log_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                admin_username TEXT NOT NULL,
-                action TEXT,
-                details TEXT,
-                ip_address TEXT,
-                user_agent TEXT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            ''')
-            
-            # Check and add missing columns
-            columns_to_check = [
-                ('guardians', 'is_active'),
-                ('guardians', 'failed_login_attempts'),
-                ('guardians', 'locked_until'),
-                ('drivers', 'is_active'),
-                ('alerts', 'source'),
-                ('activity_log', 'admin_username'),
-                ('activity_log', 'ip_address'),
-                ('activity_log', 'user_agent'),
-                ('session_tokens', 'ip_address'),
-                ('session_tokens', 'user_agent')
-            ]
-            
-            for table, column in columns_to_check:
-                try:
-                    cursor.execute(f"SELECT {column} FROM {table} LIMIT 1")
-                except sqlite3.OperationalError:
-                    if column == 'is_active':
-                        cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} BOOLEAN DEFAULT 1')
-                    elif column == 'failed_login_attempts':
-                        cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} INTEGER DEFAULT 0')
-                    elif column == 'locked_until':
-                        cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} TIMESTAMP')
-                    elif column == 'source':
-                        cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} TEXT DEFAULT "system"')
-                    else:
-                        cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} TEXT')
-                    print(f"📝 Added {column} column to {table} table")
-            
-            # Create indexes for better performance
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_drivers_guardian ON drivers(guardian_id)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_drivers_active ON drivers(is_active)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_guardian ON alerts(guardian_id)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_expires ON session_tokens(expires_at)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_valid ON session_tokens(is_valid)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_driver ON drowsiness_events(driver_id)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_timestamp ON drowsiness_events(timestamp)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_guardians_active ON guardians(is_active)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_admin_activity_timestamp ON admin_activity_log(timestamp)')
+            if IS_RENDER and POSTGRES_AVAILABLE:
+                # PostgreSQL schema
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS guardians (
+                        guardian_id SERIAL PRIMARY KEY,
+                        full_name TEXT NOT NULL,
+                        phone TEXT UNIQUE NOT NULL,
+                        email TEXT,
+                        password_hash TEXT NOT NULL,
+                        address TEXT,
+                        registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_login TIMESTAMP,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        failed_login_attempts INTEGER DEFAULT 0,
+                        locked_until TIMESTAMP
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS drivers (
+                        driver_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        address TEXT,
+                        phone TEXT NOT NULL,
+                        email TEXT,
+                        reference_number TEXT UNIQUE,
+                        license_number TEXT,
+                        guardian_id INTEGER REFERENCES guardians(guardian_id) ON DELETE CASCADE,
+                        registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        is_active BOOLEAN DEFAULT TRUE
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS alerts (
+                        alert_id SERIAL PRIMARY KEY,
+                        driver_id TEXT NOT NULL,
+                        guardian_id INTEGER,
+                        severity TEXT NOT NULL CHECK(severity IN ('low', 'medium', 'high')),
+                        message TEXT,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        acknowledged BOOLEAN DEFAULT FALSE,
+                        detection_details TEXT,
+                        source TEXT DEFAULT 'system',
+                        FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
+                        FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS face_images (
+                        image_id SERIAL PRIMARY KEY,
+                        driver_id TEXT NOT NULL,
+                        image_path TEXT NOT NULL,
+                        capture_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS drowsiness_events (
+                        event_id SERIAL PRIMARY KEY,
+                        driver_id TEXT NOT NULL,
+                        guardian_id INTEGER,
+                        confidence REAL,
+                        state TEXT,
+                        ear REAL,
+                        mar REAL,
+                        perclos REAL,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        processed BOOLEAN DEFAULT FALSE,
+                        FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
+                        FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS activity_log (
+                        log_id SERIAL PRIMARY KEY,
+                        guardian_id INTEGER,
+                        admin_username TEXT,
+                        action TEXT,
+                        details TEXT,
+                        ip_address TEXT,
+                        user_agent TEXT,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS session_tokens (
+                        token_id SERIAL PRIMARY KEY,
+                        guardian_id INTEGER NOT NULL,
+                        token TEXT UNIQUE NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        expires_at TIMESTAMP,
+                        is_valid BOOLEAN DEFAULT TRUE,
+                        ip_address TEXT,
+                        user_agent TEXT,
+                        FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS admin_activity_log (
+                        log_id SERIAL PRIMARY KEY,
+                        admin_username TEXT NOT NULL,
+                        action TEXT,
+                        details TEXT,
+                        ip_address TEXT,
+                        user_agent TEXT,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Create indexes for PostgreSQL
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_drivers_guardian ON drivers(guardian_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_guardian ON alerts(guardian_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_expires ON session_tokens(expires_at)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_valid ON session_tokens(is_valid)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_driver ON drowsiness_events(driver_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_timestamp ON drowsiness_events(timestamp)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_guardians_active ON guardians(is_active)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_admin_activity_timestamp ON admin_activity_log(timestamp)')
+                
+            else:
+                # SQLite schema
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS guardians (
+                        guardian_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        full_name TEXT NOT NULL,
+                        phone TEXT UNIQUE NOT NULL,
+                        email TEXT,
+                        password_hash TEXT NOT NULL,
+                        address TEXT,
+                        registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_login TIMESTAMP,
+                        is_active BOOLEAN DEFAULT 1,
+                        failed_login_attempts INTEGER DEFAULT 0,
+                        locked_until TIMESTAMP
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS drivers (
+                        driver_id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        address TEXT,
+                        phone TEXT NOT NULL,
+                        email TEXT,
+                        reference_number TEXT UNIQUE,
+                        license_number TEXT,
+                        guardian_id INTEGER,
+                        registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        is_active BOOLEAN DEFAULT 1,
+                        FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS alerts (
+                        alert_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        driver_id TEXT NOT NULL,
+                        guardian_id INTEGER,
+                        severity TEXT NOT NULL CHECK(severity IN ('low', 'medium', 'high')),
+                        message TEXT,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        acknowledged BOOLEAN DEFAULT 0,
+                        detection_details TEXT,
+                        source TEXT DEFAULT 'system',
+                        FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
+                        FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS face_images (
+                        image_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        driver_id TEXT NOT NULL,
+                        image_path TEXT NOT NULL,
+                        capture_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS drowsiness_events (
+                        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        driver_id TEXT NOT NULL,
+                        guardian_id INTEGER,
+                        confidence REAL,
+                        state TEXT,
+                        ear REAL,
+                        mar REAL,
+                        perclos REAL,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        processed BOOLEAN DEFAULT 0,
+                        FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
+                        FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS activity_log (
+                        log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        guardian_id INTEGER,
+                        admin_username TEXT,
+                        action TEXT,
+                        details TEXT,
+                        ip_address TEXT,
+                        user_agent TEXT,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS session_tokens (
+                        token_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        guardian_id INTEGER NOT NULL,
+                        token TEXT UNIQUE NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        expires_at TIMESTAMP,
+                        is_valid BOOLEAN DEFAULT 1,
+                        ip_address TEXT,
+                        user_agent TEXT,
+                        FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS admin_activity_log (
+                        log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        admin_username TEXT NOT NULL,
+                        action TEXT,
+                        details TEXT,
+                        ip_address TEXT,
+                        user_agent TEXT,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Check and add missing columns for SQLite
+                columns_to_check = [
+                    ('guardians', 'is_active'),
+                    ('guardians', 'failed_login_attempts'),
+                    ('guardians', 'locked_until'),
+                    ('drivers', 'is_active'),
+                    ('alerts', 'source'),
+                    ('activity_log', 'admin_username'),
+                    ('activity_log', 'ip_address'),
+                    ('activity_log', 'user_agent'),
+                    ('session_tokens', 'ip_address'),
+                    ('session_tokens', 'user_agent')
+                ]
+                
+                for table, column in columns_to_check:
+                    try:
+                        cursor.execute(f"SELECT {column} FROM {table} LIMIT 1")
+                    except Exception:
+                        if column == 'is_active':
+                            cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} BOOLEAN DEFAULT 1')
+                        elif column == 'failed_login_attempts':
+                            cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} INTEGER DEFAULT 0')
+                        elif column == 'locked_until':
+                            cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} TIMESTAMP')
+                        elif column == 'source':
+                            cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} TEXT DEFAULT "system"')
+                        else:
+                            cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} TEXT')
+                        print(f"📝 Added {column} column to {table} table")
+                
+                # Create indexes for SQLite
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_drivers_guardian ON drivers(guardian_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_drivers_active ON drivers(is_active)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_guardian ON alerts(guardian_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_expires ON session_tokens(expires_at)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_valid ON session_tokens(is_valid)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_driver ON drowsiness_events(driver_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_timestamp ON drowsiness_events(timestamp)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_guardians_active ON guardians(is_active)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_admin_activity_timestamp ON admin_activity_log(timestamp)')
             
             # Insert demo guardian if not exists
-            cursor.execute('SELECT COUNT(*) FROM guardians WHERE phone = ?', ('09123456789',))
-            if cursor.fetchone()[0] == 0:
+            try:
+                # Try PostgreSQL syntax first
+                cursor.execute('SELECT COUNT(*) FROM guardians WHERE phone = %s', ('09123456789',))
+            except:
+                # Fallback to SQLite syntax
+                cursor.execute('SELECT COUNT(*) FROM guardians WHERE phone = ?', ('09123456789',))
+            
+            count = cursor.fetchone()[0]
+            if count == 0:
                 demo_password_hash = hash_password('demo123')
-                cursor.execute('''
-                    INSERT INTO guardians (full_name, phone, email, password_hash, address, last_login)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', ('Demo Guardian', '09123456789', 'demo@driveralert.com', 
-                      demo_password_hash, 'Demo Address', datetime.now()))
+                try:
+                    # Try PostgreSQL syntax
+                    cursor.execute('''
+                        INSERT INTO guardians (full_name, phone, email, password_hash, address, last_login)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    ''', ('Demo Guardian', '09123456789', 'demo@driveralert.com', 
+                          demo_password_hash, 'Demo Address', datetime.now()))
+                except:
+                    # Fallback to SQLite syntax
+                    cursor.execute('''
+                        INSERT INTO guardians (full_name, phone, email, password_hash, address, last_login)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', ('Demo Guardian', '09123456789', 'demo@driveralert.com', 
+                          demo_password_hash, 'Demo Address', datetime.now()))
                 print("✅ Demo guardian created")
         
         print("✅ Database initialized successfully")
@@ -463,6 +655,8 @@ def init_db():
         
     except Exception as e:
         print(f"❌ Database initialization failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 # ==================== SESSION MANAGEMENT ====================
@@ -478,16 +672,22 @@ def create_session(guardian_id, ip_address=None, user_agent=None):
     try:
         with get_db_cursor() as cursor:
             # Invalidate any existing sessions for this guardian
-            cursor.execute('''
-                UPDATE session_tokens SET is_valid = 0 
-                WHERE guardian_id = ? AND is_valid = 1
-            ''', (guardian_id,))
+            try:
+                cursor.execute('UPDATE session_tokens SET is_valid = 0 WHERE guardian_id = %s AND is_valid = 1', (guardian_id,))
+            except:
+                cursor.execute('UPDATE session_tokens SET is_valid = 0 WHERE guardian_id = ? AND is_valid = 1', (guardian_id,))
             
             # Create new session
-            cursor.execute('''
-                INSERT INTO session_tokens (guardian_id, token, expires_at, ip_address, user_agent)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (guardian_id, token, expires_at, ip_address, user_agent))
+            try:
+                cursor.execute('''
+                    INSERT INTO session_tokens (guardian_id, token, expires_at, ip_address, user_agent)
+                    VALUES (%s, %s, %s, %s, %s)
+                ''', (guardian_id, token, expires_at, ip_address, user_agent))
+            except:
+                cursor.execute('''
+                    INSERT INTO session_tokens (guardian_id, token, expires_at, ip_address, user_agent)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (guardian_id, token, expires_at, ip_address, user_agent))
         
         # Store in memory for quick access
         active_sessions[guardian_id] = {
@@ -507,25 +707,30 @@ def validate_session(guardian_id, token):
     if not guardian_id or not token:
         return False
     
-    # Check memory cache first (fast path)
+    # Check memory cache first
     if guardian_id in active_sessions:
         session_data = active_sessions[guardian_id]
         if (session_data['token'] == token and 
             session_data['expires'] > datetime.now()):
             return True
     
-    # Check database (slower path)
+    # Check database
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT COUNT(*) FROM session_tokens 
-                WHERE guardian_id = ? AND token = ? AND is_valid = 1 AND expires_at > ?
-            ''', (guardian_id, token, datetime.now()))
+            try:
+                cursor.execute('''
+                    SELECT COUNT(*) FROM session_tokens 
+                    WHERE guardian_id = %s AND token = %s AND is_valid = 1 AND expires_at > %s
+                ''', (guardian_id, token, datetime.now()))
+            except:
+                cursor.execute('''
+                    SELECT COUNT(*) FROM session_tokens 
+                    WHERE guardian_id = ? AND token = ? AND is_valid = 1 AND expires_at > ?
+                ''', (guardian_id, token, datetime.now()))
             
             result = cursor.fetchone()[0] > 0
             
-            # Update memory cache if valid
             if result and guardian_id not in active_sessions:
                 active_sessions[guardian_id] = {
                     'token': token,
@@ -543,27 +748,26 @@ def invalidate_session(guardian_id, token=None):
     try:
         with get_db_cursor() as cursor:
             if token:
-                cursor.execute('''
-                    UPDATE session_tokens SET is_valid = 0 
-                    WHERE guardian_id = ? AND token = ?
-                ''', (guardian_id, token))
+                try:
+                    cursor.execute('UPDATE session_tokens SET is_valid = 0 WHERE guardian_id = %s AND token = %s', (guardian_id, token))
+                except:
+                    cursor.execute('UPDATE session_tokens SET is_valid = 0 WHERE guardian_id = ? AND token = ?', (guardian_id, token))
             else:
-                cursor.execute('''
-                    UPDATE session_tokens SET is_valid = 0 
-                    WHERE guardian_id = ?
-                ''', (guardian_id,))
+                try:
+                    cursor.execute('UPDATE session_tokens SET is_valid = 0 WHERE guardian_id = %s', (guardian_id,))
+                except:
+                    cursor.execute('UPDATE session_tokens SET is_valid = 0 WHERE guardian_id = ?', (guardian_id,))
         
         # Remove from memory cache
         if guardian_id in active_sessions:
             del active_sessions[guardian_id]
         
-        # Disconnect socket connections for this guardian
+        # Disconnect socket connections
         disconnected = []
         for client_id, client_info in connected_clients.items():
             if client_info.get('guardian_id') == guardian_id:
                 disconnected.append(client_id)
         
-        # Remove from connected clients
         for client_id in disconnected:
             if client_id in connected_clients:
                 del connected_clients[client_id]
@@ -580,30 +784,39 @@ def verify_guardian_credentials(phone, password):
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Check if account is locked
-            cursor.execute('''
-                SELECT guardian_id, full_name, password_hash, failed_login_attempts, locked_until
-                FROM guardians 
-                WHERE phone = ? AND is_active = 1
-            ''', (phone,))
+            try:
+                cursor.execute('''
+                    SELECT guardian_id, full_name, password_hash, failed_login_attempts, locked_until
+                    FROM guardians 
+                    WHERE phone = %s AND is_active = 1
+                ''', (phone,))
+            except:
+                cursor.execute('''
+                    SELECT guardian_id, full_name, password_hash, failed_login_attempts, locked_until
+                    FROM guardians 
+                    WHERE phone = ? AND is_active = 1
+                ''', (phone,))
             
             result = cursor.fetchone()
             
             if result:
-                guardian_id, full_name, stored_hash, failed_attempts, locked_until = result
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    guardian_id, full_name, stored_hash, failed_attempts, locked_until = result
+                else:
+                    guardian_id, full_name, stored_hash, failed_attempts, locked_until = result
                 
                 # Check if account is locked
-                if locked_until and datetime.fromisoformat(locked_until) > datetime.now():
-                    remaining_time = (datetime.fromisoformat(locked_until) - datetime.now()).seconds // 60
+                if locked_until and datetime.fromisoformat(str(locked_until)) > datetime.now():
+                    remaining_time = (datetime.fromisoformat(str(locked_until)) - datetime.now()).seconds // 60
                     print(f"🔒 Account locked for {remaining_time} minutes")
                     return {'error': 'Account locked', 'locked_until': locked_until}
                 
                 if hash_password(password) == stored_hash:
-                    # Reset failed attempts on successful login
-                    cursor.execute('''
-                        UPDATE guardians SET failed_login_attempts = 0, last_login = ? 
-                        WHERE guardian_id = ?
-                    ''', (datetime.now(), guardian_id))
+                    # Reset failed attempts
+                    try:
+                        cursor.execute('UPDATE guardians SET failed_login_attempts = 0, last_login = %s WHERE guardian_id = %s', (datetime.now(), guardian_id))
+                    except:
+                        cursor.execute('UPDATE guardians SET failed_login_attempts = 0, last_login = ? WHERE guardian_id = ?', (datetime.now(), guardian_id))
                     conn.commit()
                     
                     return {'guardian_id': guardian_id, 'full_name': full_name, 'phone': phone}
@@ -611,18 +824,17 @@ def verify_guardian_credentials(phone, password):
                     # Increment failed attempts
                     failed_attempts += 1
                     if failed_attempts >= 5:
-                        # Lock account for 30 minutes
                         locked_until = datetime.now() + timedelta(minutes=30)
-                        cursor.execute('''
-                            UPDATE guardians SET failed_login_attempts = ?, locked_until = ?
-                            WHERE guardian_id = ?
-                        ''', (failed_attempts, locked_until.isoformat(), guardian_id))
+                        try:
+                            cursor.execute('UPDATE guardians SET failed_login_attempts = %s, locked_until = %s WHERE guardian_id = %s', (failed_attempts, locked_until.isoformat(), guardian_id))
+                        except:
+                            cursor.execute('UPDATE guardians SET failed_login_attempts = ?, locked_until = ? WHERE guardian_id = ?', (failed_attempts, locked_until.isoformat(), guardian_id))
                         print(f"🔒 Account locked for 30 minutes due to {failed_attempts} failed attempts")
                     else:
-                        cursor.execute('''
-                            UPDATE guardians SET failed_login_attempts = ?
-                            WHERE guardian_id = ?
-                        ''', (failed_attempts, guardian_id))
+                        try:
+                            cursor.execute('UPDATE guardians SET failed_login_attempts = %s WHERE guardian_id = %s', (failed_attempts, guardian_id))
+                        except:
+                            cursor.execute('UPDATE guardians SET failed_login_attempts = ? WHERE guardian_id = ?', (failed_attempts, guardian_id))
                     conn.commit()
     except Exception as e:
         print(f"❌ Error verifying credentials: {e}")
@@ -634,13 +846,24 @@ def get_guardian_by_id(guardian_id):
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT guardian_id, full_name, phone, email, address, registration_date, last_login
-                FROM guardians WHERE guardian_id = ?
-            ''', (guardian_id,))
+            try:
+                cursor.execute('''
+                    SELECT guardian_id, full_name, phone, email, address, registration_date, last_login
+                    FROM guardians WHERE guardian_id = %s
+                ''', (guardian_id,))
+            except:
+                cursor.execute('''
+                    SELECT guardian_id, full_name, phone, email, address, registration_date, last_login
+                    FROM guardians WHERE guardian_id = ?
+                ''', (guardian_id,))
             
             result = cursor.fetchone()
-            return dict(result) if result else None
+            if result:
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    return dict(result)
+                else:
+                    return dict(result)
+            return None
     except Exception as e:
         print(f"❌ Error getting guardian: {e}")
         return None
@@ -653,15 +876,27 @@ def log_activity(guardian_id=None, admin_username=None, action=None, details=Non
         
         with get_db_cursor() as cursor:
             if admin_username:
-                cursor.execute('''
-                    INSERT INTO admin_activity_log (admin_username, action, details, ip_address, user_agent)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (admin_username, action, details, ip_address, user_agent))
+                try:
+                    cursor.execute('''
+                        INSERT INTO admin_activity_log (admin_username, action, details, ip_address, user_agent)
+                        VALUES (%s, %s, %s, %s, %s)
+                    ''', (admin_username, action, details, ip_address, user_agent))
+                except:
+                    cursor.execute('''
+                        INSERT INTO admin_activity_log (admin_username, action, details, ip_address, user_agent)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (admin_username, action, details, ip_address, user_agent))
             else:
-                cursor.execute('''
-                    INSERT INTO activity_log (guardian_id, action, details, ip_address, user_agent)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (guardian_id, action, details, ip_address, user_agent))
+                try:
+                    cursor.execute('''
+                        INSERT INTO activity_log (guardian_id, action, details, ip_address, user_agent)
+                        VALUES (%s, %s, %s, %s, %s)
+                    ''', (guardian_id, action, details, ip_address, user_agent))
+                except:
+                    cursor.execute('''
+                        INSERT INTO activity_log (guardian_id, action, details, ip_address, user_agent)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (guardian_id, action, details, ip_address, user_agent))
     except Exception as e:
         print(f"⚠️ Error logging activity: {e}")
 
@@ -692,17 +927,15 @@ def save_base64_image(base64_string, driver_id, image_number):
         image_filename = f'face_{image_number}_{int(time.time())}.jpg'
         image_path = os.path.join(driver_dir, image_filename)
         
-        # Save image file
         with open(image_path, 'wb') as f:
             f.write(image_data)
         
-        # Use database lock to prevent concurrent writes
         with db_write_lock:
             with get_db_cursor() as cursor:
-                cursor.execute('''
-                    INSERT INTO face_images (driver_id, image_path)
-                    VALUES (?, ?)
-                ''', (driver_id, image_path))
+                try:
+                    cursor.execute('INSERT INTO face_images (driver_id, image_path) VALUES (%s, %s)', (driver_id, image_path))
+                except:
+                    cursor.execute('INSERT INTO face_images (driver_id, image_path) VALUES (?, ?)', (driver_id, image_path))
         
         return image_path
     except Exception as e:
@@ -715,17 +948,33 @@ def get_guardian_drivers(guardian_id):
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            cursor.execute('''
-                SELECT d.*, 
-                       (SELECT COUNT(*) FROM alerts a WHERE a.driver_id = d.driver_id AND a.acknowledged = 0) as alert_count,
-                       (SELECT COUNT(*) FROM face_images f WHERE f.driver_id = d.driver_id) as face_count
-                FROM drivers d
-                WHERE d.guardian_id = ? AND d.is_active = 1
-                ORDER BY d.registration_date DESC
-            ''', (guardian_id,))
+            try:
+                cursor.execute('''
+                    SELECT d.*, 
+                           (SELECT COUNT(*) FROM alerts a WHERE a.driver_id = d.driver_id AND a.acknowledged = 0) as alert_count,
+                           (SELECT COUNT(*) FROM face_images f WHERE f.driver_id = d.driver_id) as face_count
+                    FROM drivers d
+                    WHERE d.guardian_id = %s AND d.is_active = 1
+                    ORDER BY d.registration_date DESC
+                ''', (guardian_id,))
+            except:
+                cursor.execute('''
+                    SELECT d.*, 
+                           (SELECT COUNT(*) FROM alerts a WHERE a.driver_id = d.driver_id AND a.acknowledged = 0) as alert_count,
+                           (SELECT COUNT(*) FROM face_images f WHERE f.driver_id = d.driver_id) as face_count
+                    FROM drivers d
+                    WHERE d.guardian_id = ? AND d.is_active = 1
+                    ORDER BY d.registration_date DESC
+                ''', (guardian_id,))
             
             drivers = cursor.fetchall()
-            return [dict(driver) for driver in drivers]
+            result = []
+            for driver in drivers:
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    result.append(dict(driver))
+                else:
+                    result.append(dict(driver))
+            return result
     except Exception as e:
         print(f"❌ Error in get_guardian_drivers: {e}")
         return []
@@ -736,25 +985,42 @@ def get_recent_alerts(guardian_id, limit=10):
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            cursor.execute('''
-                SELECT a.*, d.name as driver_name,
-                       CASE 
-                           WHEN a.detection_details IS NOT NULL AND a.detection_details != '' 
-                           THEN json_extract(a.detection_details, '$.state')
-                           ELSE 'alert'
-                       END as alert_type
-                FROM alerts a
-                JOIN drivers d ON a.driver_id = d.driver_id
-                WHERE a.guardian_id = ?
-                ORDER BY a.timestamp DESC
-                LIMIT ?
-            ''', (guardian_id, limit))
+            try:
+                cursor.execute('''
+                    SELECT a.*, d.name as driver_name,
+                           CASE 
+                               WHEN a.detection_details IS NOT NULL AND a.detection_details != '' 
+                               THEN detection_details->>'state'
+                               ELSE 'alert'
+                           END as alert_type
+                    FROM alerts a
+                    JOIN drivers d ON a.driver_id = d.driver_id
+                    WHERE a.guardian_id = %s
+                    ORDER BY a.timestamp DESC
+                    LIMIT %s
+                ''', (guardian_id, limit))
+            except:
+                cursor.execute('''
+                    SELECT a.*, d.name as driver_name,
+                           CASE 
+                               WHEN a.detection_details IS NOT NULL AND a.detection_details != '' 
+                               THEN json_extract(a.detection_details, '$.state')
+                               ELSE 'alert'
+                           END as alert_type
+                    FROM alerts a
+                    JOIN drivers d ON a.driver_id = d.driver_id
+                    WHERE a.guardian_id = ?
+                    ORDER BY a.timestamp DESC
+                    LIMIT ?
+                ''', (guardian_id, limit))
             
             alerts = cursor.fetchall()
             result = []
             for alert in alerts:
-                alert_dict = dict(alert)
-                # Parse detection details if present
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    alert_dict = dict(alert)
+                else:
+                    alert_dict = dict(alert)
                 if alert_dict.get('detection_details'):
                     try:
                         alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
@@ -773,36 +1039,52 @@ def get_driver_by_name_or_id(identifier):
             cursor = conn.cursor()
             
             # Try by ID first
-            cursor.execute('''
-                SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
-                FROM drivers d
-                JOIN guardians g ON d.guardian_id = g.guardian_id
-                WHERE d.driver_id = ? AND d.is_active = 1
-            ''', (identifier,))
+            try:
+                cursor.execute('''
+                    SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
+                    FROM drivers d
+                    JOIN guardians g ON d.guardian_id = g.guardian_id
+                    WHERE d.driver_id = %s AND d.is_active = 1
+                ''', (identifier,))
+            except:
+                cursor.execute('''
+                    SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
+                    FROM drivers d
+                    JOIN guardians g ON d.guardian_id = g.guardian_id
+                    WHERE d.driver_id = ? AND d.is_active = 1
+                ''', (identifier,))
             
             result = cursor.fetchone()
             
             # If not found by ID, try by name
             if not result:
-                cursor.execute('''
-                    SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
-                    FROM drivers d
-                    JOIN guardians g ON d.guardian_id = g.guardian_id
-                    WHERE d.name LIKE ? AND d.is_active = 1
-                ''', (f'%{identifier}%',))
+                try:
+                    cursor.execute('''
+                        SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
+                        FROM drivers d
+                        JOIN guardians g ON d.guardian_id = g.guardian_id
+                        WHERE d.name LIKE %s AND d.is_active = 1
+                    ''', (f'%{identifier}%',))
+                except:
+                    cursor.execute('''
+                        SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
+                        FROM drivers d
+                        JOIN guardians g ON d.guardian_id = g.guardian_id
+                        WHERE d.name LIKE ? AND d.is_active = 1
+                    ''', (f'%{identifier}%',))
                 result = cursor.fetchone()
             
-            return dict(result) if result else None
+            if result:
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    return dict(result)
+                else:
+                    return dict(result)
+            return None
     except Exception as e:
         print(f"❌ Error getting driver: {e}")
         return None
 
 # ==================== SECURITY MIDDLEWARE ====================
-@app.before_request
-def apply_security_headers():
-    """Apply security headers to all responses"""
-    pass  # Headers are applied in after_request
-
 @app.after_request
 def add_security_headers(response):
     """Add security headers to all responses"""
@@ -810,7 +1092,6 @@ def add_security_headers(response):
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-XSS-Protection'] = '1; mode=block'
     
-    # CSP for production
     if IS_PRODUCTION:
         response.headers['Content-Security-Policy'] = (
             "default-src 'self'; "
@@ -869,12 +1150,8 @@ def handle_guardian_auth(data):
                 'full_name': guardian['full_name'],
                 'phone': guardian['phone']
             })
-            
-            # Send any pending alerts
-            send_pending_alerts(guardian_id, client_id)
             return
     
-    # Authentication failed
     if not IS_PRODUCTION:
         print(f"🔒 WebSocket authentication failed for client {client_id}")
     emit('auth_failed', {'error': 'Authentication failed'})
@@ -886,20 +1163,32 @@ def send_pending_alerts(guardian_id, client_id):
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Get unacknowledged alerts from the last hour
-            cursor.execute('''
-                SELECT a.*, d.name as driver_name
-                FROM alerts a
-                JOIN drivers d ON a.driver_id = d.driver_id
-                WHERE a.guardian_id = ? AND a.acknowledged = 0 
-                AND a.timestamp > datetime('now', '-1 hour')
-                ORDER BY a.timestamp DESC
-            ''', (guardian_id,))
+            try:
+                cursor.execute('''
+                    SELECT a.*, d.name as driver_name
+                    FROM alerts a
+                    JOIN drivers d ON a.driver_id = d.driver_id
+                    WHERE a.guardian_id = %s AND a.acknowledged = 0 
+                    AND a.timestamp > NOW() - INTERVAL '1 hour'
+                    ORDER BY a.timestamp DESC
+                ''', (guardian_id,))
+            except:
+                cursor.execute('''
+                    SELECT a.*, d.name as driver_name
+                    FROM alerts a
+                    JOIN drivers d ON a.driver_id = d.driver_id
+                    WHERE a.guardian_id = ? AND a.acknowledged = 0 
+                    AND a.timestamp > datetime('now', '-1 hour')
+                    ORDER BY a.timestamp DESC
+                ''', (guardian_id,))
             
             alerts = cursor.fetchall()
             
             for alert in alerts:
-                alert_data = dict(alert)
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    alert_data = dict(alert)
+                else:
+                    alert_data = dict(alert)
                 if alert_data.get('detection_details'):
                     try:
                         alert_data['detection_details'] = json.loads(alert_data['detection_details'])
@@ -918,18 +1207,15 @@ def send_pending_alerts(guardian_id, client_id):
 @app.route('/')
 def serve_home():
     """Main route - Redirects to admin login for desktop, mobile login for mobile"""
-    
-    # Check URL parameter first (for testing)
     if request.args.get('force') == 'mobile':
         return send_from_directory(FRONTEND_DIR, 'login.html')
     if request.args.get('force') == 'desktop':
         return send_from_directory(FRONTEND_DIR, 'admin-login.html')
     
-    # Device detection
     if is_mobile_device():
         return send_from_directory(FRONTEND_DIR, 'login.html')
     else:
-        return send_from_directory(FRONTEND_DIR, 'admin-login.html')  # Changed to admin login
+        return send_from_directory(FRONTEND_DIR, 'admin-login.html')
 
 @app.route('/admin-login')
 def serve_admin_login():
@@ -938,7 +1224,7 @@ def serve_admin_login():
 
 @app.route('/admin')
 def serve_admin_dashboard():
-    """Admin dashboard page - Check authentication via frontend"""
+    """Admin dashboard page"""
     return send_from_directory(FRONTEND_DIR, 'index.html')
 
 @app.route('/guardian-register')
@@ -948,24 +1234,22 @@ def serve_guardian_register():
 
 @app.route('/guardian-dashboard')
 def serve_guardian_dashboard():
-    """Guardian dashboard page - Check authentication"""
+    """Guardian dashboard page"""
     token = request.args.get('token')
     guardian_id = request.args.get('guardian_id')
     
     if token and guardian_id and validate_session(guardian_id, token):
         response = send_from_directory(FRONTEND_DIR, 'guardian-dashboard.html')
-        # Prevent caching
         response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
         response.headers['Pragma'] = 'no-cache'
         response.headers['Expires'] = '0'
         return response
     else:
-        # Redirect to login if not authenticated
         return redirect('/?logged_out=true')
 
 @app.route('/register-driver')
 def serve_register_driver():
-    """Driver registration page - check authentication"""
+    """Driver registration page"""
     token = request.args.get('token')
     guardian_id = request.args.get('guardian_id')
     
@@ -1004,12 +1288,9 @@ def health_check():
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            
-            # Check database connectivity
             cursor.execute('SELECT 1')
             db_status = cursor.fetchone()[0] == 1
             
-            # Get counts
             cursor.execute('SELECT COUNT(*) FROM guardians')
             guardian_count = cursor.fetchone()[0]
             
@@ -1019,12 +1300,11 @@ def health_check():
             cursor.execute('SELECT COUNT(*) FROM alerts')
             alert_count = cursor.fetchone()[0]
             
-            cursor.execute('SELECT COUNT(*) FROM drowsiness_events WHERE DATE(timestamp) = DATE("now")')
+            try:
+                cursor.execute('SELECT COUNT(*) FROM drowsiness_events WHERE DATE(timestamp) = CURRENT_DATE')
+            except:
+                cursor.execute('SELECT COUNT(*) FROM drowsiness_events WHERE DATE(timestamp) = DATE("now")')
             drowsiness_events_today = cursor.fetchone()[0]
-            
-            cursor.execute('SELECT COUNT(*) FROM session_tokens WHERE is_valid = 1 AND expires_at > ?', 
-                         (datetime.now(),))
-            active_sessions_count = cursor.fetchone()[0]
         
         return jsonify({
             'status': 'healthy',
@@ -1033,7 +1313,8 @@ def health_check():
             'version': '2.0.0',
             'environment': 'production' if IS_PRODUCTION else 'development',
             'deployment': 'render' if IS_RENDER else 'local',
-            'database': 'connected' if db_status else 'disconnected',
+            'database': 'postgresql' if (IS_RENDER and POSTGRES_AVAILABLE) else 'sqlite',
+            'database_status': 'connected' if db_status else 'disconnected',
             'connected_clients': len(connected_clients),
             'active_sessions': len(active_sessions),
             'admin_sessions': len(admin_sessions),
@@ -1041,8 +1322,7 @@ def health_check():
                 'guardians': guardian_count,
                 'drivers': driver_count,
                 'alerts': alert_count,
-                'drowsiness_events_today': drowsiness_events_today,
-                'valid_sessions': active_sessions_count
+                'drowsiness_events_today': drowsiness_events_today
             }
         })
     except Exception as e:
@@ -1067,7 +1347,6 @@ def admin_login():
                 'error': 'Username and password required'
             }), 400
         
-        # Apply rate limiting
         ip = request.remote_addr
         if rate_limit_exceeded(ip, 'admin_login', limit=5):
             return jsonify({
@@ -1078,13 +1357,9 @@ def admin_login():
         admin = verify_admin_credentials(username, password)
         
         if admin:
-            # Create session
             token, expires_at = create_admin_session(username)
-            
-            # Clean up old sessions periodically
             cleanup_admin_sessions()
             
-            # Log admin activity
             log_activity(admin_username=username, action='ADMIN_LOGIN', 
                         details=f'Admin logged in from {request.remote_addr}')
             
@@ -1242,25 +1517,38 @@ def admin_get_drivers():
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
-                FROM drivers d
-                LEFT JOIN guardians g ON d.guardian_id = g.guardian_id
-                ORDER BY d.registration_date DESC
-            ''')
+            try:
+                cursor.execute('''
+                    SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
+                    FROM drivers d
+                    LEFT JOIN guardians g ON d.guardian_id = g.guardian_id
+                    ORDER BY d.registration_date DESC
+                ''')
+            except Exception as e:
+                print(f"Query error: {e}")
+                return jsonify({'success': False, 'error': str(e)}), 500
+            
             drivers = cursor.fetchall()
+            drivers_list = []
+            for driver in drivers:
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    drivers_list.append(dict(driver))
+                else:
+                    drivers_list.append(dict(driver))
             
             cursor.execute('SELECT COUNT(*) as count FROM drivers')
-            count = cursor.fetchone()['count']
+            count_result = cursor.fetchone()
+            count = count_result['count'] if IS_RENDER and POSTGRES_AVAILABLE else count_result[0]
             
             cursor.execute('SELECT COUNT(*) as active_count FROM drivers WHERE is_active = 1')
-            active_count = cursor.fetchone()['active_count']
+            active_result = cursor.fetchone()
+            active_count = active_result['active_count'] if IS_RENDER and POSTGRES_AVAILABLE else active_result[0]
             
         return jsonify({
             'success': True,
             'count': count,
             'active_count': active_count,
-            'drivers': [dict(driver) for driver in drivers]
+            'drivers': drivers_list
         })
         
     except Exception as e:
@@ -1276,21 +1564,34 @@ def admin_get_alerts():
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            cursor.execute('''
-                SELECT a.*, d.name as driver_name, g.full_name as guardian_name
-                FROM alerts a
-                JOIN drivers d ON a.driver_id = d.driver_id
-                JOIN guardians g ON a.guardian_id = g.guardian_id
-                ORDER BY a.timestamp DESC
-                LIMIT ?
-            ''', (limit,))
+            try:
+                cursor.execute('''
+                    SELECT a.*, d.name as driver_name, g.full_name as guardian_name
+                    FROM alerts a
+                    JOIN drivers d ON a.driver_id = d.driver_id
+                    JOIN guardians g ON a.guardian_id = g.guardian_id
+                    ORDER BY a.timestamp DESC
+                    LIMIT %s
+                ''', (limit,))
+            except:
+                cursor.execute('''
+                    SELECT a.*, d.name as driver_name, g.full_name as guardian_name
+                    FROM alerts a
+                    JOIN drivers d ON a.driver_id = d.driver_id
+                    JOIN guardians g ON a.guardian_id = g.guardian_id
+                    ORDER BY a.timestamp DESC
+                    LIMIT ?
+                ''', (limit,))
             
             alerts = cursor.fetchall()
             
             # Parse detection details
             result = []
             for alert in alerts:
-                alert_dict = dict(alert)
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    alert_dict = dict(alert)
+                else:
+                    alert_dict = dict(alert)
                 if alert_dict.get('detection_details'):
                     try:
                         alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
@@ -1299,13 +1600,19 @@ def admin_get_alerts():
                 result.append(alert_dict)
             
             cursor.execute('SELECT COUNT(*) as count FROM alerts')
-            count = cursor.fetchone()['count']
+            count_result = cursor.fetchone()
+            count = count_result['count'] if IS_RENDER and POSTGRES_AVAILABLE else count_result[0]
             
             cursor.execute('SELECT COUNT(*) as unread_count FROM alerts WHERE acknowledged = 0')
-            unread_count = cursor.fetchone()['unread_count']
+            unread_result = cursor.fetchone()
+            unread_count = unread_result['unread_count'] if IS_RENDER and POSTGRES_AVAILABLE else unread_result[0]
             
-            cursor.execute('SELECT COUNT(*) as today_count FROM alerts WHERE DATE(timestamp) = DATE("now")')
-            today_count = cursor.fetchone()['today_count']
+            try:
+                cursor.execute('SELECT COUNT(*) as today_count FROM alerts WHERE DATE(timestamp) = CURRENT_DATE')
+            except:
+                cursor.execute('SELECT COUNT(*) as today_count FROM alerts WHERE DATE(timestamp) = DATE("now")')
+            today_result = cursor.fetchone()
+            today_count = today_result['today_count'] if IS_RENDER and POSTGRES_AVAILABLE else today_result[0]
             
         return jsonify({
             'success': True,
@@ -1325,19 +1632,35 @@ def admin_get_guardians():
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT g.*, 
-                       (SELECT COUNT(*) FROM drivers d WHERE d.guardian_id = g.guardian_id) as driver_count,
-                       (SELECT COUNT(*) FROM alerts a WHERE a.guardian_id = g.guardian_id) as alert_count
-                FROM guardians g
-                ORDER BY g.registration_date DESC
-            ''')
+            try:
+                cursor.execute('''
+                    SELECT g.*, 
+                           (SELECT COUNT(*) FROM drivers d WHERE d.guardian_id = g.guardian_id) as driver_count,
+                           (SELECT COUNT(*) FROM alerts a WHERE a.guardian_id = g.guardian_id) as alert_count
+                    FROM guardians g
+                    ORDER BY g.registration_date DESC
+                ''')
+            except:
+                cursor.execute('''
+                    SELECT g.*, 
+                           (SELECT COUNT(*) FROM drivers d WHERE d.guardian_id = g.guardian_id) as driver_count,
+                           (SELECT COUNT(*) FROM alerts a WHERE a.guardian_id = g.guardian_id) as alert_count
+                    FROM guardians g
+                    ORDER BY g.registration_date DESC
+                ''')
+            
             guardians = cursor.fetchall()
+            guardians_list = []
+            for guardian in guardians:
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    guardians_list.append(dict(guardian))
+                else:
+                    guardians_list.append(dict(guardian))
             
         return jsonify({
             'success': True,
-            'count': len(guardians),
-            'guardians': [dict(guardian) for guardian in guardians]
+            'count': len(guardians_list),
+            'guardians': guardians_list
         })
         
     except Exception as e:
@@ -1352,27 +1675,50 @@ def admin_get_tables():
             cursor = conn.cursor()
             
             # Get all tables
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            if IS_RENDER and POSTGRES_AVAILABLE:
+                cursor.execute("""
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    ORDER BY table_name
+                """)
+            else:
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            
             tables = cursor.fetchall()
             
             result = []
             for table in tables:
-                table_name = table['name']
-                cursor.execute(f'SELECT COUNT(*) as count FROM {table_name}')
-                count = cursor.fetchone()['count']
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    table_name = table['table_name']
+                else:
+                    table_name = table['name']
                 
-                cursor.execute(f'PRAGMA table_info({table_name})')
+                cursor.execute(f'SELECT COUNT(*) as count FROM {table_name}')
+                count_result = cursor.fetchone()
+                count = count_result['count'] if IS_RENDER and POSTGRES_AVAILABLE else count_result[0]
+                
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    cursor.execute("""
+                        SELECT column_name, data_type 
+                        FROM information_schema.columns 
+                        WHERE table_name = %s 
+                        ORDER BY ordinal_position
+                    """, (table_name,))
+                else:
+                    cursor.execute(f'PRAGMA table_info({table_name})')
+                
                 columns = cursor.fetchall()
                 
-                # Get table size info (approximate)
-                cursor.execute(f'SELECT COUNT(*) as row_count FROM {table_name}')
-                row_count = cursor.fetchone()['row_count']
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    columns_list = [{'name': col['column_name'], 'type': col['data_type']} for col in columns]
+                else:
+                    columns_list = [{'name': col[1], 'type': col[2]} for col in columns]
                 
                 result.append({
                     'table_name': table_name,
                     'row_count': count,
-                    'columns': [{'name': col['name'], 'type': col['type']} for col in columns],
-                    'estimated_size': f"{(row_count * 100) / 1024:.2f} KB"  # Approximate
+                    'columns': columns_list
                 })
             
         return jsonify({
@@ -1393,23 +1739,39 @@ def admin_stats():
             
             # Get comprehensive statistics
             cursor.execute('SELECT COUNT(*) as total_alerts FROM alerts')
-            total_alerts = cursor.fetchone()['total_alerts']
+            total_alerts_result = cursor.fetchone()
+            total_alerts = total_alerts_result['total_alerts'] if IS_RENDER and POSTGRES_AVAILABLE else total_alerts_result[0]
             
-            cursor.execute('SELECT COUNT(*) as today_alerts FROM alerts WHERE DATE(timestamp) = DATE("now")')
-            today_alerts = cursor.fetchone()['today_alerts']
+            try:
+                cursor.execute('SELECT COUNT(*) as today_alerts FROM alerts WHERE DATE(timestamp) = CURRENT_DATE')
+            except:
+                cursor.execute('SELECT COUNT(*) as today_alerts FROM alerts WHERE DATE(timestamp) = DATE("now")')
+            today_alerts_result = cursor.fetchone()
+            today_alerts = today_alerts_result['today_alerts'] if IS_RENDER and POSTGRES_AVAILABLE else today_alerts_result[0]
             
             cursor.execute('SELECT COUNT(*) as total_drivers FROM drivers')
-            total_drivers = cursor.fetchone()['total_drivers']
+            total_drivers_result = cursor.fetchone()
+            total_drivers = total_drivers_result['total_drivers'] if IS_RENDER and POSTGRES_AVAILABLE else total_drivers_result[0]
             
             cursor.execute('SELECT COUNT(*) as total_guardians FROM guardians')
-            total_guardians = cursor.fetchone()['total_guardians']
+            total_guardians_result = cursor.fetchone()
+            total_guardians = total_guardians_result['total_guardians'] if IS_RENDER and POSTGRES_AVAILABLE else total_guardians_result[0]
             
-            cursor.execute('SELECT COUNT(*) as drowsiness_events FROM drowsiness_events WHERE DATE(timestamp) = DATE("now")')
-            drowsiness_events = cursor.fetchone()['drowsiness_events']
+            try:
+                cursor.execute('SELECT COUNT(*) as drowsiness_events FROM drowsiness_events WHERE DATE(timestamp) = CURRENT_DATE')
+            except:
+                cursor.execute('SELECT COUNT(*) as drowsiness_events FROM drowsiness_events WHERE DATE(timestamp) = DATE("now")')
+            drowsiness_events_result = cursor.fetchone()
+            drowsiness_events = drowsiness_events_result['drowsiness_events'] if IS_RENDER and POSTGRES_AVAILABLE else drowsiness_events_result[0]
             
-            cursor.execute('SELECT COUNT(*) as active_sessions FROM session_tokens WHERE is_valid = 1 AND expires_at > ?', 
-                         (datetime.now(),))
-            active_sessions_count = cursor.fetchone()['active_sessions']
+            try:
+                cursor.execute('SELECT COUNT(*) as active_sessions FROM session_tokens WHERE is_valid = 1 AND expires_at > %s', 
+                             (datetime.now(),))
+            except:
+                cursor.execute('SELECT COUNT(*) as active_sessions FROM session_tokens WHERE is_valid = 1 AND expires_at > ?', 
+                             (datetime.now(),))
+            active_sessions_result = cursor.fetchone()
+            active_sessions_count = active_sessions_result['active_sessions'] if IS_RENDER and POSTGRES_AVAILABLE else active_sessions_result[0]
             
             # Get recent activity
             cursor.execute('''
@@ -1419,6 +1781,12 @@ def admin_stats():
                 LIMIT 10
             ''')
             recent_activity = cursor.fetchall()
+            recent_activity_list = []
+            for activity in recent_activity:
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    recent_activity_list.append(dict(activity))
+                else:
+                    recent_activity_list.append(dict(activity))
             
             # Get admin activity
             cursor.execute('''
@@ -1428,6 +1796,12 @@ def admin_stats():
                 LIMIT 10
             ''')
             admin_activity = cursor.fetchall()
+            admin_activity_list = []
+            for activity in admin_activity:
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    admin_activity_list.append(dict(activity))
+                else:
+                    admin_activity_list.append(dict(activity))
             
             # Get alert statistics by severity
             cursor.execute('''
@@ -1436,20 +1810,41 @@ def admin_stats():
                 GROUP BY severity
             ''')
             severity_stats = cursor.fetchall()
+            severity_stats_list = []
+            for stat in severity_stats:
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    severity_stats_list.append(dict(stat))
+                else:
+                    severity_stats_list.append(dict(stat))
             
             # Get daily alerts for last 7 days
-            cursor.execute('''
-                SELECT DATE(timestamp) as date, COUNT(*) as count
-                FROM alerts 
-                WHERE timestamp >= datetime('now', '-7 days')
-                GROUP BY DATE(timestamp)
-                ORDER BY date DESC
-            ''')
+            try:
+                cursor.execute('''
+                    SELECT DATE(timestamp) as date, COUNT(*) as count
+                    FROM alerts 
+                    WHERE timestamp >= CURRENT_DATE - INTERVAL '7 days'
+                    GROUP BY DATE(timestamp)
+                    ORDER BY date DESC
+                ''')
+            except:
+                cursor.execute('''
+                    SELECT DATE(timestamp) as date, COUNT(*) as count
+                    FROM alerts 
+                    WHERE timestamp >= datetime('now', '-7 days')
+                    GROUP BY DATE(timestamp)
+                    ORDER BY date DESC
+                ''')
             weekly_alerts = cursor.fetchall()
+            weekly_alerts_list = []
+            for alert in weekly_alerts:
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    weekly_alerts_list.append(dict(alert))
+                else:
+                    weekly_alerts_list.append(dict(alert))
         
         # Get system status
         system_status = {
-            'database': 'connected',
+            'database': 'postgresql' if (IS_RENDER and POSTGRES_AVAILABLE) else 'sqlite',
             'connected_clients': len(connected_clients),
             'admin_sessions': len(admin_sessions),
             'server_time': datetime.now().isoformat(),
@@ -1467,10 +1862,10 @@ def admin_stats():
                 'active_sessions': active_sessions_count
             },
             'system_status': system_status,
-            'severity_stats': [dict(stat) for stat in severity_stats],
-            'weekly_alerts': [dict(alert) for alert in weekly_alerts],
-            'recent_activity': [dict(activity) for activity in recent_activity],
-            'admin_activity': [dict(activity) for activity in admin_activity]
+            'severity_stats': severity_stats_list,
+            'weekly_alerts': weekly_alerts_list,
+            'recent_activity': recent_activity_list,
+            'admin_activity': admin_activity_list
         })
         
     except Exception as e:
@@ -1487,10 +1882,22 @@ def admin_clear_alerts():
         days = request.json.get('days', 30)
         
         with get_db_cursor() as cursor:
-            cursor.execute('''
-                DELETE FROM alerts 
-                WHERE acknowledged = 1 AND timestamp < datetime('now', ?)
-            ''', (f'-{days} days',))
+            try:
+                cursor.execute('''
+                    DELETE FROM alerts 
+                    WHERE acknowledged = TRUE AND timestamp < CURRENT_DATE - INTERVAL '%s days'
+                ''', (days,))
+            except:
+                try:
+                    cursor.execute('''
+                        DELETE FROM alerts 
+                        WHERE acknowledged = 1 AND timestamp < datetime('now', ?)
+                    ''', (f'-{days} days',))
+                except:
+                    cursor.execute('''
+                        DELETE FROM alerts 
+                        WHERE acknowledged = 1 AND timestamp < datetime('now', ?)
+                    ''', (f'-{days} days',))
             
             deleted_count = cursor.rowcount
             
@@ -1526,7 +1933,6 @@ def login():
                 'error': 'Phone and password required'
             }), 400
         
-        # Apply rate limiting
         ip = request.remote_addr
         if rate_limit_exceeded(ip, 'guardian_login', limit=10):
             return jsonify({
@@ -1542,9 +1948,8 @@ def login():
                     'success': False,
                     'error': 'Account locked. Please try again later.',
                     'locked_until': guardian.get('locked_until')
-                }), 423  # 423 Locked
+                }), 423
             
-            # Create session
             token = create_session(guardian['guardian_id'], request.remote_addr, 
                                  request.headers.get('User-Agent'))
             
@@ -1674,7 +2079,11 @@ def register_guardian():
         
         with get_db_cursor() as cursor:
             # Check if phone already exists
-            cursor.execute('SELECT guardian_id FROM guardians WHERE phone = ?', (phone,))
+            try:
+                cursor.execute('SELECT guardian_id FROM guardians WHERE phone = %s', (phone,))
+            except:
+                cursor.execute('SELECT guardian_id FROM guardians WHERE phone = ?', (phone,))
+            
             if cursor.fetchone():
                 return jsonify({
                     'success': False,
@@ -1683,19 +2092,36 @@ def register_guardian():
             
             password_hash = hash_password(data['password'])
             
-            cursor.execute('''
-                INSERT INTO guardians (full_name, phone, email, password_hash, address, last_login)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                data['full_name'],
-                phone,
-                data.get('email', ''),
-                password_hash,
-                data.get('address', ''),
-                datetime.now()
-            ))
+            try:
+                cursor.execute('''
+                    INSERT INTO guardians (full_name, phone, email, password_hash, address, last_login)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                ''', (
+                    data['full_name'],
+                    phone,
+                    data.get('email', ''),
+                    password_hash,
+                    data.get('address', ''),
+                    datetime.now()
+                ))
+            except:
+                cursor.execute('''
+                    INSERT INTO guardians (full_name, phone, email, password_hash, address, last_login)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (
+                    data['full_name'],
+                    phone,
+                    data.get('email', ''),
+                    password_hash,
+                    data.get('address', ''),
+                    datetime.now()
+                ))
             
-            guardian_id = cursor.lastrowid
+            try:
+                cursor.execute('SELECT LASTVAL()')
+                guardian_id = cursor.fetchone()[0]
+            except:
+                guardian_id = cursor.lastrowid
         
         print(f"✅ Guardian registered: {data['full_name']} (ID: {guardian_id})")
         
@@ -1748,33 +2174,71 @@ def guardian_dashboard():
         drivers = get_guardian_drivers(guardian_id)
         recent_alerts = get_recent_alerts(guardian_id, 5)
         
-        with get_db_cursor() as cursor:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
             # Get counts
-            cursor.execute('SELECT COUNT(*) FROM drivers WHERE guardian_id = ?', (guardian_id,))
-            driver_count = cursor.fetchone()[0]
+            try:
+                cursor.execute('SELECT COUNT(*) FROM drivers WHERE guardian_id = %s', (guardian_id,))
+            except:
+                cursor.execute('SELECT COUNT(*) FROM drivers WHERE guardian_id = ?', (guardian_id,))
+            driver_count_result = cursor.fetchone()
+            driver_count = driver_count_result[0]
             
-            cursor.execute('SELECT COUNT(*) FROM alerts WHERE guardian_id = ?', (guardian_id,))
-            total_alerts = cursor.fetchone()[0]
+            try:
+                cursor.execute('SELECT COUNT(*) FROM alerts WHERE guardian_id = %s', (guardian_id,))
+            except:
+                cursor.execute('SELECT COUNT(*) FROM alerts WHERE guardian_id = ?', (guardian_id,))
+            total_alerts_result = cursor.fetchone()
+            total_alerts = total_alerts_result[0]
             
-            cursor.execute('SELECT COUNT(*) FROM alerts WHERE guardian_id = ? AND acknowledged = 0', 
-                         (guardian_id,))
-            unread_alerts = cursor.fetchone()[0]
+            try:
+                cursor.execute('SELECT COUNT(*) FROM alerts WHERE guardian_id = %s AND acknowledged = 0', 
+                             (guardian_id,))
+            except:
+                cursor.execute('SELECT COUNT(*) FROM alerts WHERE guardian_id = ? AND acknowledged = 0', 
+                             (guardian_id,))
+            unread_alerts_result = cursor.fetchone()
+            unread_alerts = unread_alerts_result[0]
             
-            cursor.execute('''
-                SELECT COUNT(*) FROM alerts 
-                WHERE guardian_id = ? AND DATE(timestamp) = DATE('now')
-            ''', (guardian_id,))
-            today_alerts = cursor.fetchone()[0]
+            try:
+                cursor.execute('''
+                    SELECT COUNT(*) FROM alerts 
+                    WHERE guardian_id = %s AND DATE(timestamp) = CURRENT_DATE
+                ''', (guardian_id,))
+            except:
+                cursor.execute('''
+                    SELECT COUNT(*) FROM alerts 
+                    WHERE guardian_id = ? AND DATE(timestamp) = DATE('now')
+                ''', (guardian_id,))
+            today_alerts_result = cursor.fetchone()
+            today_alerts = today_alerts_result[0]
             
             # Get drowsiness statistics
-            cursor.execute('''
-                SELECT COUNT(*) as drowsy_count,
-                       AVG(confidence) as avg_confidence,
-                       MAX(timestamp) as last_event
-                FROM drowsiness_events 
-                WHERE guardian_id = ? AND DATE(timestamp) = DATE('now')
-            ''', (guardian_id,))
-            drowsiness_stats = cursor.fetchone()
+            try:
+                cursor.execute('''
+                    SELECT COUNT(*) as drowsy_count,
+                           AVG(confidence) as avg_confidence,
+                           MAX(timestamp) as last_event
+                    FROM drowsiness_events 
+                    WHERE guardian_id = %s AND DATE(timestamp) = CURRENT_DATE
+                ''', (guardian_id,))
+            except:
+                cursor.execute('''
+                    SELECT COUNT(*) as drowsy_count,
+                           AVG(confidence) as avg_confidence,
+                           MAX(timestamp) as last_event
+                    FROM drowsiness_events 
+                    WHERE guardian_id = ? AND DATE(timestamp) = DATE('now')
+                ''', (guardian_id,))
+            drowsiness_stats_result = cursor.fetchone()
+            if drowsiness_stats_result:
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    drowsiness_stats = dict(drowsiness_stats_result)
+                else:
+                    drowsiness_stats = dict(drowsiness_stats_result)
+            else:
+                drowsiness_stats = {}
         
         return jsonify({
             'success': True,
@@ -1785,7 +2249,7 @@ def guardian_dashboard():
                 'total_alerts': total_alerts,
                 'unread_alerts': unread_alerts,
                 'today_alerts': today_alerts,
-                'drowsiness_stats': dict(drowsiness_stats) if drowsiness_stats else {},
+                'drowsiness_stats': drowsiness_stats,
                 'recent_alerts': recent_alerts
             },
             'drivers': drivers
@@ -1834,20 +2298,36 @@ def register_driver():
         
         # Database transaction for driver registration
         with get_db_cursor() as cursor:
-            cursor.execute('''
-                INSERT INTO drivers (driver_id, name, phone, email, address, 
-                                    reference_number, license_number, guardian_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                driver_id,
-                data['driver_name'],
-                data['driver_phone'],
-                data.get('driver_email', ''),
-                data.get('driver_address', ''),
-                reference_num,
-                data.get('license_number', ''),
-                data['guardian_id']
-            ))
+            try:
+                cursor.execute('''
+                    INSERT INTO drivers (driver_id, name, phone, email, address, 
+                                        reference_number, license_number, guardian_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ''', (
+                    driver_id,
+                    data['driver_name'],
+                    data['driver_phone'],
+                    data.get('driver_email', ''),
+                    data.get('driver_address', ''),
+                    reference_num,
+                    data.get('license_number', ''),
+                    data['guardian_id']
+                ))
+            except:
+                cursor.execute('''
+                    INSERT INTO drivers (driver_id, name, phone, email, address, 
+                                        reference_number, license_number, guardian_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    driver_id,
+                    data['driver_name'],
+                    data['driver_phone'],
+                    data.get('driver_email', ''),
+                    data.get('driver_address', ''),
+                    reference_num,
+                    data.get('license_number', ''),
+                    data['guardian_id']
+                ))
         
         # Save images
         saved_images = []
@@ -1930,18 +2410,31 @@ def send_alert():
             # Find demo guardian
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute('SELECT guardian_id, full_name, phone FROM guardians WHERE phone = ?', ('09123456789',))
+                try:
+                    cursor.execute('SELECT guardian_id, full_name, phone FROM guardians WHERE phone = %s', ('09123456789',))
+                except:
+                    cursor.execute('SELECT guardian_id, full_name, phone FROM guardians WHERE phone = ?', ('09123456789',))
+                
                 demo_guardian = cursor.fetchone()
                 
                 if demo_guardian:
-                    guardian_id, guardian_name, guardian_phone = demo_guardian
+                    if IS_RENDER and POSTGRES_AVAILABLE:
+                        guardian_id, guardian_name, guardian_phone = demo_guardian
+                    else:
+                        guardian_id, guardian_name, guardian_phone = demo_guardian
                     
                     # Create a temporary driver entry if needed
                     temp_driver_id = f"TEMP{int(time.time())}"
-                    cursor.execute('''
-                        INSERT OR IGNORE INTO drivers (driver_id, name, phone, guardian_id)
-                        VALUES (?, ?, ?, ?)
-                    ''', (temp_driver_id, driver_name, '00000000000', guardian_id))
+                    try:
+                        cursor.execute('''
+                            INSERT INTO drivers (driver_id, name, phone, guardian_id)
+                            VALUES (%s, %s, %s, %s)
+                        ''', (temp_driver_id, driver_name, '00000000000', guardian_id))
+                    except:
+                        cursor.execute('''
+                            INSERT INTO drivers (driver_id, name, phone, guardian_id)
+                            VALUES (?, ?, ?, ?)
+                        ''', (temp_driver_id, driver_name, '00000000000', guardian_id))
                     conn.commit()
                     
                     driver_id = temp_driver_id
@@ -1956,32 +2449,64 @@ def send_alert():
         
         with get_db_cursor() as cursor:
             # Create alert
-            cursor.execute('''
-                INSERT INTO alerts (driver_id, guardian_id, severity, message, detection_details, source)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (driver_id, guardian_id, severity, message, detection_details_json, 'drowsiness_detection'))
-            alert_id = cursor.lastrowid
+            try:
+                cursor.execute('''
+                    INSERT INTO alerts (driver_id, guardian_id, severity, message, detection_details, source)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                ''', (driver_id, guardian_id, severity, message, detection_details_json, 'drowsiness_detection'))
+            except:
+                cursor.execute('''
+                    INSERT INTO alerts (driver_id, guardian_id, severity, message, detection_details, source)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (driver_id, guardian_id, severity, message, detection_details_json, 'drowsiness_detection'))
+            
+            try:
+                cursor.execute('SELECT LASTVAL()')
+                alert_id = cursor.fetchone()[0]
+            except:
+                alert_id = cursor.lastrowid
             
             # Log drowsiness event with detailed metrics
-            cursor.execute('''
-                INSERT INTO drowsiness_events (driver_id, guardian_id, confidence, state, ear, mar, perclos)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                driver_id, 
-                guardian_id, 
-                confidence,
-                detection_details.get('state', 'unknown'),
-                detection_details.get('ear', 0.0),
-                detection_details.get('mar', 0.0),
-                detection_details.get('perclos', 0.0)
-            ))
+            try:
+                cursor.execute('''
+                    INSERT INTO drowsiness_events (driver_id, guardian_id, confidence, state, ear, mar, perclos)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ''', (
+                    driver_id, 
+                    guardian_id, 
+                    confidence,
+                    detection_details.get('state', 'unknown'),
+                    detection_details.get('ear', 0.0),
+                    detection_details.get('mar', 0.0),
+                    detection_details.get('perclos', 0.0)
+                ))
+            except:
+                cursor.execute('''
+                    INSERT INTO drowsiness_events (driver_id, guardian_id, confidence, state, ear, mar, perclos)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    driver_id, 
+                    guardian_id, 
+                    confidence,
+                    detection_details.get('state', 'unknown'),
+                    detection_details.get('ear', 0.0),
+                    detection_details.get('mar', 0.0),
+                    detection_details.get('perclos', 0.0)
+                ))
             
             # Log activity
-            cursor.execute('''
-                INSERT INTO activity_log (guardian_id, action, details)
-                VALUES (?, ?, ?)
-            ''', (guardian_id, 'ALERT_GENERATED', 
-                f'Alert for driver {driver_name}: {message} (Confidence: {confidence:.1%})'))
+            try:
+                cursor.execute('''
+                    INSERT INTO activity_log (guardian_id, action, details)
+                    VALUES (%s, %s, %s)
+                ''', (guardian_id, 'ALERT_GENERATED', 
+                    f'Alert for driver {driver_name}: {message} (Confidence: {confidence:.1%})'))
+            except:
+                cursor.execute('''
+                    INSERT INTO activity_log (guardian_id, action, details)
+                    VALUES (?, ?, ?)
+                ''', (guardian_id, 'ALERT_GENERATED', 
+                    f'Alert for driver {driver_name}: {message} (Confidence: {confidence:.1%})'))
             
             # Prepare alert data for WebSocket
             alert_data = {
@@ -2060,33 +2585,43 @@ def get_guardian_alerts():
                 SELECT a.*, d.name as driver_name,
                        CASE 
                            WHEN a.detection_details IS NOT NULL AND a.detection_details != '' 
-                           THEN json_extract(a.detection_details, '$.state')
+                           THEN detection_details->>'state'
                            ELSE 'alert'
                        END as alert_type
                 FROM alerts a
                 JOIN drivers d ON a.driver_id = d.driver_id
-                WHERE a.guardian_id = ?
+                WHERE a.guardian_id = %s
             '''
             
             params = [guardian_id]
             
             if acknowledged is not None:
                 if acknowledged.lower() == 'true':
-                    query += ' AND a.acknowledged = 1'
+                    query += ' AND a.acknowledged = TRUE'
                 elif acknowledged.lower() == 'false':
-                    query += ' AND a.acknowledged = 0'
+                    query += ' AND a.acknowledged = FALSE'
             
-            query += ' ORDER BY a.timestamp DESC LIMIT ?'
+            query += ' ORDER BY a.timestamp DESC LIMIT %s'
             params.append(limit)
             
-            cursor.execute(query, params)
+            try:
+                cursor.execute(query, params)
+            except:
+                # Fallback to SQLite syntax
+                query = query.replace('%s', '?')
+                query = query.replace('TRUE', '1').replace('FALSE', '0')
+                query = query.replace("detection_details->>'state'", "json_extract(a.detection_details, '$.state')")
+                cursor.execute(query, params)
             
             alerts = cursor.fetchall()
             
             # Parse detection details
             result_alerts = []
             for alert in alerts:
-                alert_dict = dict(alert)
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    alert_dict = dict(alert)
+                else:
+                    alert_dict = dict(alert)
                 if alert_dict.get('detection_details'):
                     try:
                         alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
@@ -2095,12 +2630,21 @@ def get_guardian_alerts():
                 result_alerts.append(alert_dict)
             
             # Get counts
-            cursor.execute('SELECT COUNT(*) FROM alerts WHERE guardian_id = ?', (guardian_id,))
-            total_count = cursor.fetchone()[0]
+            try:
+                cursor.execute('SELECT COUNT(*) FROM alerts WHERE guardian_id = %s', (guardian_id,))
+            except:
+                cursor.execute('SELECT COUNT(*) FROM alerts WHERE guardian_id = ?', (guardian_id,))
+            total_count_result = cursor.fetchone()
+            total_count = total_count_result[0]
             
-            cursor.execute('SELECT COUNT(*) FROM alerts WHERE guardian_id = ? AND acknowledged = 0', 
-                         (guardian_id,))
-            unread_count = cursor.fetchone()[0]
+            try:
+                cursor.execute('SELECT COUNT(*) FROM alerts WHERE guardian_id = %s AND acknowledged = 0', 
+                             (guardian_id,))
+            except:
+                cursor.execute('SELECT COUNT(*) FROM alerts WHERE guardian_id = ? AND acknowledged = 0', 
+                             (guardian_id,))
+            unread_count_result = cursor.fetchone()
+            unread_count = unread_count_result[0]
             
             return jsonify({
                 'success': True,
@@ -2143,36 +2687,61 @@ def acknowledge_alert():
         
         with get_db_cursor() as cursor:
             # Check if alert belongs to this guardian
-            cursor.execute('''
-                SELECT a.*, d.name as driver_name 
-                FROM alerts a
-                JOIN drivers d ON a.driver_id = d.driver_id
-                WHERE a.alert_id = ? AND a.guardian_id = ?
-            ''', (alert_id, guardian_id))
+            try:
+                cursor.execute('''
+                    SELECT a.*, d.name as driver_name 
+                    FROM alerts a
+                    JOIN drivers d ON a.driver_id = d.driver_id
+                    WHERE a.alert_id = %s AND a.guardian_id = %s
+                ''', (alert_id, guardian_id))
+            except:
+                cursor.execute('''
+                    SELECT a.*, d.name as driver_name 
+                    FROM alerts a
+                    JOIN drivers d ON a.driver_id = d.driver_id
+                    WHERE a.alert_id = ? AND a.guardian_id = ?
+                ''', (alert_id, guardian_id))
             
-            alert = cursor.fetchone()
-            
-            if not alert:
+            alert_result = cursor.fetchone()
+            if not alert_result:
                 return jsonify({
                     'success': False,
                     'error': 'Alert not found or not authorized'
                 }), 404
             
+            if IS_RENDER and POSTGRES_AVAILABLE:
+                alert = dict(alert_result)
+            else:
+                alert = dict(alert_result)
+            
             # Acknowledge the alert
-            cursor.execute('''
-                UPDATE alerts SET acknowledged = 1 
-                WHERE alert_id = ? AND guardian_id = ?
-            ''', (alert_id, guardian_id))
+            try:
+                cursor.execute('''
+                    UPDATE alerts SET acknowledged = TRUE 
+                    WHERE alert_id = %s AND guardian_id = %s
+                ''', (alert_id, guardian_id))
+            except:
+                cursor.execute('''
+                    UPDATE alerts SET acknowledged = 1 
+                    WHERE alert_id = ? AND guardian_id = ?
+                ''', (alert_id, guardian_id))
             
             # Log activity
-            cursor.execute('''
-                INSERT INTO activity_log (guardian_id, action, details)
-                VALUES (?, ?, ?)
-            ''', (guardian_id, 'ALERT_ACKNOWLEDGED', 
-                f'Acknowledged alert #{alert_id} for driver {alert["driver_name"]}'))
+            try:
+                cursor.execute('''
+                    INSERT INTO activity_log (guardian_id, action, details)
+                    VALUES (%s, %s, %s)
+                ''', (guardian_id, 'ALERT_ACKNOWLEDGED', 
+                    f'Acknowledged alert #{alert_id} for driver {alert["driver_name"]}'))
+            except:
+                cursor.execute('''
+                    INSERT INTO activity_log (guardian_id, action, details)
+                    VALUES (?, ?, ?)
+                ''', (guardian_id, 'ALERT_ACKNOWLEDGED', 
+                    f'Acknowledged alert #{alert_id} for driver {alert["driver_name"]}'))
             
             # Prepare response data
-            alert_dict = dict(alert)
+            alert_dict = alert
             if alert_dict.get('detection_details'):
                 try:
                     alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
@@ -2233,48 +2802,79 @@ def get_drowsiness_events():
                 SELECT e.*, d.name as driver_name
                 FROM drowsiness_events e
                 JOIN drivers d ON e.driver_id = d.driver_id
-                WHERE e.guardian_id = ?
+                WHERE e.guardian_id = %s
             '''
             
             params = [guardian_id]
             
             if driver_id:
-                query += ' AND e.driver_id = ?'
+                query += ' AND e.driver_id = %s'
                 params.append(driver_id)
             
-            query += ' ORDER BY e.timestamp DESC LIMIT ?'
+            query += ' ORDER BY e.timestamp DESC LIMIT %s'
             params.append(limit)
             
-            cursor.execute(query, params)
+            try:
+                cursor.execute(query, params)
+            except:
+                # Fallback to SQLite syntax
+                query = query.replace('%s', '?')
+                cursor.execute(query, params)
             
             events = cursor.fetchall()
+            events_list = []
+            for event in events:
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    events_list.append(dict(event))
+                else:
+                    events_list.append(dict(event))
             
             # Get statistics
-            cursor.execute('''
-                SELECT 
-                    COUNT(*) as total_events,
-                    AVG(confidence) as avg_confidence,
-                    COUNT(CASE WHEN state = 'Drowsy' THEN 1 END) as drowsy_count,
-                    COUNT(CASE WHEN state = 'Yawning' THEN 1 END) as yawning_count,
-                    DATE(timestamp) as date
-                FROM drowsiness_events 
-                WHERE guardian_id = ? AND DATE(timestamp) = DATE('now')
-                GROUP BY DATE(timestamp)
-            ''', (guardian_id,))
+            try:
+                cursor.execute('''
+                    SELECT 
+                        COUNT(*) as total_events,
+                        AVG(confidence) as avg_confidence,
+                        COUNT(CASE WHEN state = 'Drowsy' THEN 1 END) as drowsy_count,
+                        COUNT(CASE WHEN state = 'Yawning' THEN 1 END) as yawning_count,
+                        DATE(timestamp) as date
+                    FROM drowsiness_events 
+                    WHERE guardian_id = %s AND DATE(timestamp) = CURRENT_DATE
+                    GROUP BY DATE(timestamp)
+                ''', (guardian_id,))
+            except:
+                cursor.execute('''
+                    SELECT 
+                        COUNT(*) as total_events,
+                        AVG(confidence) as avg_confidence,
+                        COUNT(CASE WHEN state = 'Drowsy' THEN 1 END) as drowsy_count,
+                        COUNT(CASE WHEN state = 'Yawning' THEN 1 END) as yawning_count,
+                        DATE(timestamp) as date
+                    FROM drowsiness_events 
+                    WHERE guardian_id = ? AND DATE(timestamp) = DATE('now')
+                    GROUP BY DATE(timestamp)
+                ''', (guardian_id,))
             
-            stats = cursor.fetchone()
-            
-            return jsonify({
-                'success': True,
-                'session_valid': True,
-                'count': len(events),
-                'events': [dict(event) for event in events],
-                'statistics': dict(stats) if stats else {
+            stats_result = cursor.fetchone()
+            if stats_result:
+                if IS_RENDER and POSTGRES_AVAILABLE:
+                    stats = dict(stats_result)
+                else:
+                    stats = dict(stats_result)
+            else:
+                stats = {
                     'total_events': 0,
                     'avg_confidence': 0,
                     'drowsy_count': 0,
                     'yawning_count': 0
                 }
+            
+            return jsonify({
+                'success': True,
+                'session_valid': True,
+                'count': len(events_list),
+                'events': events_list,
+                'statistics': stats
             })
         
     except Exception as e:
@@ -2293,27 +2893,44 @@ def test_alert():
         # Use demo guardian for testing
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT guardian_id, full_name FROM guardians WHERE phone = ?', ('09123456789',))
-            demo_guardian = cursor.fetchone()
+            try:
+                cursor.execute('SELECT guardian_id, full_name FROM guardians WHERE phone = %s', ('09123456789',))
+            except:
+                cursor.execute('SELECT guardian_id, full_name FROM guardians WHERE phone = ?', ('09123456789',))
             
-            if not demo_guardian:
+            demo_guardian_result = cursor.fetchone()
+            
+            if not demo_guardian_result:
                 return jsonify({
                     'success': False,
                     'error': 'Demo guardian not found'
                 }), 404
             
-            guardian_id, guardian_name = demo_guardian
+            if IS_RENDER and POSTGRES_AVAILABLE:
+                guardian_id, guardian_name = demo_guardian_result
+            else:
+                guardian_id, guardian_name = demo_guardian_result
             
             # Create test driver if needed
             test_driver_id = data.get('driver_id', 'TEST123')
             test_driver_name = data.get('driver_name', 'Test Driver')
             
-            cursor.execute('SELECT driver_id FROM drivers WHERE driver_id = ?', (test_driver_id,))
+            try:
+                cursor.execute('SELECT driver_id FROM drivers WHERE driver_id = %s', (test_driver_id,))
+            except:
+                cursor.execute('SELECT driver_id FROM drivers WHERE driver_id = ?', (test_driver_id,))
+            
             if not cursor.fetchone():
-                cursor.execute('''
-                    INSERT OR IGNORE INTO drivers (driver_id, name, phone, guardian_id)
-                    VALUES (?, ?, ?, ?)
-                ''', (test_driver_id, test_driver_name, '00000000000', guardian_id))
+                try:
+                    cursor.execute('''
+                        INSERT INTO drivers (driver_id, name, phone, guardian_id)
+                        VALUES (%s, %s, %s, %s)
+                    ''', (test_driver_id, test_driver_name, '00000000000', guardian_id))
+                except:
+                    cursor.execute('''
+                        INSERT INTO drivers (driver_id, name, phone, guardian_id)
+                        VALUES (?, ?, ?, ?)
+                    ''', (test_driver_id, test_driver_name, '00000000000', guardian_id))
                 conn.commit()
             
             # Create test alert
@@ -2334,28 +2951,31 @@ def test_alert():
                 'detection_details': detection_details
             }
             
-            # Use the send_alert endpoint internally
+            # Simulate the send_alert endpoint
             from flask import current_app
             with current_app.test_request_context():
-                test_request = current_app.test_client()
-                response = test_request.post('/api/send-alert', 
-                                           json=test_data,
-                                           content_type='application/json')
-            
-            if response.status_code == 200:
-                return jsonify({
-                    'success': True,
-                    'message': f'Test alert sent to guardian {guardian_name}',
-                    'alert_data': test_data
-                })
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': f'Failed to send test alert: {response.status_code}'
-                }), 500
+                import json as json_module
+                test_request_data = json_module.dumps(test_data)
+                
+                # Call send_alert directly
+                response = send_alert()
+                
+                if response.status_code == 200:
+                    return jsonify({
+                        'success': True,
+                        'message': f'Test alert sent to guardian {guardian_name}',
+                        'alert_data': test_data
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'error': f'Failed to send test alert: {response.status_code}'
+                    }), 500
         
     except Exception as e:
         print(f"❌ Test alert error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e)
@@ -2375,26 +2995,44 @@ def cleanup_expired_sessions():
     """Clean up expired sessions periodically"""
     try:
         with get_db_cursor() as cursor:
-            cursor.execute('''
-                UPDATE session_tokens SET is_valid = 0 
-                WHERE expires_at < ? AND is_valid = 1
-            ''', (datetime.now(),))
+            try:
+                cursor.execute('''
+                    UPDATE session_tokens SET is_valid = FALSE 
+                    WHERE expires_at < %s AND is_valid = TRUE
+                ''', (datetime.now(),))
+            except:
+                cursor.execute('''
+                    UPDATE session_tokens SET is_valid = 0 
+                    WHERE expires_at < ? AND is_valid = 1
+                ''', (datetime.now(),))
             
             expired_count = cursor.rowcount
             
             # Clean up old drowsiness events (keep last 30 days)
-            cursor.execute('''
-                DELETE FROM drowsiness_events 
-                WHERE timestamp < datetime('now', '-30 days')
-            ''')
+            try:
+                cursor.execute('''
+                    DELETE FROM drowsiness_events 
+                    WHERE timestamp < CURRENT_DATE - INTERVAL '30 days'
+                ''')
+            except:
+                cursor.execute('''
+                    DELETE FROM drowsiness_events 
+                    WHERE timestamp < datetime('now', '-30 days')
+                ''')
             
             old_events_count = cursor.rowcount
             
             # Clean up old activity logs (keep last 90 days)
-            cursor.execute('''
-                DELETE FROM activity_log 
-                WHERE timestamp < datetime('now', '-90 days')
-            ''')
+            try:
+                cursor.execute('''
+                    DELETE FROM activity_log 
+                    WHERE timestamp < CURRENT_DATE - INTERVAL '90 days'
+                ''')
+            except:
+                cursor.execute('''
+                    DELETE FROM activity_log 
+                    WHERE timestamp < datetime('now', '-90 days')
+                ''')
             
             old_activity_count = cursor.rowcount
         
@@ -2428,12 +3066,22 @@ def startup_tasks():
     
     if IS_RENDER:
         print("🌐 DEPLOYMENT: Render.com Cloud")
+        if POSTGRES_AVAILABLE:
+            print("📊 Database: PostgreSQL (Persistent)")
+        else:
+            print("📊 Database: SQLite (Ephemeral - data may be lost on redeploy)")
     else:
         print("💻 DEPLOYMENT: Local Development")
+        print("📊 Database: SQLite")
     
     print(f"🔧 Environment: {'Production' if IS_PRODUCTION else 'Development'}")
     print(f"📁 Frontend Directory: {FRONTEND_DIR}")
-    print(f"🗄️  Database Path: {DB_PATH}")
+    
+    if IS_RENDER and POSTGRES_AVAILABLE:
+        print("🗄️  Database: PostgreSQL on Render")
+    else:
+        print(f"🗄️  Database Path: {DB_PATH}")
+    
     print(f"🔐 Admin Username: admin")
     print(f"🔐 Admin Password: admin123")
     
@@ -2467,6 +3115,7 @@ def startup_tasks():
     print("  • POST /api/admin/login - Admin login")
     print("  • GET  /api/health - Health check")
     print("  • POST /api/test-alert - Test alert endpoint")
+    print("  • POST /api/login - Guardian login")
     print(f"{'='*70}\n")
     
     # Store app start time for uptime calculation
@@ -2486,6 +3135,7 @@ if __name__ == '__main__':
     print(f"🌐 WebSocket endpoint: ws://{host}:{port}")
     print(f"📡 Alert endpoint: http://{host}:{port}/api/send-alert")
     print(f"🔐 Admin login: http://{host}:{port}/admin-login")
+    print(f"👤 Guardian login: http://{host}:{port}/")
     
     # Run the application
     socketio.run(app, 
