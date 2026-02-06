@@ -98,8 +98,8 @@ admin_sessions = {}
 
 # ==================== SECURITY FUNCTIONS ====================
 def hash_password(password):
-    """Hash password using SHA-256 with salt"""
-    salt = "dr1v3r_@l3rt_s@lt_" + os.environ.get('PEPPER', 'default_pepper')
+    """Hash password using SHA-256 with fixed salt"""
+    salt = "driver_alert_system_salt_2024"
     return hashlib.sha256((password + salt).encode()).hexdigest()
 
 def verify_admin_credentials(username, password):
@@ -107,7 +107,7 @@ def verify_admin_credentials(username, password):
     if username not in ADMIN_CREDENTIALS:
         return None
     
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    password_hash = hash_password(password)
     
     if password_hash == ADMIN_CREDENTIALS[username]['password_hash']:
         return {
@@ -655,6 +655,8 @@ def verify_guardian_credentials(phone, password):
                 guardian_id, full_name, stored_hash, failed_attempts, locked_until = result
                 
                 print(f"✅ [LOGIN VERIFY] User found: {full_name}")
+                print(f"   Stored hash (FULL): {stored_hash}")
+                print(f"   Stored hash length: {len(stored_hash)}")
                 
                 # Check if account is locked
                 if locked_until:
@@ -673,6 +675,9 @@ def verify_guardian_credentials(phone, password):
                 
                 # Verify password
                 provided_hash = hash_password(password)
+                print(f"   Provided hash (FULL): {provided_hash}")
+                print(f"   Provided hash length: {len(provided_hash)}")
+                
                 if provided_hash == stored_hash:
                     print(f"✅ [LOGIN VERIFY] Password matches!")
                     # Reset failed attempts on successful login
@@ -690,9 +695,11 @@ def verify_guardian_credentials(phone, password):
                     }
                 else:
                     print(f"❌ [LOGIN VERIFY] Password mismatch")
-                    print(f"   Stored hash: {stored_hash[:20]}...")
-                    print(f"   Provided hash: {provided_hash[:20]}...")
-                    # Increment failed attempts logic...
+                    # Compare character by character
+                    for i, (s, p) in enumerate(zip(stored_hash, provided_hash)):
+                        if s != p:
+                            print(f"   First mismatch at position {i}: stored='{s}', provided='{p}'")
+                            break
                     return None
             else:
                 print(f"❌ [LOGIN VERIFY] No user found with phone: '{phone}' or any alternatives")
@@ -1906,7 +1913,7 @@ def validate_session_endpoint():
 
 @app.route('/api/register-guardian', methods=['POST'])
 def register_guardian():
-    """Register a new guardian - WITHOUT AUTO-NORMALIZATION"""
+    """Register a new guardian"""
     try:
         data = request.json
         
@@ -2013,6 +2020,7 @@ def register_guardian():
             'success': False,
             'error': str(e)
         }), 500
+
 # ==================== GUARDIAN DASHBOARD ENDPOINTS ====================
 @app.route('/api/guardian/dashboard', methods=['GET'])
 def guardian_dashboard():
