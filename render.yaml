@@ -2,7 +2,9 @@
   - type: web
     name: driver-drowsiness-alert
     env: python
-    buildCommand: pip install --upgrade pip && pip install -r backend/requirements.txt
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r backend/requirements_server.txt
     startCommand: cd backend && gunicorn wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --worker-class eventlet
     envVars:
       - key: PYTHON_VERSION
@@ -13,5 +15,15 @@
         value: true
       - key: ENVIRONMENT
         value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: driver-drowsiness-db
+          property: connectionString
     healthCheckPath: /api/health
     autoDeploy: true
+
+databases:
+  - name: driver-drowsiness-db
+    plan: free
+    databaseName: driverdrowsiness
+    user: driverdrowsiness_user
