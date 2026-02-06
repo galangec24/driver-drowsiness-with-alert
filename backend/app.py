@@ -372,13 +372,22 @@ active_sessions = {}
 db_write_lock = threading.Lock()
 
 # ==================== DATABASE INITIALIZATION ====================
+def is_postgres_cursor(cursor):
+    # psycopg2 / psycopg
+    return cursor.__class__.__module__.startswith("psycopg")
+
+
 def init_db():
     """Initialize database with all required tables"""
     try:
         with get_db_cursor() as cursor:
-            if IS_RENDER and POSTGRES_AVAILABLE:
-                # PostgreSQL schema
-                cursor.execute('''
+            is_pg = is_postgres_cursor(cursor)
+
+            # =========================
+            # POSTGRESQL (Render)
+            # =========================
+            if is_pg:
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS guardians (
                         guardian_id SERIAL PRIMARY KEY,
                         full_name TEXT NOT NULL,
@@ -392,9 +401,9 @@ def init_db():
                         failed_login_attempts INTEGER DEFAULT 0,
                         locked_until TIMESTAMP
                     )
-                ''')
-                
-                cursor.execute('''
+                """)
+
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS drivers (
                         driver_id TEXT PRIMARY KEY,
                         name TEXT NOT NULL,
@@ -407,14 +416,14 @@ def init_db():
                         registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         is_active BOOLEAN DEFAULT TRUE
                     )
-                ''')
-                
-                cursor.execute('''
+                """)
+
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS alerts (
                         alert_id SERIAL PRIMARY KEY,
                         driver_id TEXT NOT NULL,
                         guardian_id INTEGER,
-                        severity TEXT NOT NULL CHECK(severity IN ('low', 'medium', 'high')),
+                        severity TEXT NOT NULL CHECK (severity IN ('low','medium','high')),
                         message TEXT,
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         acknowledged BOOLEAN DEFAULT FALSE,
@@ -423,50 +432,9 @@ def init_db():
                         FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
                         FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
                     )
-                ''')
-                
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS face_images (
-                        image_id SERIAL PRIMARY KEY,
-                        driver_id TEXT NOT NULL,
-                        image_path TEXT NOT NULL,
-                        capture_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE
-                    )
-                ''')
-                
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS drowsiness_events (
-                        event_id SERIAL PRIMARY KEY,
-                        driver_id TEXT NOT NULL,
-                        guardian_id INTEGER,
-                        confidence REAL,
-                        state TEXT,
-                        ear REAL,
-                        mar REAL,
-                        perclos REAL,
-                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        processed BOOLEAN DEFAULT FALSE,
-                        FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
-                        FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
-                    )
-                ''')
-                
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS activity_log (
-                        log_id SERIAL PRIMARY KEY,
-                        guardian_id INTEGER,
-                        admin_username TEXT,
-                        action TEXT,
-                        details TEXT,
-                        ip_address TEXT,
-                        user_agent TEXT,
-                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
-                    )
-                ''')
-                
-                cursor.execute('''
+                """)
+
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS session_tokens (
                         token_id SERIAL PRIMARY KEY,
                         guardian_id INTEGER NOT NULL,
@@ -478,36 +446,13 @@ def init_db():
                         user_agent TEXT,
                         FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
                     )
-                ''')
-                
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS admin_activity_log (
-                        log_id SERIAL PRIMARY KEY,
-                        admin_username TEXT NOT NULL,
-                        action TEXT,
-                        details TEXT,
-                        ip_address TEXT,
-                        user_agent TEXT,
-                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-                
-                # Create indexes for PostgreSQL
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_drivers_guardian ON drivers(guardian_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_guardian ON alerts(guardian_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_expires ON session_tokens(expires_at)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_valid ON session_tokens(is_valid)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_driver ON drowsiness_events(driver_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_timestamp ON drowsiness_events(timestamp)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_guardians_active ON guardians(is_active)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_admin_activity_timestamp ON admin_activity_log(timestamp)')
-                
+                """)
+
+            # =========================
+            # SQLITE (Local)
+            # =========================
             else:
-                # SQLite schema - COMPLETE VERSION
-                cursor.execute('''
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS guardians (
                         guardian_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         full_name TEXT NOT NULL,
@@ -521,9 +466,9 @@ def init_db():
                         failed_login_attempts INTEGER DEFAULT 0,
                         locked_until TIMESTAMP
                     )
-                ''')
-                
-                cursor.execute('''
+                """)
+
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS drivers (
                         driver_id TEXT PRIMARY KEY,
                         name TEXT NOT NULL,
@@ -537,14 +482,14 @@ def init_db():
                         is_active BOOLEAN DEFAULT 1,
                         FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
                     )
-                ''')
-                
-                cursor.execute('''
+                """)
+
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS alerts (
                         alert_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         driver_id TEXT NOT NULL,
                         guardian_id INTEGER,
-                        severity TEXT NOT NULL CHECK(severity IN ('low', 'medium', 'high')),
+                        severity TEXT NOT NULL CHECK (severity IN ('low','medium','high')),
                         message TEXT,
                         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         acknowledged BOOLEAN DEFAULT 0,
@@ -553,50 +498,9 @@ def init_db():
                         FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
                         FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
                     )
-                ''')
-                
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS face_images (
-                        image_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        driver_id TEXT NOT NULL,
-                        image_path TEXT NOT NULL,
-                        capture_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE
-                    )
-                ''')
-                
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS drowsiness_events (
-                        event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        driver_id TEXT NOT NULL,
-                        guardian_id INTEGER,
-                        confidence REAL,
-                        state TEXT,
-                        ear REAL,
-                        mar REAL,
-                        perclos REAL,
-                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        processed BOOLEAN DEFAULT 0,
-                        FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
-                        FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
-                    )
-                ''')
-                
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS activity_log (
-                        log_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        guardian_id INTEGER,
-                        admin_username TEXT,
-                        action TEXT,
-                        details TEXT,
-                        ip_address TEXT,
-                        user_agent TEXT,
-                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
-                    )
-                ''')
-                
-                cursor.execute('''
+                """)
+
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS session_tokens (
                         token_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         guardian_id INTEGER NOT NULL,
@@ -608,124 +512,67 @@ def init_db():
                         user_agent TEXT,
                         FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
                     )
-                ''')
-                
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS admin_activity_log (
-                        log_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        admin_username TEXT NOT NULL,
-                        action TEXT,
-                        details TEXT,
-                        ip_address TEXT,
-                        user_agent TEXT,
-                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-                
-                # Check and add missing columns for SQLite
-                columns_to_check = [
-                    ('guardians', 'is_active'),
-                    ('guardians', 'failed_login_attempts'),
-                    ('guardians', 'locked_until'),
-                    ('drivers', 'is_active'),
-                    ('alerts', 'source'),
-                    ('activity_log', 'admin_username'),
-                    ('activity_log', 'ip_address'),
-                    ('activity_log', 'user_agent'),
-                    ('session_tokens', 'ip_address'),
-                    ('session_tokens', 'user_agent')
-                ]
-                
-                for table, column in columns_to_check:
-                    try:
-                        cursor.execute(f"SELECT {column} FROM {table} LIMIT 1")
-                    except Exception:
-                        if column == 'is_active':
-                            cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} BOOLEAN DEFAULT 1')
-                        elif column == 'failed_login_attempts':
-                            cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} INTEGER DEFAULT 0')
-                        elif column == 'locked_until':
-                            cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} TIMESTAMP')
-                        elif column == 'source':
-                            cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} TEXT DEFAULT "system"')
-                        else:
-                            cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column} TEXT')
-                        print(f"📝 Added {column} column to {table} table")
-                
-                # Create indexes for SQLite
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_drivers_guardian ON drivers(guardian_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_drivers_active ON drivers(is_active)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_guardian ON alerts(guardian_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_expires ON session_tokens(expires_at)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_valid ON session_tokens(is_valid)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_driver ON drowsiness_events(driver_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_timestamp ON drowsiness_events(timestamp)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_guardians_active ON guardians(is_active)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_admin_activity_timestamp ON admin_activity_log(timestamp)')
-            
-            # Insert demo guardian if not exists - FIXED VERSION
-            try:
-                # Use a raw string to prevent % interpretation as parameter placeholder
-                demo_phone = r'09123456789'  # The 'r' prefix makes it a raw string
-                
-                if IS_RENDER and POSTGRES_AVAILABLE:
-                    # PostgreSQL: Use %s placeholder
-                    cursor.execute('SELECT COUNT(*) FROM guardians WHERE phone = %s', (demo_phone,))
+                """)
+
+            # =========================
+            # DEMO GUARDIAN (SAFE)
+            # =========================
+            demo_phone = "09123456789"
+
+            if is_pg:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM guardians WHERE phone = %s",
+                    (demo_phone,)
+                )
+            else:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM guardians WHERE phone = ?",
+                    (demo_phone,)
+                )
+
+            count = cursor.fetchone()[0]
+
+            if count == 0:
+                demo_password_hash = hash_password("demo123")
+
+                if is_pg:
+                    cursor.execute("""
+                        INSERT INTO guardians
+                        (full_name, phone, email, password_hash, address, last_login)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        "Demo Guardian",
+                        demo_phone,
+                        "demo@driveralert.com",
+                        demo_password_hash,
+                        "Demo Address",
+                        datetime.now()
+                    ))
                 else:
-                    # SQLite: Use ? placeholder
-                    cursor.execute('SELECT COUNT(*) FROM guardians WHERE phone = ?', (demo_phone,))
-                
-                count_result = cursor.fetchone()
-                
-                # Handle different database result formats
-                if IS_RENDER and POSTGRES_AVAILABLE:
-                    # PostgreSQL returns different result formats
-                    if isinstance(count_result, dict):
-                        count = count_result['count']
-                    elif hasattr(count_result, '__getitem__'):
-                        count = count_result[0]
-                    else:
-                        count = count_result[0] if count_result else 0
-                else:
-                    # SQLite returns a tuple
-                    count = count_result[0] if count_result else 0
-                
-                if count == 0:
-                    demo_password_hash = hash_password('demo123')
-                    
-                    try:
-                        if IS_RENDER and POSTGRES_AVAILABLE:
-                            cursor.execute('''
-                                INSERT INTO guardians (full_name, phone, email, password_hash, address, last_login)
-                                VALUES (%s, %s, %s, %s, %s, %s)
-                            ''', ('Demo Guardian', demo_phone, 'demo@driveralert.com', 
-                                  demo_password_hash, 'Demo Address', datetime.now()))
-                        else:
-                            cursor.execute('''
-                                INSERT INTO guardians (full_name, phone, email, password_hash, address, last_login)
-                                VALUES (?, ?, ?, ?, ?, ?)
-                            ''', ('Demo Guardian', demo_phone, 'demo@driveralert.com', 
-                                  demo_password_hash, 'Demo Address', datetime.now()))
-                        print("✅ Demo guardian created")
-                    except Exception as e:
-                        print(f"❌ Error inserting demo guardian: {e}")
-                        # Don't crash if demo insert fails
-                        
-            except Exception as e:
-                print(f"⚠️ Error checking/inserting demo guardian: {e}")
-                # Continue even if demo guardian fails
-        
+                    cursor.execute("""
+                        INSERT INTO guardians
+                        (full_name, phone, email, password_hash, address, last_login)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        "Demo Guardian",
+                        demo_phone,
+                        "demo@driveralert.com",
+                        demo_password_hash,
+                        "Demo Address",
+                        datetime.now()
+                    ))
+
+                print("✅ Demo guardian created")
+
         print("✅ Database initialized successfully")
         return True
-        
+
     except Exception as e:
         print(f"❌ Database initialization failed: {e}")
         import traceback
         traceback.print_exc()
         return False
+
 
 # ==================== SESSION MANAGEMENT ====================
 def generate_session_token():
