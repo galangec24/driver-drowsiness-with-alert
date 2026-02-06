@@ -591,53 +591,49 @@ def invalidate_session(guardian_id, token=None):
 
 # ==================== AUTHENTICATION FUNCTIONS ====================
 def verify_guardian_credentials(phone, password):
-    """Verify guardian login credentials"""
+    """Verify guardian login credentials - FIXED VERSION"""
     try:
-        # Clean and normalize phone number for lookup
+        # Clean and normalize phone number EXACTLY LIKE REGISTRATION
         phone = str(phone).strip()
         phone = re.sub(r'[\s\-\(\)]', '', phone)
         
-        # Generate all possible phone formats to check
-        phone_formats = []
-        
-        # Original format
-        phone_formats.append(phone)
-        
-        # Try normalized formats
+        # NORMALIZE EXACTLY LIKE REGISTRATION DOES
         if phone.startswith('0'):
-            # 09XXXXXXXXX -> +639XXXXXXXXX
-            phone_formats.append('+63' + phone[1:])
+            # Convert 09XXXXXXXXX to +639XXXXXXXXX (SAME AS REGISTRATION)
+            normalized_phone = '+63' + phone[1:]
         elif phone.startswith('63') and not phone.startswith('+'):
-            # 639XXXXXXXXX -> +639XXXXXXXXX
-            phone_formats.append('+' + phone)
+            # Convert 639XXXXXXXXX to +639XXXXXXXXX
+            normalized_phone = '+' + phone
         elif phone.startswith('+63'):
-            # +639XXXXXXXXX -> 09XXXXXXXXX
-            phone_formats.append('0' + phone[3:])
+            # Already in correct format
+            normalized_phone = phone
+        else:
+            # Unknown format, try as-is
+            normalized_phone = phone
         
-        # Remove duplicates
-        phone_formats = list(set(phone_formats))
+        print(f"🔍 Login attempt - Original: '{phone}', Normalized: '{normalized_phone}'")
         
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Build query with multiple phone formats
-            placeholders = ', '.join(['%s'] * len(phone_formats))
-            query = f'''
+            # Now only check with normalized phone
+            query = '''
                 SELECT guardian_id, full_name, password_hash, failed_login_attempts, locked_until
                 FROM guardians 
-                WHERE phone IN ({placeholders}) AND is_active = TRUE
+                WHERE phone = %s AND is_active = TRUE
             '''
-            cursor.execute(query, tuple(phone_formats))
+            cursor.execute(query, (normalized_phone,))
             
             result = cursor.fetchone()
             
             if result:
                 guardian_id, full_name, stored_hash, failed_attempts, locked_until = result
                 
+                print(f"✅ Found user: {full_name} with phone: {normalized_phone}")
+                
                 # Check if account is locked
                 if locked_until:
                     try:
-                        # Try to parse as datetime object or string
                         if isinstance(locked_until, str):
                             lock_time = datetime.fromisoformat(locked_until.replace('Z', '+00:00'))
                         else:
@@ -663,9 +659,10 @@ def verify_guardian_credentials(phone, password):
                     return {
                         'guardian_id': guardian_id, 
                         'full_name': full_name, 
-                        'phone': phone_formats[0]
+                        'phone': normalized_phone
                     }
                 else:
+                    print(f"❌ Password mismatch for {normalized_phone}")
                     # Increment failed attempts
                     failed_attempts = (failed_attempts or 0) + 1
                     
@@ -688,6 +685,8 @@ def verify_guardian_credentials(phone, password):
                     conn.commit()
                     
                     return None
+            else:
+                print(f"❌ No user found with phone: {normalized_phone}")
                     
     except Exception as e:
         print(f"❌ Error verifying credentials: {e}")
@@ -695,6 +694,23 @@ def verify_guardian_credentials(phone, password):
         traceback.print_exc()
     
     return None
+
+def normalize_phone_number(phone):
+    """Normalize phone number to +639 format (same as registration)"""
+    if not phone:
+        return phone
+    
+    phone = str(phone).strip()
+    phone = re.sub(r'[\s\-\(\)]', '', phone)
+    
+    if phone.startswith('0'):
+        return '+63' + phone[1:]
+    elif phone.startswith('63') and not phone.startswith('+'):
+        return '+' + phone
+    elif phone.startswith('+63'):
+        return phone
+    else:
+        return phone
 
 def get_guardian_by_id(guardian_id):
     """Get guardian information by ID"""
