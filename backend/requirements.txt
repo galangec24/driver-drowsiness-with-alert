@@ -1,6 +1,6 @@
 ﻿# This file points to the server-only requirements
 # For Render deployment, use this
--r requirements-server.txt
+-r requirements_server.txt
 
 # Note: Local development with AI should use:
 # pip install -r requirements-ai.txt
