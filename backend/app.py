@@ -506,7 +506,7 @@ def init_db():
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_admin_activity_timestamp ON admin_activity_log(timestamp)')
                 
             else:
-                # SQLite schema
+                # SQLite schema - COMPLETE VERSION
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS guardians (
                         guardian_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -666,40 +666,57 @@ def init_db():
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_admin_activity_timestamp ON admin_activity_log(timestamp)')
             
-            # Insert demo guardian if not exists
+            # Insert demo guardian if not exists - FIXED VERSION
             try:
+                # Use a raw string to prevent % interpretation as parameter placeholder
+                demo_phone = r'09123456789'  # The 'r' prefix makes it a raw string
+                
                 if IS_RENDER and POSTGRES_AVAILABLE:
-                    cursor.execute('SELECT COUNT(*) FROM guardians WHERE phone = %s', ('09123456789',))
+                    # PostgreSQL: Use %s placeholder
+                    cursor.execute('SELECT COUNT(*) FROM guardians WHERE phone = %s', (demo_phone,))
                 else:
-                    cursor.execute('SELECT COUNT(*) FROM guardians WHERE phone = ?', ('09123456789',))
+                    # SQLite: Use ? placeholder
+                    cursor.execute('SELECT COUNT(*) FROM guardians WHERE phone = ?', (demo_phone,))
                 
                 count_result = cursor.fetchone()
+                
+                # Handle different database result formats
                 if IS_RENDER and POSTGRES_AVAILABLE:
-                    count = count_result['count'] if isinstance(count_result, dict) else count_result[0]
+                    # PostgreSQL returns different result formats
+                    if isinstance(count_result, dict):
+                        count = count_result['count']
+                    elif hasattr(count_result, '__getitem__'):
+                        count = count_result[0]
+                    else:
+                        count = count_result[0] if count_result else 0
                 else:
-                    count = count_result[0]
+                    # SQLite returns a tuple
+                    count = count_result[0] if count_result else 0
                 
                 if count == 0:
                     demo_password_hash = hash_password('demo123')
+                    
                     try:
                         if IS_RENDER and POSTGRES_AVAILABLE:
                             cursor.execute('''
                                 INSERT INTO guardians (full_name, phone, email, password_hash, address, last_login)
                                 VALUES (%s, %s, %s, %s, %s, %s)
-                            ''', ('Demo Guardian', '09123456789', 'demo@driveralert.com', 
+                            ''', ('Demo Guardian', demo_phone, 'demo@driveralert.com', 
                                   demo_password_hash, 'Demo Address', datetime.now()))
                         else:
                             cursor.execute('''
                                 INSERT INTO guardians (full_name, phone, email, password_hash, address, last_login)
                                 VALUES (?, ?, ?, ?, ?, ?)
-                            ''', ('Demo Guardian', '09123456789', 'demo@driveralert.com', 
+                            ''', ('Demo Guardian', demo_phone, 'demo@driveralert.com', 
                                   demo_password_hash, 'Demo Address', datetime.now()))
+                        print("✅ Demo guardian created")
                     except Exception as e:
                         print(f"❌ Error inserting demo guardian: {e}")
-                    print("✅ Demo guardian created")
-                    
+                        # Don't crash if demo insert fails
+                        
             except Exception as e:
                 print(f"⚠️ Error checking/inserting demo guardian: {e}")
+                # Continue even if demo guardian fails
         
         print("✅ Database initialized successfully")
         return True
@@ -3481,7 +3498,7 @@ def cleanup_expired_sessions():
         with get_db_cursor() as cursor:
             try:
                 if IS_RENDER and POSTGRES_AVAILABLE:
-                    # PostgreSQL syntax
+                    # PostgreSQL syntax - FIXED: Use proper parameter
                     cursor.execute('''
                         UPDATE session_tokens 
                         SET is_valid = FALSE 
