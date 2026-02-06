@@ -7,7 +7,7 @@ COMPLETE VERSION - PostgreSQL syntax only
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-from flask import Flask, request, jsonify, send_from_directory, Response, redirect, g
+from flask import Flask, request, jsonify, send_from_directory, Response, redirect
 from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
@@ -25,9 +25,9 @@ from contextlib import contextmanager
 import urllib.parse
 
 # ==================== POSTGRESQL CONFIGURATION ====================
-# Force PostgreSQL only
 import psycopg2
 from psycopg2.extras import RealDictCursor
+
 POSTGRES_AVAILABLE = True
 
 # Set base directory
@@ -57,7 +57,7 @@ eventlet.monkey_patch()
 app = Flask(__name__, 
             static_folder=FRONTEND_DIR,
             static_url_path='')
-app.config['SECRET_KEY'] = secrets.token_hex(32)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
 # Configure for production with proxy support
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
@@ -206,73 +206,46 @@ def rate_limit_exceeded(ip, endpoint_type='general', limit=100):
     return False
 
 # ==================== DATABASE CONNECTION MANAGEMENT ====================
-def get_postgres_connection():
-    """Get PostgreSQL connection"""
-    try:
-        DATABASE_URL = os.environ.get('DATABASE_URL')
-        if not DATABASE_URL:
-            print("❌ DATABASE_URL not found in environment")
-            return None
-        
-        # Fix for older postgres:// URLs
-        if DATABASE_URL.startswith('postgres://'):
-            DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
-            print(f"🔧 Fixed DATABASE_URL format")
-        
-        print(f"🔗 Connecting to PostgreSQL database...")
-        
-        # Parse the URL
-        url = urllib.parse.urlparse(DATABASE_URL)
-        
-        # Create connection
-        conn = psycopg2.connect(
-            database=url.path[1:],  # Remove leading slash
-            user=url.username,
-            password=url.password,
-            host=url.hostname,
-            port=url.port,
-            connect_timeout=10
-        )
-        
-        conn.autocommit = True
-        print(f"✅ PostgreSQL connected to {url.hostname}:{url.port}/{url.path[1:]}")
-        return conn
-        
-    except Exception as e:
-        print(f"❌ PostgreSQL connection failed: {e}")
-        import traceback
-        traceback.print_exc()
+def get_database_url():
+    """Get and validate database URL"""
+    database_url = os.environ.get('DATABASE_URL')
+    
+    if not database_url:
+        print("❌ DATABASE_URL environment variable is not set!")
         return None
-
-def get_db():
-    """Get database connection - PostgreSQL only"""
-    conn = get_postgres_connection()
-    if not conn:
-        raise Exception("PostgreSQL connection failed")
-    return conn
-
-@app.teardown_appcontext
-def close_db(error):
-    """Close database connection at the end of request"""
-    if hasattr(g, 'postgres_db'):
-        g.postgres_db.close()
+    
+    # Fix common URL format issues
+    if database_url.startswith('postgres://'):
+        database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        print("🔧 Fixed postgres:// to postgresql://")
+    
+    return database_url
 
 @contextmanager
 def get_db_connection():
     """Context manager for database connections"""
     conn = None
     try:
-        DATABASE_URL = os.environ.get('DATABASE_URL')
-        if DATABASE_URL:
-            url = urllib.parse.urlparse(DATABASE_URL)
-            conn = psycopg2.connect(
-                database=url.path[1:],
-                user=url.username,
-                password=url.password,
-                host=url.hostname,
-                port=url.port,
-                cursor_factory=RealDictCursor
-            )
+        database_url = get_database_url()
+        if not database_url:
+            raise Exception("DATABASE_URL not set in environment variables")
+        
+        # Parse the URL
+        url = urllib.parse.urlparse(database_url)
+        
+        # Extract database name
+        db_name = url.path[1:] if url.path.startswith('/') else url.path
+        
+        # Connect to PostgreSQL
+        conn = psycopg2.connect(
+            database=db_name,
+            user=url.username,
+            password=url.password,
+            host=url.hostname,
+            port=url.port or 5432,
+            cursor_factory=RealDictCursor,
+            connect_timeout=10
+        )
         yield conn
     except Exception as e:
         print(f"❌ Database connection error: {e}")
@@ -287,21 +260,29 @@ def get_db_cursor():
     conn = None
     cursor = None
     try:
-        DATABASE_URL = os.environ.get('DATABASE_URL')
-        if DATABASE_URL:
-            url = urllib.parse.urlparse(DATABASE_URL)
-            conn = psycopg2.connect(
-                database=url.path[1:],
-                user=url.username,
-                password=url.password,
-                host=url.hostname,
-                port=url.port
-            )
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
+        database_url = get_database_url()
+        if not database_url:
+            raise Exception("DATABASE_URL not set in environment variables")
+        
+        # Parse the URL
+        url = urllib.parse.urlparse(database_url)
+        
+        # Extract database name
+        db_name = url.path[1:] if url.path.startswith('/') else url.path
+        
+        # Connect to PostgreSQL
+        conn = psycopg2.connect(
+            database=db_name,
+            user=url.username,
+            password=url.password,
+            host=url.hostname,
+            port=url.port or 5432,
+            cursor_factory=RealDictCursor
+        )
+        cursor = conn.cursor()
         
         yield cursor
-        if conn:
-            conn.commit()
+        conn.commit()
     except Exception as e:
         if conn:
             conn.rollback()
@@ -321,6 +302,8 @@ db_write_lock = threading.Lock()
 # ==================== DATABASE INITIALIZATION ====================
 def init_db():
     """Initialize database with all required tables"""
+    print("🗄️  Initializing PostgreSQL database...")
+    
     try:
         with get_db_cursor() as cursor:
             # PostgreSQL schema only
@@ -453,26 +436,19 @@ def init_db():
             
             # Insert demo guardian if not exists
             try:
-                demo_phone = '09123456789'
-                cursor.execute('SELECT COUNT(*) FROM guardians WHERE phone = %s', (demo_phone,))
-                count_result = cursor.fetchone()
-                count = count_result[0] if count_result else 0
+                cursor.execute('SELECT COUNT(*) FROM guardians WHERE phone = %s', ('09123456789',))
+                count = cursor.fetchone()[0]
                 
                 if count == 0:
                     demo_password_hash = hash_password('demo123')
-                    
-                    try:
-                        cursor.execute('''
-                            INSERT INTO guardians (full_name, phone, email, password_hash, address, last_login)
-                            VALUES (%s, %s, %s, %s, %s, %s)
-                        ''', ('Demo Guardian', demo_phone, 'demo@driveralert.com', 
-                              demo_password_hash, 'Demo Address', datetime.now()))
-                        print("✅ Demo guardian created")
-                    except Exception as e:
-                        print(f"❌ Error inserting demo guardian: {e}")
-                        
+                    cursor.execute('''
+                        INSERT INTO guardians (full_name, phone, email, password_hash, address, last_login)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    ''', ('Demo Guardian', '09123456789', 'demo@driveralert.com', 
+                          demo_password_hash, 'Demo Address', datetime.now()))
+                    print("✅ Demo guardian created")
             except Exception as e:
-                print(f"⚠️ Error checking/inserting demo guardian: {e}")
+                print(f"⚠️ Could not create demo guardian: {e}")
         
         print("✅ Database initialized successfully")
         return True
@@ -1122,49 +1098,58 @@ def serve_icon(size):
 def health_check():
     """Health check endpoint"""
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT 1')
-            db_status = cursor.fetchone()[0] == 1
-            
-            cursor.execute('SELECT COUNT(*) as count FROM guardians')
-            guardian_count = cursor.fetchone()['count']
-            
-            cursor.execute('SELECT COUNT(*) as count FROM drivers')
-            driver_count = cursor.fetchone()['count']
-            
-            cursor.execute('SELECT COUNT(*) as count FROM alerts')
-            alert_count = cursor.fetchone()['count']
-            
-            cursor.execute('SELECT COUNT(*) as count FROM drowsiness_events WHERE DATE(timestamp) = CURRENT_DATE')
-            drowsiness_events_today = cursor.fetchone()['count']
-        
-        return jsonify({
-            'status': 'healthy',
+        # Basic health info
+        health_info = {
+            'status': 'running',
             'timestamp': datetime.now().isoformat(),
             'server': 'Driver Alert System',
             'version': '2.0.0',
             'environment': 'production',
-            'deployment': 'render',
-            'database': 'postgresql',
-            'database_status': 'connected' if db_status else 'disconnected',
             'connected_clients': len(connected_clients),
             'active_sessions': len(active_sessions),
             'admin_sessions': len(admin_sessions),
-            'statistics': {
-                'guardians': guardian_count,
-                'drivers': driver_count,
-                'alerts': alert_count,
-                'drowsiness_events_today': drowsiness_events_today
-            }
-        })
+            'database': 'postgresql',
+        }
+        
+        # Try to get database info (but don't crash if it fails)
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT version()')
+                db_version = cursor.fetchone()[0]
+                
+                cursor.execute('SELECT COUNT(*) as count FROM guardians')
+                guardian_count = cursor.fetchone()[0]
+                
+                cursor.execute('SELECT COUNT(*) as count FROM drivers')
+                driver_count = cursor.fetchone()[0]
+                
+                cursor.execute('SELECT COUNT(*) as count FROM alerts')
+                alert_count = cursor.fetchone()[0]
+                
+                health_info.update({
+                    'database_status': 'connected',
+                    'database_version': db_version,
+                    'statistics': {
+                        'guardians': guardian_count,
+                        'drivers': driver_count,
+                        'alerts': alert_count,
+                    }
+                })
+        except Exception as db_error:
+            health_info.update({
+                'database_status': 'disconnected',
+                'database_error': str(db_error)[:100]
+            })
+        
+        return jsonify(health_info)
+        
     except Exception as e:
-        print(f"❌ Health check error: {e}")
         return jsonify({
             'success': False,
+            'status': 'running_with_errors',
             'error': str(e)
-        }), 500
+        }), 200
 
 # ==================== ADMIN AUTHENTICATION ENDPOINTS ====================
 @app.route('/api/admin/login', methods=['POST'])
@@ -1369,21 +1354,14 @@ def admin_get_drivers():
             
             try:
                 cursor.execute('SELECT COUNT(*) as count FROM drivers')
-                count_result = cursor.fetchone()
-                count = count_result['count']
-                
-                cursor.execute('SELECT COUNT(*) as active_count FROM drivers WHERE is_active = TRUE')
-                active_result = cursor.fetchone()
-                active_count = active_result['active_count']
+                count = cursor.fetchone()[0]
             except Exception as e:
                 print(f"❌ Error getting counts: {e}")
                 count = len(drivers_list)
-                active_count = len(drivers_list)
             
         return jsonify({
             'success': True,
             'count': count,
-            'active_count': active_count,
             'drivers': drivers_list
         })
         
@@ -1428,27 +1406,14 @@ def admin_get_alerts():
             
             try:
                 cursor.execute('SELECT COUNT(*) as count FROM alerts')
-                count_result = cursor.fetchone()
-                count = count_result['count']
-                
-                cursor.execute('SELECT COUNT(*) as unread_count FROM alerts WHERE acknowledged = FALSE')
-                unread_result = cursor.fetchone()
-                unread_count = unread_result['unread_count']
-                
-                cursor.execute('SELECT COUNT(*) as today_count FROM alerts WHERE DATE(timestamp) = CURRENT_DATE')
-                today_result = cursor.fetchone()
-                today_count = today_result['today_count']
+                count = cursor.fetchone()[0]
             except Exception as e:
                 print(f"❌ Error getting alert counts: {e}")
                 count = len(alerts)
-                unread_count = 0
-                today_count = 0
             
         return jsonify({
             'success': True,
             'count': count,
-            'unread_count': unread_count,
-            'today_count': today_count,
             'alerts': result
         })
         
@@ -1508,31 +1473,17 @@ def admin_get_tables():
             
             result = []
             for table in tables:
-                table_name = table['table_name']
+                table_name = table[0]
                 
                 try:
                     cursor.execute(f'SELECT COUNT(*) as count FROM {table_name}')
-                    count_result = cursor.fetchone()
-                    count = count_result['count']
+                    count = cursor.fetchone()[0]
                 except:
                     count = 0
                 
-                try:
-                    cursor.execute("""
-                        SELECT column_name, data_type 
-                        FROM information_schema.columns 
-                        WHERE table_name = %s 
-                        ORDER BY ordinal_position
-                    """, (table_name,))
-                    columns = cursor.fetchall()
-                    columns_list = [{'name': col['column_name'], 'type': col['data_type']} for col in columns]
-                except:
-                    columns_list = []
-                
                 result.append({
                     'table_name': table_name,
-                    'row_count': count,
-                    'columns': columns_list
+                    'row_count': count
                 })
             
         return jsonify({
@@ -1552,133 +1503,34 @@ def admin_stats():
             cursor = conn.cursor()
             
             # Get comprehensive statistics
+            stats = {}
             try:
                 cursor.execute('SELECT COUNT(*) as total_alerts FROM alerts')
-                total_alerts_result = cursor.fetchone()
-                total_alerts = total_alerts_result['total_alerts']
+                stats['total_alerts'] = cursor.fetchone()[0]
             except:
-                total_alerts = 0
-            
-            try:
-                cursor.execute('SELECT COUNT(*) as today_alerts FROM alerts WHERE DATE(timestamp) = CURRENT_DATE')
-                today_alerts_result = cursor.fetchone()
-                today_alerts = today_alerts_result['today_alerts']
-            except:
-                today_alerts = 0
+                stats['total_alerts'] = 0
             
             try:
                 cursor.execute('SELECT COUNT(*) as total_drivers FROM drivers')
-                total_drivers_result = cursor.fetchone()
-                total_drivers = total_drivers_result['total_drivers']
+                stats['total_drivers'] = cursor.fetchone()[0]
             except:
-                total_drivers = 0
+                stats['total_drivers'] = 0
             
             try:
                 cursor.execute('SELECT COUNT(*) as total_guardians FROM guardians')
-                total_guardians_result = cursor.fetchone()
-                total_guardians = total_guardians_result['total_guardians']
+                stats['total_guardians'] = cursor.fetchone()[0]
             except:
-                total_guardians = 0
+                stats['total_guardians'] = 0
             
-            try:
-                cursor.execute('SELECT COUNT(*) as drowsiness_events FROM drowsiness_events WHERE DATE(timestamp) = CURRENT_DATE')
-                drowsiness_events_result = cursor.fetchone()
-                drowsiness_events = drowsiness_events_result['drowsiness_events']
-            except:
-                drowsiness_events = 0
-            
-            try:
-                cursor.execute('SELECT COUNT(*) as active_sessions FROM session_tokens WHERE is_valid = TRUE AND expires_at > %s', 
-                             (datetime.now(),))
-                active_sessions_result = cursor.fetchone()
-                active_sessions_count = active_sessions_result['active_sessions']
-            except:
-                active_sessions_count = 0
-            
-            # Get recent activity
-            try:
-                cursor.execute('''
-                    SELECT action, details, timestamp 
-                    FROM activity_log 
-                    ORDER BY timestamp DESC 
-                    LIMIT 10
-                ''')
-                recent_activity = cursor.fetchall()
-                recent_activity_list = []
-                for activity in recent_activity:
-                    recent_activity_list.append(dict(activity))
-            except:
-                recent_activity_list = []
-            
-            # Get admin activity
-            try:
-                cursor.execute('''
-                    SELECT admin_username, action, details, timestamp 
-                    FROM admin_activity_log 
-                    ORDER BY timestamp DESC 
-                    LIMIT 10
-                ''')
-                admin_activity = cursor.fetchall()
-                admin_activity_list = []
-                for activity in admin_activity:
-                    admin_activity_list.append(dict(activity))
-            except:
-                admin_activity_list = []
-            
-            # Get alert statistics by severity
-            try:
-                cursor.execute('''
-                    SELECT severity, COUNT(*) as count 
-                    FROM alerts 
-                    GROUP BY severity
-                ''')
-                severity_stats = cursor.fetchall()
-                severity_stats_list = []
-                for stat in severity_stats:
-                    severity_stats_list.append(dict(stat))
-            except:
-                severity_stats_list = []
-            
-            # Get daily alerts for last 7 days
-            try:
-                cursor.execute('''
-                    SELECT DATE(timestamp) as date, COUNT(*) as count
-                    FROM alerts 
-                    WHERE timestamp >= CURRENT_DATE - INTERVAL '7 days'
-                    GROUP BY DATE(timestamp)
-                    ORDER BY date DESC
-                ''')
-                weekly_alerts = cursor.fetchall()
-                weekly_alerts_list = []
-                for alert in weekly_alerts:
-                    weekly_alerts_list.append(dict(alert))
-            except:
-                weekly_alerts_list = []
-        
-        # Get system status
-        system_status = {
-            'database': 'postgresql',
-            'connected_clients': len(connected_clients),
-            'admin_sessions': len(admin_sessions),
-            'server_time': datetime.now().isoformat(),
-            'uptime': time.time() - app_start_time if 'app_start_time' in globals() else 0
-        }
-        
         return jsonify({
             'success': True,
-            'statistics': {
-                'total_alerts': total_alerts,
-                'today_alerts': today_alerts,
-                'total_drivers': total_drivers,
-                'total_guardians': total_guardians,
-                'drowsiness_events_today': drowsiness_events,
-                'active_sessions': active_sessions_count
-            },
-            'system_status': system_status,
-            'severity_stats': severity_stats_list,
-            'weekly_alerts': weekly_alerts_list,
-            'recent_activity': recent_activity_list,
-            'admin_activity': admin_activity_list
+            'statistics': stats,
+            'system_status': {
+                'database': 'postgresql',
+                'connected_clients': len(connected_clients),
+                'admin_sessions': len(admin_sessions),
+                'server_time': datetime.now().isoformat()
+            }
         })
         
     except Exception as e:
@@ -1778,8 +1630,6 @@ def login():
         
     except Exception as e:
         print(f"❌ Login error: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': 'Login failed. Please try again.'
@@ -1979,8 +1829,6 @@ def register_guardian():
         
     except Exception as e:
         print(f"❌ Guardian registration error: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e)
@@ -2026,23 +1874,20 @@ def guardian_dashboard():
             # Get counts
             try:
                 cursor.execute('SELECT COUNT(*) as count FROM drivers WHERE guardian_id = %s', (guardian_id,))
-                driver_count_result = cursor.fetchone()
-                driver_count = driver_count_result['count']
+                driver_count = cursor.fetchone()[0]
             except:
                 driver_count = 0
             
             try:
                 cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s', (guardian_id,))
-                total_alerts_result = cursor.fetchone()
-                total_alerts = total_alerts_result['count']
+                total_alerts = cursor.fetchone()[0]
             except:
                 total_alerts = 0
             
             try:
                 cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s AND acknowledged = FALSE', 
                              (guardian_id,))
-                unread_alerts_result = cursor.fetchone()
-                unread_alerts = unread_alerts_result['count']
+                unread_alerts = cursor.fetchone()[0]
             except:
                 unread_alerts = 0
             
@@ -2051,25 +1896,9 @@ def guardian_dashboard():
                     SELECT COUNT(*) as count FROM alerts 
                     WHERE guardian_id = %s AND DATE(timestamp) = CURRENT_DATE
                 ''', (guardian_id,))
-                today_alerts_result = cursor.fetchone()
-                today_alerts = today_alerts_result['count']
+                today_alerts = cursor.fetchone()[0]
             except:
                 today_alerts = 0
-            
-            # Get drowsiness statistics
-            try:
-                cursor.execute('''
-                    SELECT COUNT(*) as drowsy_count,
-                           AVG(confidence) as avg_confidence,
-                           MAX(timestamp) as last_event
-                    FROM drowsiness_events 
-                    WHERE guardian_id = %s AND DATE(timestamp) = CURRENT_DATE
-                ''', (guardian_id,))
-                drowsiness_stats_result = cursor.fetchone()
-                drowsiness_stats = dict(drowsiness_stats_result) if drowsiness_stats_result else {}
-            except Exception as e:
-                print(f"⚠️ Error getting drowsiness stats: {e}")
-                drowsiness_stats = {}
         
         return jsonify({
             'success': True,
@@ -2080,7 +1909,6 @@ def guardian_dashboard():
                 'total_alerts': total_alerts,
                 'unread_alerts': unread_alerts,
                 'today_alerts': today_alerts,
-                'drowsiness_stats': drowsiness_stats,
                 'recent_alerts': recent_alerts
             },
             'drivers': drivers
@@ -2339,7 +2167,6 @@ def send_alert():
             print(f"🚨 Alert #{alert_id} sent for {driver_name}")
             print(f"   → Guardian: {guardian_name} (Phone: {guardian_phone})")
             print(f"   → Connected clients: {len(guardian_clients)}")
-            print(f"   → Details: {detection_details}")
             
             return jsonify({
                 'success': True,
@@ -2350,8 +2177,6 @@ def send_alert():
         
     except Exception as e:
         print(f"❌ Error in send_alert: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e)
@@ -2420,28 +2245,10 @@ def get_guardian_alerts():
                         pass
                 result_alerts.append(alert_dict)
             
-            # Get counts
-            try:
-                cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s', (guardian_id,))
-                total_count_result = cursor.fetchone()
-                total_count = total_count_result['count']
-            except:
-                total_count = 0
-            
-            try:
-                cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s AND acknowledged = FALSE', 
-                             (guardian_id,))
-                unread_count_result = cursor.fetchone()
-                unread_count = unread_count_result['count']
-            except:
-                unread_count = 0
-            
             return jsonify({
                 'success': True,
                 'session_valid': True,
                 'count': len(alerts),
-                'total_count': total_count,
-                'unread_count': unread_count,
                 'alerts': result_alerts
             })
         
@@ -2516,14 +2323,6 @@ def acknowledge_alert():
                     f'Acknowledged alert #{alert_id} for driver {alert["driver_name"]}'))
             except Exception as e:
                 print(f"⚠️ Error logging activity: {e}")
-            
-            # Prepare response data
-            alert_dict = alert
-            if alert_dict.get('detection_details'):
-                try:
-                    alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
-                except:
-                    pass
             
             # Emit socket event for real-time update
             socketio.emit('alert_acknowledged', {
@@ -2601,41 +2400,11 @@ def get_drowsiness_events():
             for event in events:
                 events_list.append(dict(event))
             
-            # Get statistics
-            try:
-                cursor.execute('''
-                    SELECT 
-                        COUNT(*) as total_events,
-                        AVG(confidence) as avg_confidence,
-                        COUNT(CASE WHEN state = 'Drowsy' THEN 1 END) as drowsy_count,
-                        COUNT(CASE WHEN state = 'Yawning' THEN 1 END) as yawning_count,
-                        DATE(timestamp) as date
-                    FROM drowsiness_events 
-                    WHERE guardian_id = %s AND DATE(timestamp) = CURRENT_DATE
-                    GROUP BY DATE(timestamp)
-                ''', (guardian_id,))
-                stats_result = cursor.fetchone()
-                stats = dict(stats_result) if stats_result else {
-                    'total_events': 0,
-                    'avg_confidence': 0,
-                    'drowsy_count': 0,
-                    'yawning_count': 0
-                }
-            except Exception as e:
-                print(f"⚠️ Error getting drowsiness stats: {e}")
-                stats = {
-                    'total_events': 0,
-                    'avg_confidence': 0,
-                    'drowsy_count': 0,
-                    'yawning_count': 0
-                }
-            
             return jsonify({
                 'success': True,
                 'session_valid': True,
                 'count': len(events_list),
-                'events': events_list,
-                'statistics': stats
+                'events': events_list
             })
         
     except Exception as e:
@@ -2712,7 +2481,6 @@ def test_alert():
             }
             
             # Call send_alert with test data
-            from flask import Request
             with app.test_request_context():
                 request.json = test_data
                 response = send_alert()
@@ -2720,8 +2488,6 @@ def test_alert():
         
     except Exception as e:
         print(f"❌ Test alert error: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e)
@@ -2743,28 +2509,6 @@ def cleanup_expired_sessions():
                 return 0
             
             expired_count = cursor.rowcount
-            
-            # Clean up old drowsiness events (keep last 30 days)
-            try:
-                cursor.execute('''
-                    DELETE FROM drowsiness_events 
-                    WHERE timestamp < CURRENT_TIMESTAMP - INTERVAL '30 days'
-                ''')
-            except Exception as e:
-                print(f"⚠️ Error cleaning old drowsiness events: {e}")
-            
-            old_events_count = cursor.rowcount
-            
-            # Clean up old activity logs (keep last 90 days)
-            try:
-                cursor.execute('''
-                    DELETE FROM activity_log 
-                    WHERE timestamp < CURRENT_TIMESTAMP - INTERVAL '90 days'
-                ''')
-            except Exception as e:
-                print(f"⚠️ Error cleaning old activity logs: {e}")
-            
-            old_activity_count = cursor.rowcount
         
         # Clean memory cache
         current_time = datetime.now()
@@ -2779,14 +2523,9 @@ def cleanup_expired_sessions():
         # Clean admin sessions
         cleanup_admin_sessions()
         
-        if expired_count > 0 or old_events_count > 0 or old_activity_count > 0:
-            print(f"🧹 Cleaned up {expired_count} expired sessions, {old_events_count} old events, {old_activity_count} old activities")
-        
         return expired_count
     except Exception as e:
         print(f"❌ Error cleaning up sessions: {e}")
-        import traceback
-        traceback.print_exc()
         return 0
 
 # ==================== STATIC FILES ====================
@@ -2807,25 +2546,55 @@ def startup_tasks():
     
     print("🌐 DEPLOYMENT: Render.com Cloud")
     print("📊 Database: PostgreSQL (Persistent)")
-    print(f"📁 Frontend Directory: {FRONTEND_DIR}")
-    print(f"📁 Frontend exists: {os.path.exists(FRONTEND_DIR)}")
     
-    if os.path.exists(FRONTEND_DIR):
-        files = os.listdir(FRONTEND_DIR)
-        print(f"📁 Files in frontend: {files[:10]}...")
+    # Check environment
+    print("\n🔧 Environment Check:")
+    database_url = os.environ.get('DATABASE_URL')
     
-    print("🗄️  Database: PostgreSQL on Render")
-    print(f"🔐 Admin Username: admin")
-    print(f"🔐 Admin Password: admin123")
-    
-    # Initialize database
-    if init_db():
-        print("✅ Database initialized successfully")
+    if database_url:
+        # Show masked URL (hide password)
+        if '@' in database_url:
+            parts = database_url.split('@')
+            user_pass = parts[0]
+            if ':' in user_pass:
+                user = user_pass.split(':')[0]
+                masked_url = f"{user}:****@{parts[1]}"
+                print(f"   ✅ DATABASE_URL: {masked_url}")
+        else:
+            print(f"   ✅ DATABASE_URL: {database_url[:50]}...")
+        
+        # Test connection
+        print("\n🗄️  Database Initialization:")
+        try:
+            if init_db():
+                print("✅ Database initialized successfully")
+            else:
+                print("⚠️ Database initialization had issues")
+        except Exception as e:
+            print(f"⚠️ Database initialization error: {e}")
     else:
-        print("❌ Database initialization failed")
+        print("❌ DATABASE_URL not found")
+        print("   Please add DATABASE_URL to environment variables")
     
-    # Clean up expired sessions
-    cleanup_expired_sessions()
+    print(f"\n📱 DEMO CREDENTIALS:")
+    print("  Phone: 09123456789")
+    print("  Password: demo123")
+    
+    print(f"\n🔗 API Endpoints:")
+    print("  • GET  /api/health - Health check")
+    print("  • POST /api/send-alert - Receive alerts from drowsiness detection")
+    print("  • POST /api/test-alert - Test alert endpoint")
+    
+    print(f"{'='*70}\n")
+    
+    # Store app start time
+    global app_start_time
+    app_start_time = time.time()
+
+# ==================== MAIN ENTRY POINT ====================
+if __name__ == '__main__':
+    # Run startup tasks
+    startup_tasks()
     
     # Start cleanup thread
     def cleanup_worker():
@@ -2835,29 +2604,6 @@ def startup_tasks():
     
     cleanup_thread = threading.Thread(target=cleanup_worker, daemon=True)
     cleanup_thread.start()
-    print("✅ Cleanup worker started")
-    
-    print(f"{'='*70}")
-    print("📱 DEMO CREDENTIALS:")
-    print("  Phone: 09123456789")
-    print("  Password: demo123")
-    print(f"{'='*70}")
-    print("🔗 API Endpoints:")
-    print("  • POST /api/send-alert - Receive alerts from drowsiness detection")
-    print("  • POST /api/admin/login - Admin login")
-    print("  • GET  /api/health - Health check")
-    print("  • POST /api/test-alert - Test alert endpoint")
-    print("  • POST /api/login - Guardian login")
-    print(f"{'='*70}\n")
-    
-    # Store app start time for uptime calculation
-    global app_start_time
-    app_start_time = time.time()
-
-# ==================== MAIN ENTRY POINT ====================
-if __name__ == '__main__':
-    # Run startup tasks
-    startup_tasks()
     
     # Get port from environment or use default
     port = int(os.environ.get('PORT', 5000))
@@ -2866,8 +2612,6 @@ if __name__ == '__main__':
     print(f"🚀 Starting server on {host}:{port}")
     print(f"🌐 WebSocket endpoint: ws://{host}:{port}")
     print(f"📡 Alert endpoint: http://{host}:{port}/api/send-alert")
-    print(f"🔐 Admin login: http://{host}:{port}/admin_login")
-    print(f"👤 Guardian login: http://{host}:{port}/")
     
     # Run the application
     socketio.run(app, 
