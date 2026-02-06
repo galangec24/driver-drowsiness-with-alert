@@ -27,6 +27,7 @@ kagglehub==0.2.6
 requests==2.31.0
 Pillow==10.0.0
 python-dotenv==1.0.0  #  ADD THIS for environment variables
+psycopg2-binary==2.9.7
 
 # Testing
 pytest==7.4.0

@@ -14,6 +14,7 @@ const CORE_ASSETS = [
 // Optional assets that might exist
 const OPTIONAL_ASSETS = [
   '/index.html',
+  '/admin_login.html',
   '/guardian-dashboard.html',
   '/guardian-register.html',
   '/register-driver.html',
