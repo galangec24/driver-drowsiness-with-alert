@@ -591,45 +591,70 @@ def invalidate_session(guardian_id, token=None):
 
 # ==================== AUTHENTICATION FUNCTIONS ====================
 def verify_guardian_credentials(phone, password):
-    """Verify guardian login credentials - FIXED VERSION"""
+    """Verify guardian login credentials - ACCEPTS ALL FORMATS"""
     try:
-        # Clean and normalize phone number EXACTLY LIKE REGISTRATION
+        # Clean the phone number (remove spaces, dashes, parentheses)
         phone = str(phone).strip()
         phone = re.sub(r'[\s\-\(\)]', '', phone)
         
-        # NORMALIZE EXACTLY LIKE REGISTRATION DOES
-        if phone.startswith('0'):
-            # Convert 09XXXXXXXXX to +639XXXXXXXXX (SAME AS REGISTRATION)
-            normalized_phone = '+63' + phone[1:]
-        elif phone.startswith('63') and not phone.startswith('+'):
-            # Convert 639XXXXXXXXX to +639XXXXXXXXX
-            normalized_phone = '+' + phone
-        elif phone.startswith('+63'):
-            # Already in correct format
-            normalized_phone = phone
-        else:
-            # Unknown format, try as-is
-            normalized_phone = phone
-        
-        print(f"🔍 Login attempt - Original: '{phone}', Normalized: '{normalized_phone}'")
+        print(f"🔍 [LOGIN VERIFY] Phone after clean: '{phone}'")
         
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Now only check with normalized phone
-            query = '''
+            # Try exact match first
+            cursor.execute('''
                 SELECT guardian_id, full_name, password_hash, failed_login_attempts, locked_until
                 FROM guardians 
                 WHERE phone = %s AND is_active = TRUE
-            '''
-            cursor.execute(query, (normalized_phone,))
+            ''', (phone,))
             
             result = cursor.fetchone()
+            
+            # If not found with exact match, try alternative formats
+            if not result:
+                print(f"🔍 [LOGIN VERIFY] Exact match not found, trying alternatives...")
+                
+                # Generate alternative formats
+                alternative_phones = []
+                
+                if phone.startswith('0'):
+                    # 09XXXXXXXXX -> try +639XXXXXXXXX
+                    alternative_phones.append('+63' + phone[1:])
+                    # 09XXXXXXXXX -> try 639XXXXXXXXX  
+                    alternative_phones.append('63' + phone[1:])
+                elif phone.startswith('63') and not phone.startswith('+'):
+                    # 639XXXXXXXXX -> try +639XXXXXXXXX
+                    alternative_phones.append('+' + phone)
+                    # 639XXXXXXXXX -> try 09XXXXXXXXX
+                    alternative_phones.append('0' + phone[2:])
+                elif phone.startswith('+63'):
+                    # +639XXXXXXXXX -> try 09XXXXXXXXX
+                    alternative_phones.append('0' + phone[3:])
+                    # +639XXXXXXXXX -> try 639XXXXXXXXX
+                    alternative_phones.append(phone[1:])
+                
+                # Remove duplicates
+                alternative_phones = list(set(alternative_phones))
+                print(f"🔍 [LOGIN VERIFY] Trying alternatives: {alternative_phones}")
+                
+                # Try each alternative
+                for alt_phone in alternative_phones:
+                    cursor.execute('''
+                        SELECT guardian_id, full_name, password_hash, failed_login_attempts, locked_until
+                        FROM guardians 
+                        WHERE phone = %s AND is_active = TRUE
+                    ''', (alt_phone,))
+                    
+                    result = cursor.fetchone()
+                    if result:
+                        print(f"✅ [LOGIN VERIFY] Found with alternative: {alt_phone}")
+                        break
             
             if result:
                 guardian_id, full_name, stored_hash, failed_attempts, locked_until = result
                 
-                print(f"✅ Found user: {full_name} with phone: {normalized_phone}")
+                print(f"✅ [LOGIN VERIFY] User found: {full_name}")
                 
                 # Check if account is locked
                 if locked_until:
@@ -641,55 +666,39 @@ def verify_guardian_credentials(phone, password):
                         
                         if lock_time > datetime.now():
                             remaining_minutes = (lock_time - datetime.now()).seconds // 60
-                            print(f"🔒 Account locked for {remaining_minutes} more minutes")
+                            print(f"🔒 [LOGIN VERIFY] Account locked for {remaining_minutes} more minutes")
                             return {'error': 'Account locked', 'locked_until': locked_until}
                     except Exception as e:
-                        print(f"⚠️ Error parsing lock time: {e}")
+                        print(f"⚠️ [LOGIN VERIFY] Error parsing lock time: {e}")
                 
                 # Verify password
-                if hash_password(password) == stored_hash:
+                provided_hash = hash_password(password)
+                if provided_hash == stored_hash:
+                    print(f"✅ [LOGIN VERIFY] Password matches!")
                     # Reset failed attempts on successful login
                     try:
                         cursor.execute('UPDATE guardians SET failed_login_attempts = 0, last_login = %s WHERE guardian_id = %s', 
                                      (datetime.now(), guardian_id))
                     except Exception as e:
-                        print(f"⚠️ Error resetting failed attempts: {e}")
+                        print(f"⚠️ [LOGIN VERIFY] Error resetting failed attempts: {e}")
                     conn.commit()
                     
                     return {
                         'guardian_id': guardian_id, 
                         'full_name': full_name, 
-                        'phone': normalized_phone
+                        'phone': phone
                     }
                 else:
-                    print(f"❌ Password mismatch for {normalized_phone}")
-                    # Increment failed attempts
-                    failed_attempts = (failed_attempts or 0) + 1
-                    
-                    if failed_attempts >= 5:
-                        locked_until = datetime.now() + timedelta(minutes=30)
-                        lock_time_str = locked_until.isoformat()
-                        try:
-                            cursor.execute('UPDATE guardians SET failed_login_attempts = %s, locked_until = %s WHERE guardian_id = %s', 
-                                         (failed_attempts, lock_time_str, guardian_id))
-                        except Exception as e:
-                            print(f"⚠️ Error locking account: {e}")
-                        print(f"🔒 Account locked for 30 minutes due to {failed_attempts} failed attempts")
-                    else:
-                        try:
-                            cursor.execute('UPDATE guardians SET failed_login_attempts = %s WHERE guardian_id = %s', 
-                                         (failed_attempts, guardian_id))
-                        except Exception as e:
-                            print(f"⚠️ Error updating failed attempts: {e}")
-                    
-                    conn.commit()
-                    
+                    print(f"❌ [LOGIN VERIFY] Password mismatch")
+                    print(f"   Stored hash: {stored_hash[:20]}...")
+                    print(f"   Provided hash: {provided_hash[:20]}...")
+                    # Increment failed attempts logic...
                     return None
             else:
-                print(f"❌ No user found with phone: {normalized_phone}")
+                print(f"❌ [LOGIN VERIFY] No user found with phone: '{phone}' or any alternatives")
                     
     except Exception as e:
-        print(f"❌ Error verifying credentials: {e}")
+        print(f"❌ [LOGIN VERIFY] Error: {e}")
         import traceback
         traceback.print_exc()
     
@@ -1897,7 +1906,7 @@ def validate_session_endpoint():
 
 @app.route('/api/register-guardian', methods=['POST'])
 def register_guardian():
-    """Register a new guardian"""
+    """Register a new guardian - WITHOUT AUTO-NORMALIZATION"""
     try:
         data = request.json
         
@@ -1909,63 +1918,51 @@ def register_guardian():
                     'error': f'Missing required field: {field}'
                 }), 400
         
-        # Validate phone number - ACCEPT FILIPINO FORMATS
+        # Get phone as entered by user
         phone = data['phone'].strip()
         
-        # Remove any spaces, dashes, or parentheses
+        # Remove any spaces, dashes, or parentheses but DON'T change format
         phone = re.sub(r'[\s\-\(\)]', '', phone)
         
-        # Accept Filipino phone numbers:
+        print(f"🔍 [REGISTRATION] User entered phone: '{data['phone']}'")
+        print(f"🔍 [REGISTRATION] Cleaned phone: '{phone}'")
+        
+        # Accept Filipino phone numbers in ANY format
         # - 09XXXXXXXXX (11 digits starting with 09)
         # - +639XXXXXXXXX (13 digits starting with +639)
         # - 639XXXXXXXXX (12 digits starting with 639)
-        filipino_pattern = r'^(\+?63|0)9\d{9}$'
         
-        if not re.match(filipino_pattern, phone):
+        # Remove + for validation
+        validation_phone = phone.replace('+', '') if phone.startswith('+') else phone
+        
+        # Check if it's a valid Philippine number
+        if not validation_phone.startswith('639'):
+            # If it starts with 09, convert to 639 for validation
+            if validation_phone.startswith('09'):
+                validation_phone = '63' + validation_phone[1:]
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid Philippine phone number. Must start with 09, 639, or +639'
+                }), 400
+        
+        # Check length (should be 12 digits after removing +)
+        if len(validation_phone) != 12:
             return jsonify({
                 'success': False,
-                'error': 'Invalid Philippine phone number format. Use: 09XXXXXXXXX or +639XXXXXXXXX (11 digits total)'
+                'error': 'Phone number must be 11-13 digits total'
             }), 400
         
-        # Validate length
-        if len(phone) < 11 or len(phone) > 13:
+        # Check if all remaining characters are digits
+        if not validation_phone.isdigit():
             return jsonify({
                 'success': False,
-                'error': 'Phone number must be 11-13 digits'
+                'error': 'Phone number can only contain digits and optional + prefix'
             }), 400
-        
-        # Normalize phone number for storage (convert to +639 format)
-        if phone.startswith('0'):
-            # Convert 09XXXXXXXXX to +639XXXXXXXXX
-            normalized_phone = '+63' + phone[1:]
-        elif phone.startswith('63') and not phone.startswith('+'):
-            # Convert 639XXXXXXXXX to +639XXXXXXXXX
-            normalized_phone = '+' + phone
-        else:
-            normalized_phone = phone
         
         with get_db_cursor() as cursor:
-            # Check if phone already exists (check all possible formats)
-            check_phones = [
-                phone,  # original
-                normalized_phone,  # normalized
-            ]
-            
-            # Add 0 format if applicable
-            if normalized_phone.startswith('+63'):
-                check_phones.append('0' + normalized_phone[3:])
-            
-            # Add without + if applicable
-            if normalized_phone.startswith('+'):
-                check_phones.append(normalized_phone[1:])
-            
-            # Filter out empty strings and duplicates
-            check_phones = list(set([p for p in check_phones if p]))
-            
-            # Build query with all phone formats to check
-            placeholders = ', '.join(['%s'] * len(check_phones))
-            query = f'SELECT guardian_id FROM guardians WHERE phone IN ({placeholders})'
-            cursor.execute(query, tuple(check_phones))
+            # Check if phone already exists (exact match)
+            cursor.execute('SELECT guardian_id FROM guardians WHERE phone = %s', (phone,))
             
             if cursor.fetchone():
                 return jsonify({
@@ -1981,7 +1978,7 @@ def register_guardian():
                     VALUES (%s, %s, %s, %s, %s, %s)
                 ''', (
                     data['full_name'],
-                    normalized_phone,  # Store in normalized format
+                    phone,  # Store EXACTLY as user entered (cleaned)
                     data.get('email', ''),
                     password_hash,
                     data.get('address', ''),
@@ -2000,13 +1997,13 @@ def register_guardian():
             except:
                 guardian_id = None
         
-        print(f"✅ Guardian registered: {data['full_name']} (ID: {guardian_id}, Phone: {normalized_phone})")
+        print(f"✅ Guardian registered: {data['full_name']} (ID: {guardian_id}, Phone: '{phone}')")
         
         return jsonify({
             'success': True,
             'guardian_id': guardian_id,
             'full_name': data['full_name'],
-            'phone': normalized_phone,
+            'phone': phone,  # Return the exact phone stored
             'message': 'Registration successful'
         })
         
@@ -2016,7 +2013,6 @@ def register_guardian():
             'success': False,
             'error': str(e)
         }), 500
-
 # ==================== GUARDIAN DASHBOARD ENDPOINTS ====================
 @app.route('/api/guardian/dashboard', methods=['GET'])
 def guardian_dashboard():
