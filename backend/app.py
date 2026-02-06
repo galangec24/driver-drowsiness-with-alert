@@ -808,23 +808,25 @@ def verify_guardian_credentials(phone, password):
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Build query with multiple phone formats
+            # Build query with multiple phone formats - FIXED VERSION
             if IS_RENDER and POSTGRES_AVAILABLE:
+                # PostgreSQL: use %s placeholders
                 placeholders = ', '.join(['%s'] * len(phone_formats))
-            else:
-                placeholders = ', '.join(['?'] * len(phone_formats))
-            
-            query = f'''
-                SELECT guardian_id, full_name, password_hash, failed_login_attempts, locked_until
-                FROM guardians 
-                WHERE phone IN ({placeholders}) AND is_active = 1
-            '''
-            
-            try:
+                query = f'''
+                    SELECT guardian_id, full_name, password_hash, failed_login_attempts, locked_until
+                    FROM guardians 
+                    WHERE phone IN ({placeholders}) AND is_active = 1
+                '''
                 cursor.execute(query, phone_formats)
-            except Exception as e:
-                print(f"❌ Query error: {e}")
-                return None
+            else:
+                # SQLite: use ? placeholders
+                placeholders = ', '.join(['?'] * len(phone_formats))
+                query = f'''
+                    SELECT guardian_id, full_name, password_hash, failed_login_attempts, locked_until
+                    FROM guardians 
+                    WHERE phone IN ({placeholders}) AND is_active = 1
+                '''
+                cursor.execute(query, phone_formats)
             
             result = cursor.fetchone()
             
@@ -2172,18 +2174,30 @@ def register_guardian():
             check_phones = [
                 phone,  # original
                 normalized_phone,  # normalized
-                '0' + normalized_phone[3:] if normalized_phone.startswith('+63') else '',  # 0 format
-                normalized_phone[1:] if normalized_phone.startswith('+') else ''  # without +
             ]
             
-            # Filter out empty strings
-            check_phones = [p for p in check_phones if p]
+            # Add 0 format if applicable
+            if normalized_phone.startswith('+63'):
+                check_phones.append('0' + normalized_phone[3:])
             
-            # Build query with all phone formats to check
-            placeholders = ', '.join(['%s'] * len(check_phones)) if IS_RENDER and POSTGRES_AVAILABLE else ', '.join(['?'] * len(check_phones))
-            query = f'SELECT guardian_id FROM guardians WHERE phone IN ({placeholders})'
+            # Add without + if applicable
+            if normalized_phone.startswith('+'):
+                check_phones.append(normalized_phone[1:])
             
-            cursor.execute(query, check_phones)
+            # Filter out empty strings and duplicates
+            check_phones = list(set([p for p in check_phones if p]))
+            
+            # Build query with all phone formats to check - FIXED SYNTAX
+            if IS_RENDER and POSTGRES_AVAILABLE:
+                # PostgreSQL style
+                placeholders = ', '.join(['%s'] * len(check_phones))
+                query = f'SELECT guardian_id FROM guardians WHERE phone IN ({placeholders})'
+                cursor.execute(query, check_phones)
+            else:
+                # SQLite style
+                placeholders = ', '.join(['?'] * len(check_phones))
+                query = f'SELECT guardian_id FROM guardians WHERE phone IN ({placeholders})'
+                cursor.execute(query, check_phones)
             
             if cursor.fetchone():
                 return jsonify({
