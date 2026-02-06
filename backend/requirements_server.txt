@@ -1,0 +1,20 @@
+# Backend & Web (Render Deployment)
+Flask==2.3.3
+Flask-CORS==4.0.0
+Flask-SocketIO==5.3.4
+python-socketio==5.9.0
+eventlet==0.33.3
+gunicorn==21.2.0
+python-dotenv==1.0.0
+psycopg2-binary==2.9.7  # For PostgreSQL on Render
+
+# Security & Utilities
+pyjwt==2.8.0  # Optional for enhanced auth
+requests==2.31.0
+PyYAML==6.0.1
+
+# Testing
+pytest==7.4.0
+
+# CERTIFICATION
+pyopenssl==23.3.0

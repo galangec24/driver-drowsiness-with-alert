@@ -1280,12 +1280,12 @@ def serve_home():
 @app.route('/admin-login')
 def serve_admin_login():
     """Admin login page"""
-    return send_from_directory(FRONTEND_DIR, 'admin-login.html')
+    return send_from_directory(FRONTEND_DIR, 'admin_login.html')
 
 @app.route('/admin')
 def serve_admin_dashboard():
     """Admin dashboard page"""
-    return send_from_directory(FRONTEND_DIR, 'admin-login.html')
+    return send_from_directory(FRONTEND_DIR, 'admin_login.html')
 
 @app.route('/guardian-register')
 def serve_guardian_register():

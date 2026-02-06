@@ -1,0 +1,24 @@
+# Computer Vision
+opencv-python==4.8.1.78
+mediapipe==0.10.9
+Pillow==10.0.0
+
+# Machine Learning
+tensorflow==2.15.0
+scikit-learn==1.3.0
+numpy==1.24.3
+scipy==1.11.3
+faiss-cpu==1.7.4
+
+# Data Processing
+albumentations==1.3.1
+imbalanced-learn==0.11.0
+joblib==1.3.1
+seaborn==0.13.2
+matplotlib==3.7.2
+
+# Hardware (if using Arduino/serial)
+pyserial==3.5
+
+# Kaggle datasets
+kagglehub==0.2.6
