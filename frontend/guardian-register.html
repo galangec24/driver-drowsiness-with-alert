@@ -471,6 +471,8 @@ if ('serviceWorker' in navigator) {
                 address: address
             };
             
+            console.log('📤 Sending registration request...');
+            
             // Send registration request
             const response = await fetch('/api/register-guardian', {
                 method: 'POST',
@@ -481,6 +483,7 @@ if ('serviceWorker' in navigator) {
             });
             
             const result = await response.json();
+            console.log('📥 Registration response:', result);
             
             if (result.success) {
                 showSuccess('Account created successfully! Logging you in...');
@@ -494,7 +497,9 @@ if ('serviceWorker' in navigator) {
                             password: password
                         };
                         
-                        const loginResponse = await fetch('/api/login-guardian', {
+                        console.log('🔐 Attempting auto-login with:', loginData);
+                        
+                        const loginResponse = await fetch('/api/login', {  // CORRECTED ENDPOINT
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -503,13 +508,15 @@ if ('serviceWorker' in navigator) {
                         });
                         
                         const loginResult = await loginResponse.json();
+                        console.log('🔓 Login response:', loginResult);
                         
-                        if (loginResult.success && loginResult.token) {
+                        if (loginResult.success && loginResult.session_token) {
                             // Store authentication token and user data
-                            localStorage.setItem('authToken', loginResult.token);
+                            localStorage.setItem('authToken', loginResult.session_token);
                             localStorage.setItem('userType', 'guardian');
-                            localStorage.setItem('userPhone', phoneNumber);
-                            localStorage.setItem('userName', fullName);
+                            localStorage.setItem('userPhone', loginResult.phone);
+                            localStorage.setItem('userName', loginResult.full_name);
+                            localStorage.setItem('guardianId', loginResult.guardian_id);
                             
                             // Store user info if available
                             if (loginResult.user) {
@@ -521,10 +528,13 @@ if ('serviceWorker' in navigator) {
                             
                             // Redirect to guardian dashboard after short delay
                             setTimeout(() => {
-                                window.location.href = '/guardian-dashboard.html';
+                                console.log('🚀 Redirecting to dashboard...');
+                                // Redirect with query parameters
+                                window.location.href = `/guardian-dashboard.html?guardian_id=${loginResult.guardian_id}&token=${loginResult.session_token}`;
                             }, 1500);
                             
                         } else {
+                            console.error('Auto-login failed:', loginResult.error || 'Unknown error');
                             // If auto-login fails, show message and redirect to login page
                             showError('Registration successful! Please login manually.');
                             setTimeout(() => {
