@@ -1,7 +1,7 @@
 ﻿"""
 CAPSTONE PROJECT - DRIVER ALERT SYSTEM
 PostgreSQL-only Version for Render.com Deployment
-UPDATED VERSION - Using bcrypt for Password Hashing
+UPDATED VERSION - Fixed bcrypt implementation
 """
 
 import os
@@ -23,6 +23,7 @@ import re
 import bcrypt
 from contextlib import contextmanager
 import urllib.parse
+import traceback
 
 # ==================== POSTGRESQL CONFIGURATION ====================
 import psycopg2
@@ -83,11 +84,12 @@ socketio = SocketIO(app,
 
 # ==================== SECURITY CONFIGURATION ====================
 # Generate bcrypt hash for admin password (admin123)
-# You can generate this by running: bcrypt.hashpw(b'admin123', bcrypt.gensalt())
+ADMIN_PASSWORD_HASH = bcrypt.hashpw(b'admin123', bcrypt.gensalt(rounds=12)).decode('utf-8')
+print(f"🔐 Generated admin bcrypt hash: {ADMIN_PASSWORD_HASH[:20]}...")
+
 ADMIN_CREDENTIALS = {
     'admin': {
-        # bcrypt hash for 'admin123'
-        'password_hash': bcrypt.hashpw(b'admin123', bcrypt.gensalt()).decode('utf-8'),
+        'password_hash': ADMIN_PASSWORD_HASH,
         'full_name': 'System Administrator',
         'role': 'super_admin',
         'email': 'admin@driveralert.com',
@@ -105,18 +107,26 @@ def hash_password(password):
     try:
         # Convert password to bytes and hash with bcrypt
         password_bytes = password.encode('utf-8')
-        hashed = bcrypt.hashpw(password_bytes, bcrypt.gensalt())
-        return hashed.decode('utf-8')
+        salt = bcrypt.gensalt(rounds=12)  # Generate salt with 12 rounds
+        hashed = bcrypt.hashpw(password_bytes, salt)
+        return hashed.decode('utf-8')  # Convert to string for storage
     except Exception as e:
         print(f"❌ Error hashing password with bcrypt: {e}")
-        # Fallback to simple hash for compatibility (not recommended for production)
-        import hashlib
-        salt = "driver_alert_system_salt_2024"
-        return hashlib.sha256((password + salt).encode()).hexdigest()
+        traceback.print_exc()
+        raise
 
 def verify_password(password, hashed_password):
     """Verify password against bcrypt hash"""
     try:
+        # Check if the hash is valid bcrypt format (should start with $2)
+        if not hashed_password or len(hashed_password) < 60:
+            print(f"⚠️ Invalid hash format or length: {hashed_password[:30] if hashed_password else 'None'}")
+            return False
+        
+        if not hashed_password.startswith('$2'):
+            print(f"⚠️ Invalid bcrypt hash prefix: {hashed_password[:10]}")
+            return False
+        
         # Convert both to bytes
         password_bytes = password.encode('utf-8')
         hashed_bytes = hashed_password.encode('utf-8')
@@ -124,15 +134,9 @@ def verify_password(password, hashed_password):
         # Use bcrypt to check password
         return bcrypt.checkpw(password_bytes, hashed_bytes)
     except Exception as e:
-        print(f"⚠️ Error verifying password with bcrypt: {e}")
-        # Fallback for compatibility with old SHA-256 hashes
-        try:
-            import hashlib
-            salt = "driver_alert_system_salt_2024"
-            provided_hash = hashlib.sha256((password + salt).encode()).hexdigest()
-            return provided_hash == hashed_password
-        except:
-            return False
+        print(f"❌ Error verifying password with bcrypt: {e}")
+        traceback.print_exc()
+        return False
 
 def verify_admin_credentials(username, password):
     """Verify admin login credentials using bcrypt"""
@@ -471,7 +475,6 @@ def init_db():
         
     except Exception as e:
         print(f"❌ Database initialization failed: {e}")
-        import traceback
         traceback.print_exc()
         return False
 
@@ -616,13 +619,19 @@ def verify_guardian_credentials(phone, password):
                 guardian_id, full_name, stored_hash, failed_attempts, locked_until = result
                 
                 print(f"✅ [LOGIN VERIFY] User found: {full_name}")
-                print(f"   Stored hash type: bcrypt")
+                print(f"   Stored hash preview: {stored_hash[:30] if stored_hash else 'None'}...")
                 
                 # Check if account is locked
                 if locked_until:
                     try:
+                        # Handle both string and datetime objects
                         if isinstance(locked_until, str):
-                            lock_time = datetime.fromisoformat(locked_until.replace('Z', '+00:00'))
+                            # Try to parse the string
+                            try:
+                                lock_time = datetime.fromisoformat(locked_until.replace('Z', '+00:00'))
+                            except:
+                                # Try alternative format
+                                lock_time = datetime.strptime(locked_until, '%Y-%m-%d %H:%M:%S.%f')
                         else:
                             lock_time = locked_until
                         
@@ -631,7 +640,8 @@ def verify_guardian_credentials(phone, password):
                             print(f"🔒 [LOGIN VERIFY] Account locked for {remaining_minutes} more minutes")
                             return {'error': 'Account locked', 'locked_until': locked_until}
                     except Exception as e:
-                        print(f"⚠️ [LOGIN VERIFY] Error parsing lock time: {e}")
+                        print(f"⚠️ [LOGIN VERIFY] Error parsing lock time '{locked_until}': {e}")
+                        # Continue anyway, don't lock out due to parsing error
                 
                 # Verify password using bcrypt
                 print(f"   Password verification...")
@@ -653,13 +663,20 @@ def verify_guardian_credentials(phone, password):
                     }
                 else:
                     print(f"❌ [LOGIN VERIFY] Password mismatch")
+                    # Increment failed attempts
+                    try:
+                        cursor.execute('UPDATE guardians SET failed_login_attempts = failed_login_attempts + 1 WHERE guardian_id = %s', 
+                                     (guardian_id,))
+                        conn.commit()
+                    except Exception as e:
+                        print(f"⚠️ Error updating failed attempts: {e}")
+                    
                     return None
             else:
                 print(f"❌ [LOGIN VERIFY] No user found with phone: '{phone}'")
                     
     except Exception as e:
         print(f"❌ [LOGIN VERIFY] Error: {e}")
-        import traceback
         traceback.print_exc()
     
     return None
@@ -1323,6 +1340,45 @@ def test_connection():
             'database_url_preview': database_url[:50] + '...' if len(database_url) > 50 else database_url
         })
 
+@app.route('/api/test-bcrypt', methods=['GET'])
+def test_bcrypt():
+    """Test bcrypt functionality"""
+    try:
+        # Test bcrypt
+        test_password = "test123"
+        
+        # Generate hash
+        password_hash = hash_password(test_password)
+        
+        # Verify hash
+        is_valid = verify_password(test_password, password_hash)
+        
+        # Test with wrong password
+        is_wrong = verify_password("wrong", password_hash)
+        
+        # Test admin password
+        admin_valid = verify_password("admin123", ADMIN_PASSWORD_HASH)
+        
+        return jsonify({
+            'success': True,
+            'test_password': test_password,
+            'hash_generated': password_hash[:50] + "..." if len(password_hash) > 50 else password_hash,
+            'hash_length': len(password_hash),
+            'hash_starts_with': password_hash[:10],
+            'hash_format_valid': password_hash.startswith('$2'),
+            'correct_password_matches': is_valid,
+            'wrong_password_matches': is_wrong,
+            'admin_password_valid': admin_valid,
+            'note': 'bcrypt hash should start with $2b$12$ and be ~60 chars long'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        })
+
 # ==================== ADMIN AUTHENTICATION ENDPOINTS ====================
 @app.route('/api/admin/login', methods=['POST'])
 def admin_login():
@@ -1952,7 +2008,7 @@ def register_guardian():
             
             # USE bcrypt for password hashing
             password_hash = hash_password(data['password'])
-            print(f"🔍 [REGISTRATION] Password hash generated with bcrypt")
+            print(f"🔍 [REGISTRATION] Password hash generated with bcrypt: {password_hash[:30]}...")
             
             try:
                 cursor.execute('''
@@ -1991,6 +2047,7 @@ def register_guardian():
         
     except Exception as e:
         print(f"❌ Guardian registration error: {e}")
+        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e)
@@ -2744,6 +2801,12 @@ def startup_tasks():
     print("  • GET  /api/test-connection - Simple connection test")
     print("  • POST /api/send-alert - Receive alerts from drowsiness detection")
     print("  • POST /api/test-alert - Test alert endpoint")
+    print("  • GET  /api/test-bcrypt - Test bcrypt functionality")
+    
+    print(f"\n🔐 Authentication Info:")
+    print("  • Admin Username: admin")
+    print("  • Admin Password: admin123")
+    print("  • Password Hashing: bcrypt (12 rounds)")
     
     print(f"{'='*70}\n")
     
@@ -2772,6 +2835,8 @@ if __name__ == '__main__':
     print(f"🚀 Starting server on {host}:{port}")
     print(f"🌐 WebSocket endpoint: ws://{host}:{port}")
     print(f"📡 Alert endpoint: http://{host}:{port}/api/send-alert")
+    print(f"🔐 Admin login: http://{host}:{port}/admin_login")
+    print(f"🔐 Test bcrypt: http://{host}:{port}/api/test-bcrypt")
     
     # Run the application
     socketio.run(app, 
