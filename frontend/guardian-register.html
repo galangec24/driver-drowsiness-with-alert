@@ -1,4 +1,3 @@
-<!-- frontend/guardian-register.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -234,21 +233,27 @@
             0%, 80%, 100% { transform: scale(0); }
             40% { transform: scale(1.0); }
         }
+        
+        /* Debug buttons */
+        .debug-btn {
+            position: fixed;
+            right: 10px;
+            z-index: 9999;
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 6px 10px;
+            border-radius: 5px;
+            font-size: 11px;
+            cursor: pointer;
+            opacity: 0.7;
+        }
+        
+        .debug-btn:hover {
+            opacity: 1;
+        }
     </style>
 </head>
-<script>
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', function() {
-        navigator.serviceWorker.register('/service-worker.js')
-            .then(function(registration) {
-                console.log('Service Worker registered with scope:', registration.scope);
-            })
-            .catch(function(error) {
-                console.log('Service Worker registration failed:', error);
-            });
-    });
-}
-</script>
 <body>
     <div class="register-container">
         <div class="register-card">
@@ -362,303 +367,251 @@ if ('serviceWorker' in navigator) {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     
     <script>
-    // Debug function to show alerts with detailed information
-    function showDebugAlert(title, message, data = null) {
-            const timestamp = new Date().toISOString();
-            const debugInfo = `
-        🔍 DEBUG: ${title}
-        ${message}
-        ${data ? `Data: ${JSON.stringify(data, null, 2)}` : ''}
-        Timestamp: ${timestamp}
-            `.trim();
-            
-            console.log(`🔍 [DEBUG] ${title}:`, message, data || '');
-            
-            // Create a debug modal instead of alert
-            const modal = document.createElement('div');
-            modal.style.cssText = `
-                position: fixed;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                background: white;
-                padding: 20px;
-                border-radius: 10px;
-                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-                z-index: 10000;
-                max-width: 90%;
-                max-height: 80%;
-                overflow: auto;
-                font-family: monospace;
-                font-size: 12px;
-                line-height: 1.4;
-                border: 2px solid #007bff;
-            `;
-            
-            modal.innerHTML = `
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                    <h3 style="margin: 0; color: #007bff;">🔍 ${title}</h3>
-                    <button onclick="this.parentElement.parentElement.remove()" 
-                            style="background: #ff6b6b; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer;">
-                        Close
-                    </button>
-                </div>
-                <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 10px;">
-                    <pre style="margin: 0; white-space: pre-wrap;">${message}</pre>
-                </div>
-                ${data ? `
-                <div style="background: #e9ecef; padding: 15px; border-radius: 5px; margin-bottom: 10px;">
-                    <strong>Data:</strong>
-                    <pre style="margin: 10px 0 0 0; white-space: pre-wrap;">${JSON.stringify(data, null, 2)}</pre>
-                </div>
-                ` : ''}
-                <div style="color: #6c757d; font-size: 11px; text-align: right; margin-top: 10px;">
-                    ${timestamp}
-                </div>
-            `;
-            
-            // Add overlay
-            const overlay = document.createElement('div');
-            overlay.style.cssText = `
-                position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0,0,0,0.5);
-                z-index: 9999;
-            `;
-            
-            overlay.onclick = function() {
-                document.body.removeChild(overlay);
-                document.body.removeChild(modal);
-            };
-            
-            document.body.appendChild(overlay);
-            document.body.appendChild(modal);
-            
-            return false;
-        }
-    function showError(message) {
-    const errorDiv = document.getElementById('errorMessage');
-    const errorText = document.getElementById('errorText');
-    
-    errorText.textContent = message;
-    errorDiv.style.display = 'block';
-    
-    // Hide success message if showing
-    document.getElementById('successMessage').style.display = 'none';
-    
-    // Scroll to error
-    errorDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    
-    // Auto-hide after 10 seconds
-    setTimeout(() => {
-        errorDiv.style.display = 'none';
-    }, 10000);
-}
-
-function showSuccess(message) {
-    const successDiv = document.getElementById('successMessage');
-    const successText = document.getElementById('successText');
-    
-    successText.textContent = message;
-    successDiv.style.display = 'block';
-    
-    // Hide error message if showing
-    document.getElementById('errorMessage').style.display = 'none';
-    
-    // Scroll to success message
-    successDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    
-    // Auto-hide after 5 seconds (unless it's a redirect message)
-    if (!message.includes('Redirecting')) {
-        setTimeout(() => {
-            successDiv.style.display = 'none';
-        }, 5000);
+    // Service Worker Registration
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+            navigator.serviceWorker.register('/service-worker.js')
+                .then(function(registration) {
+                    console.log('✅ Service Worker registered with scope:', registration.scope);
+                })
+                .catch(function(error) {
+                    console.log('⚠️ Service Worker registration failed:', error);
+                });
+        });
     }
-    }
+    
+    // ==================== REGISTRATION FUNCTIONS ====================
+    
+    // DOM Ready
     document.addEventListener('DOMContentLoaded', function() {
-    // Setup form
-    const form = document.getElementById('guardianRegisterForm');
-    form.addEventListener('submit', function(e) {
-        console.log('📋 Form submission triggered');
-        handleRegistration(e);
+        console.log('✅ Registration page loaded');
+        
+        // Setup form submission
+        const form = document.getElementById('guardianRegisterForm');
+        form.addEventListener('submit', handleRegistration);
+        
+        // Password strength indicator
+        document.getElementById('password').addEventListener('input', checkPasswordStrength);
+        
+        // Confirm password validation
+        document.getElementById('confirmPassword').addEventListener('input', validatePasswordMatch);
+        
+        // Auto-focus on name field
+        document.getElementById('fullName').focus();
+        
+        // Add debug buttons
+        addDebugButtons();
+        
+        // Check if coming from login page with pre-filled phone
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('phone')) {
+            document.getElementById('phoneNumber').value = urlParams.get('phone');
+        }
     });
     
-    // Password strength indicator
-    document.getElementById('password').addEventListener('input', checkPasswordStrength);
-    
-    // Confirm password validation
-    document.getElementById('confirmPassword').addEventListener('input', validatePasswordMatch);
-    
-    // Auto-focus on name field
-    document.getElementById('fullName').focus();
-    
-    // Debug button for testing
-    const debugBtn = document.createElement('button');
-    debugBtn.textContent = '🔧 Debug Registration';
-    debugBtn.style.cssText = `
-        position: fixed;
-        bottom: 10px;
-        right: 10px;
-        z-index: 9999;
-        background: #6c757d;
-        color: white;
-        border: none;
-        padding: 8px 12px;
-        border-radius: 5px;
-        font-size: 12px;
-        cursor: pointer;
-        opacity: 0.7;
-    `;
-    debugBtn.onclick = function(e) {
+    // Main Registration Handler
+    async function handleRegistration(e) {
         e.preventDefault();
-        runRegistrationTests();
-    };
-    document.body.appendChild(debugBtn);
-});
-
-async function runRegistrationTests() {
-    console.group('🧪 REGISTRATION TESTS');
-    
-    try {
-        // Test 1: Check API health
-        console.log('1️⃣ Testing /api/health...');
-        const healthResponse = await fetch('/api/health');
-        const healthData = await healthResponse.json();
-        console.log('   Health:', healthData.status, healthData.database_status || 'no db status');
         
-        // Test 2: Test bcrypt
-        console.log('2️⃣ Testing /api/test-bcrypt...');
-        try {
-            const bcryptResponse = await fetch('/api/test-bcrypt');
-            const bcryptData = await bcryptResponse.json();
-            console.log('   Bcrypt working:', bcryptData.success, bcryptData.hash_format_valid || false);
-        } catch (bcryptError) {
-            console.log('   Bcrypt test failed:', bcryptError.message);
+        // Get form values
+        const fullName = document.getElementById('fullName').value.trim();
+        const phoneNumber = document.getElementById('phoneNumber').value.trim();
+        const email = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value;
+        const confirmPassword = document.getElementById('confirmPassword').value;
+        const address = document.getElementById('address').value.trim();
+        
+        console.log('📝 Registration attempt:', {
+            name: fullName.substring(0, 10) + (fullName.length > 10 ? '...' : ''),
+            phone: phoneNumber,
+            email: email || 'none',
+            password_length: password.length
+        });
+        
+        // Validation
+        if (!fullName) {
+            showError('Full name is required');
+            return;
         }
         
-        // Test 3: Create test registration data
-        console.log('3️⃣ Creating test registration...');
-        const testPhone = '09' + Math.floor(100000000 + Math.random() * 900000000);
-        const testData = {
-            full_name: "Test User",
-            phone: testPhone,
-            password: "test123",
-            email: "test@example.com",
-            address: "Test Address"
-        };
-        
-        console.log('   Test phone:', testPhone);
-        console.log('   Test data:', { ...testData, password: '***' });
-        
-        // Test 4: Attempt registration
-        console.log('4️⃣ Attempting registration...');
-        const testResponse = await fetch('/api/register-guardian', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(testData)
-        });
-        
-        const testResult = await testResponse.json();
-        console.log('   Registration result:', {
-            success: testResult.success,
-            error: testResult.error || 'none',
-            has_token: !!testResult.session_token
-        });
-        
-    } catch (error) {
-        console.error('❌ Test failed:', error);
-    }
-    
-    console.groupEnd();
-    alert('🧪 Debug tests completed. Check console for details.');
-}
-
-function checkPasswordStrength() {
-    const password = document.getElementById('password').value;
-    const strengthBar = document.getElementById('passwordStrength');
-    
-    let strength = 0;
-    
-    // Length check
-    if (password.length >= 6) strength += 25;
-    if (password.length >= 8) strength += 25;
-    
-    // Complexity checks
-    if (/[A-Z]/.test(password)) strength += 25;
-    if (/[0-9]/.test(password)) strength += 25;
-    
-    // Update strength bar
-    strengthBar.style.width = strength + '%';
-    
-    // Color coding
-    if (strength < 50) {
-        strengthBar.style.backgroundColor = '#e74a3b'; // Red
-    } else if (strength < 75) {
-        strengthBar.style.backgroundColor = '#f6c23e'; // Yellow
-    } else {
-        strengthBar.style.backgroundColor = '#1cc88a'; // Green
-    }
-}
-
-function validatePasswordMatch() {
-    const password = document.getElementById('password').value;
-    const confirmPassword = document.getElementById('confirmPassword').value;
-    const confirmField = document.getElementById('confirmPassword');
-    
-    if (confirmPassword && password !== confirmPassword) {
-        confirmField.style.borderColor = '#e74a3b';
-        return false;
-    } else {
-        confirmField.style.borderColor = password ? '#1cc88a' : '#e1e5e9';
-        return true;
-    }
-}
-
-    
-    async function runDebugTests() {
-        console.group('🔧 DEBUG TESTS');
-        
-        // Test 1: Check localStorage
-        console.log('📦 localStorage:', {
-            authToken: localStorage.getItem('authToken'),
-            guardianId: localStorage.getItem('guardianId'),
-            userPhone: localStorage.getItem('userPhone'),
-            registeredPhone: localStorage.getItem('registeredPhone')
-        });
-        
-        // Test 2: Test API endpoints
-        try {
-            console.log('🌐 Testing /api/health...');
-            const healthResponse = await fetch('/api/health');
-            const healthData = await healthResponse.json();
-            console.log('✅ Health check:', healthData);
-        } catch (error) {
-            console.error('❌ Health check failed:', error);
+        if (!phoneNumber || !/^[0-9]{10,11}$/.test(phoneNumber)) {
+            showError('Valid phone number is required (10-11 digits)');
+            return;
         }
         
-        // Test 3: Test registration endpoint
+        if (password.length < 6) {
+            showError('Password must be at least 6 characters');
+            return;
+        }
+        
+        if (password !== confirmPassword) {
+            showError('Passwords do not match');
+            return;
+        }
+        
+        if (!document.getElementById('acceptTerms').checked) {
+            showError('You must accept the terms and conditions');
+            return;
+        }
+        
+        // Show loading
+        const registerBtn = document.getElementById('registerButton');
+        const registerText = document.getElementById('registerText');
+        const originalText = registerText.innerHTML;
+        registerText.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span>';
+        registerBtn.disabled = true;
+        
+        // Hide any previous messages
+        document.getElementById('errorMessage').style.display = 'none';
+        document.getElementById('successMessage').style.display = 'none';
+        
         try {
-            console.log('🌐 Testing /api/register-guardian endpoint...');
-            const testData = {
-                full_name: "Test User",
-                phone: "09123456789",
-                email: "test@example.com",
-                password: "test123",
-                address: "Test Address"
+            // STEP 1: REGISTER THE USER
+            console.log('📤 STEP 1: Sending registration request...');
+            const registrationData = {
+                full_name: fullName,
+                phone: phoneNumber,
+                password: password,
+                email: email || '',
+                address: address || ''
             };
             
-            console.log('📤 Test registration data:', testData);
+            console.log('📦 Registration payload:', { 
+                ...registrationData, 
+                password: '***' + password.substring(password.length - 2) 
+            });
+            
+            const response = await fetch('/api/register-guardian', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(registrationData)
+            });
+            
+            console.log('📥 Registration response status:', response.status);
+            
+            const registrationResult = await response.json();
+            console.log('📥 Registration response data:', registrationResult);
+            
+            if (!registrationResult.success) {
+                throw new Error(registrationResult.error || 'Registration failed');
+            }
+            
+            console.log('✅ STEP 1 COMPLETE: Registration successful!');
+            console.log('   Guardian ID:', registrationResult.guardian_id);
+            console.log('   Phone:', registrationResult.phone);
+            
+            // Give database a moment
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+            // STEP 2: AUTO-LOGIN AFTER REGISTRATION
+            console.log('🔐 STEP 2: Attempting auto-login...');
+            
+            const loginData = {
+                phone: phoneNumber,
+                password: password
+            };
+            
+            console.log('📤 Login payload:', { phone: loginData.phone, password: '***' });
+            
+            const loginResponse = await fetch('/api/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(loginData)
+            });
+            
+            console.log('📥 Login response status:', loginResponse.status);
+            
+            const loginResult = await loginResponse.json();
+            console.log('📥 Login response data:', loginResult);
+            
+            if (loginResult.success) {
+                console.log('✅ STEP 2 COMPLETE: Auto-login successful!');
+                console.log('   Session token:', loginResult.session_token ? loginResult.session_token.substring(0, 20) + '...' : 'None');
+                console.log('   Guardian ID:', loginResult.guardian_id);
+                
+                // Store authentication data
+                localStorage.setItem('authToken', loginResult.session_token);
+                localStorage.setItem('guardianId', loginResult.guardian_id);
+                localStorage.setItem('userPhone', loginResult.phone);
+                localStorage.setItem('userName', loginResult.full_name);
+                localStorage.setItem('userType', 'guardian');
+                
+                showSuccess('Registration successful! Auto-login complete. Redirecting to dashboard...');
+                
+                // STEP 3: REDIRECT TO DASHBOARD
+                console.log('🚀 STEP 3: Redirecting to dashboard...');
+                
+                // Small delay to show success message
+                setTimeout(() => {
+                    const dashboardUrl = `/guardian-dashboard?guardian_id=${loginResult.guardian_id}&token=${loginResult.session_token}`;
+                    console.log('📍 Dashboard URL:', dashboardUrl);
+                    window.location.href = dashboardUrl;
+                }, 1500);
+                
+            } else {
+                console.error('❌ STEP 2 FAILED: Auto-login failed:', loginResult.error);
+                
+                // Check if we got a session token from registration
+                if (registrationResult.session_token) {
+                    console.log('⚠️ Using session token from registration...');
+                    
+                    // Store authentication data from registration
+                    localStorage.setItem('authToken', registrationResult.session_token);
+                    localStorage.setItem('guardianId', registrationResult.guardian_id);
+                    localStorage.setItem('userPhone', registrationResult.phone);
+                    localStorage.setItem('userName', registrationResult.full_name);
+                    localStorage.setItem('userType', 'guardian');
+                    
+                    showSuccess('Registration successful! Using registration token. Redirecting to dashboard...');
+                    
+                    setTimeout(() => {
+                        const dashboardUrl = `/guardian-dashboard?guardian_id=${registrationResult.guardian_id}&token=${registrationResult.session_token}`;
+                        console.log('📍 Dashboard URL (registration token):', dashboardUrl);
+                        window.location.href = dashboardUrl;
+                    }, 1500);
+                    
+                } else {
+                    // Registration succeeded but login failed and no registration token
+                    showSuccess('Registration successful! However, auto-login failed. Please login manually.');
+                    
+                    // Store phone for auto-fill
+                    localStorage.setItem('lastRegisteredPhone', phoneNumber);
+                    
+                    // Redirect to login page
+                    setTimeout(() => {
+                        window.location.href = '/?registered=true';
+                    }, 2000);
+                }
+            }
+            
         } catch (error) {
-            console.error('❌ Registration test failed:', error);
+            console.error('🚨 Registration process error:', error);
+            
+            let errorMessage = 'Registration failed. ';
+            
+            if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                errorMessage += 'Please check your internet connection.';
+            } else if (error.message.includes('already registered')) {
+                errorMessage += 'This phone number is already registered. Please login instead.';
+            } else if (error.message.includes('Invalid Philippine')) {
+                errorMessage += 'Please enter a valid Philippine phone number (09XXXXXXXXX).';
+            } else {
+                errorMessage += error.message;
+            }
+            
+            showError(errorMessage);
+            
+            // Restore button
+            registerText.innerHTML = originalText;
+            registerBtn.disabled = false;
         }
-        
-        console.groupEnd();
-        
-        alert('🔧 Debug tests completed. Check console for details.');
     }
+    
+    // ==================== HELPER FUNCTIONS ====================
     
     function checkPasswordStrength() {
         const password = document.getElementById('password').value;
@@ -701,168 +654,6 @@ function validatePasswordMatch() {
         }
     }
     
-    async function handleRegistration(e) {
-    e.preventDefault();
-    
-    // Get form values
-    const fullName = document.getElementById('fullName').value.trim();
-    const phoneNumber = document.getElementById('phoneNumber').value.trim();
-    const email = document.getElementById('email').value.trim();
-    const password = document.getElementById('password').value;
-    const confirmPassword = document.getElementById('confirmPassword').value;
-    const address = document.getElementById('address').value.trim();
-    
-    console.log('📝 Registration attempt:', {
-        name: fullName.substring(0, 3) + '...',
-        phone: phoneNumber,
-        email: email || 'none',
-        password_length: password.length
-    });
-    
-    // Validation
-    if (!fullName) {
-        showError('Full name is required');
-        return;
-    }
-    
-    if (!phoneNumber || !/^[0-9]{10,11}$/.test(phoneNumber)) {
-        showError('Valid phone number is required (10-11 digits)');
-        return;
-    }
-    
-    if (password.length < 6) {
-        showError('Password must be at least 6 characters');
-        return;
-    }
-    
-    if (password !== confirmPassword) {
-        showError('Passwords do not match');
-        return;
-    }
-    
-    if (!document.getElementById('acceptTerms').checked) {
-        showError('You must accept the terms and conditions');
-        return;
-    }
-    
-    // Show loading
-    const registerBtn = document.getElementById('registerButton');
-    const registerText = document.getElementById('registerText');
-    const originalText = registerText.innerHTML;
-    registerText.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span>';
-    registerBtn.disabled = true;
-    
-    // Hide any previous messages
-    document.getElementById('errorMessage').style.display = 'none';
-    document.getElementById('successMessage').style.display = 'none';
-    
-    try {
-        // Prepare registration data
-        const registrationData = {
-            full_name: fullName,
-            phone: phoneNumber,
-            password: password,
-            email: email || '',
-            address: address || ''
-        };
-        
-        console.log('📤 Sending to /api/register-guardian...');
-        
-        // Send registration request
-        const response = await fetch('/api/register-guardian', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(registrationData)
-        });
-        
-        console.log('📥 Response status:', response.status);
-        
-        const result = await response.json();
-        console.log('📥 Response data:', result);
-        
-        if (result.success) {
-            console.log('✅ Registration SUCCESS!');
-            console.log('   Guardian ID:', result.guardian_id);
-            console.log('   Has session token:', !!result.session_token);
-            
-            if (result.session_token) {
-                // AUTO-LOGIN SUCCESSFUL
-                console.log('🎉 Auto-login enabled! Token:', result.session_token.substring(0, 20) + '...');
-                
-                // Store authentication data
-                localStorage.setItem('authToken', result.session_token);
-                localStorage.setItem('guardianId', result.guardian_id);
-                localStorage.setItem('userPhone', result.phone);
-                localStorage.setItem('userName', result.full_name);
-                localStorage.setItem('userType', 'guardian');
-                
-                showSuccess('Registration successful! Redirecting to dashboard...');
-                
-                // Short delay before redirect
-                setTimeout(() => {
-                    console.log('🚀 Redirecting to dashboard...');
-                    const dashboardUrl = `/guardian-dashboard?guardian_id=${result.guardian_id}&token=${result.session_token}`;
-                    console.log('📍 URL:', dashboardUrl);
-                    window.location.href = dashboardUrl;
-                }, 1500);
-                
-            } else {
-                // Registration successful but no auto-login
-                console.log('⚠️ Registration OK, but no auto-login. Manual login required.');
-                showSuccess('Registration successful! Please login with your credentials.');
-                
-                // Store phone for auto-fill
-                localStorage.setItem('lastRegisteredPhone', phoneNumber);
-                
-                // Redirect to login page
-                setTimeout(() => {
-                    window.location.href = '/?registered=true';
-                }, 2000);
-            }
-            
-        } else {
-            // Registration failed
-            console.error('❌ Registration FAILED:', result.error);
-            
-            let errorMsg = result.error || 'Registration failed';
-            
-            // Handle specific error cases
-            if (errorMsg.includes('already registered')) {
-                errorMsg = 'This phone number is already registered. Please login or use a different number.';
-            } else if (errorMsg.includes('Invalid Philippine')) {
-                errorMsg = 'Please enter a valid Philippine phone number (starts with 09).';
-            }
-            
-            showError(errorMsg);
-            
-            // Restore button
-            registerText.innerHTML = originalText;
-            registerBtn.disabled = false;
-        }
-        
-    } catch (error) {
-        console.error('🚨 Registration EXCEPTION:', error);
-        
-        let errorMessage = 'Registration failed. ';
-        
-        if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-            errorMessage += 'Please check your internet connection.';
-        } else if (error.message.includes('JSON')) {
-            errorMessage += 'Server error. Please try again.';
-        } else {
-            errorMessage += error.message;
-        }
-        
-        showError(errorMessage);
-        
-        // Restore button
-        registerText.innerHTML = originalText;
-        registerBtn.disabled = false;
-    }
-}
-    
     function showError(message) {
         const errorDiv = document.getElementById('errorMessage');
         const errorText = document.getElementById('errorText');
@@ -875,6 +666,11 @@ function validatePasswordMatch() {
         
         // Scroll to error
         errorDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        
+        // Auto-hide after 10 seconds
+        setTimeout(() => {
+            errorDiv.style.display = 'none';
+        }, 10000);
     }
     
     function showSuccess(message) {
@@ -886,6 +682,16 @@ function validatePasswordMatch() {
         
         // Hide error message if showing
         document.getElementById('errorMessage').style.display = 'none';
+        
+        // Scroll to success message
+        successDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        
+        // Auto-hide after 5 seconds (unless it's a redirect message)
+        if (!message.includes('Redirecting')) {
+            setTimeout(() => {
+                successDiv.style.display = 'none';
+            }, 5000);
+        }
     }
     
     function showTerms() {
@@ -895,6 +701,159 @@ function validatePasswordMatch() {
     function showPrivacy() {
         alert('Privacy Policy:\n\n1. We store your information securely.\n2. Your data is only used for driver monitoring alerts.\n3. We do not share your information with third parties.\n4. You can request data deletion at any time.');
     }
-</script>
+    
+    // ==================== DEBUG FUNCTIONS ====================
+    
+    function addDebugButtons() {
+        // Debug Registration Button
+        const debugRegBtn = document.createElement('button');
+        debugRegBtn.textContent = '🔧 Debug';
+        debugRegBtn.className = 'debug-btn';
+        debugRegBtn.style.top = '10px';
+        debugRegBtn.onclick = function(e) {
+            e.preventDefault();
+            runDebugTests();
+        };
+        document.body.appendChild(debugRegBtn);
+        
+        // Test Login Button
+        const debugLoginBtn = document.createElement('button');
+        debugLoginBtn.textContent = '🔐 Test Login';
+        debugLoginBtn.className = 'debug-btn';
+        debugLoginBtn.style.top = '50px';
+        debugLoginBtn.onclick = function(e) {
+            e.preventDefault();
+            testLoginManually();
+        };
+        document.body.appendChild(debugLoginBtn);
+        
+        // Fill Test Data Button
+        const testDataBtn = document.createElement('button');
+        testDataBtn.textContent = '📝 Test Data';
+        testDataBtn.className = 'debug-btn';
+        testDataBtn.style.top = '90px';
+        testDataBtn.onclick = function(e) {
+            e.preventDefault();
+            fillTestData();
+        };
+        document.body.appendChild(testDataBtn);
+    }
+    
+    async function runDebugTests() {
+        console.group('🧪 DEBUG TESTS');
+        
+        try {
+            // Test 1: Check API health
+            console.log('1️⃣ Testing /api/health...');
+            const healthResponse = await fetch('/api/health');
+            const healthData = await healthResponse.json();
+            console.log('   ✅ Health:', healthData.status);
+            console.log('   ✅ Database:', healthData.database_status || 'unknown');
+            
+            // Test 2: Test bcrypt
+            console.log('2️⃣ Testing /api/test-bcrypt...');
+            try {
+                const bcryptResponse = await fetch('/api/test-bcrypt');
+                const bcryptData = await bcryptResponse.json();
+                console.log('   ✅ Bcrypt working:', bcryptData.success);
+                console.log('   ✅ Hash format valid:', bcryptData.hash_format_valid);
+            } catch (bcryptError) {
+                console.log('   ❌ Bcrypt test failed:', bcryptError.message);
+            }
+            
+            // Test 3: Test registration endpoint
+            console.log('3️⃣ Testing registration endpoint...');
+            const testPhone = '09' + Math.floor(100000000 + Math.random() * 900000000);
+            const testData = {
+                full_name: "Test User",
+                phone: testPhone,
+                password: "test123",
+                email: "test@example.com",
+                address: "Test Address"
+            };
+            
+            console.log('   📱 Test phone:', testPhone);
+            
+            const testResponse = await fetch('/api/register-guardian', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(testData)
+            });
+            
+            const testResult = await testResponse.json();
+            console.log('   ✅ Registration test:', testResult.success ? 'SUCCESS' : 'FAILED');
+            console.log('   📊 Result:', {
+                success: testResult.success,
+                error: testResult.error || 'none',
+                has_token: !!testResult.session_token
+            });
+            
+        } catch (error) {
+            console.error('❌ Debug test failed:', error);
+        }
+        
+        console.groupEnd();
+        alert('🧪 Debug tests completed. Check console for details.');
+    }
+    
+    function testLoginManually() {
+        const phone = prompt('Enter phone number to test login:');
+        const password = prompt('Enter password:');
+        
+        if (phone && password) {
+            console.log('🔐 Testing manual login for:', phone);
+            
+            fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone, password })
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log('📥 Login test result:', data);
+                
+                if (data.success) {
+                    alert(`✅ Login successful!\nGuardian ID: ${data.guardian_id}\nName: ${data.full_name}`);
+                } else {
+                    alert(`❌ Login failed: ${data.error || 'Unknown error'}`);
+                }
+            })
+            .catch(err => {
+                console.error('❌ Login test error:', err);
+                alert('❌ Test failed: ' + err.message);
+            });
+        }
+    }
+    
+    function fillTestData() {
+        const testPhone = '09' + Math.floor(100000000 + Math.random() * 900000000);
+        
+        document.getElementById('fullName').value = 'Test User';
+        document.getElementById('phoneNumber').value = testPhone;
+        document.getElementById('email').value = 'test@example.com';
+        document.getElementById('password').value = 'test123';
+        document.getElementById('confirmPassword').value = 'test123';
+        document.getElementById('address').value = 'Test Address';
+        document.getElementById('acceptTerms').checked = true;
+        
+        console.log('📝 Filled test data with phone:', testPhone);
+        alert(`Test data filled!\nPhone: ${testPhone}\nPassword: test123`);
+    }
+    
+    // ==================== UTILITY FUNCTIONS ====================
+    
+    function clearForm() {
+        document.getElementById('guardianRegisterForm').reset();
+        document.getElementById('errorMessage').style.display = 'none';
+        document.getElementById('successMessage').style.display = 'none';
+        document.getElementById('passwordStrength').style.width = '0%';
+    }
+    
+    // Export functions to global scope for onclick handlers
+    window.showTerms = showTerms;
+    window.showPrivacy = showPrivacy;
+    window.fillTestData = fillTestData;
+    
+    </script>
 </body>
 </html>
