@@ -362,6 +362,21 @@ if ('serviceWorker' in navigator) {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     
     <script>
+    // Debug function to show alerts with detailed information
+    function showDebugAlert(title, message, data = null) {
+        console.log(`🔍 [DEBUG] ${title}:`, message, data || '');
+        
+        const debugInfo = `
+🔍 DEBUG: ${title}
+${message}
+${data ? `Data: ${JSON.stringify(data, null, 2)}` : ''}
+Timestamp: ${new Date().toISOString()}
+        `.trim();
+        
+        alert(debugInfo);
+        return false;
+    }
+    
     document.addEventListener('DOMContentLoaded', function() {
         // Setup form
         document.getElementById('guardianRegisterForm').addEventListener('submit', handleRegistration);
@@ -374,7 +389,71 @@ if ('serviceWorker' in navigator) {
         
         // Auto-focus on name field
         document.getElementById('fullName').focus();
+        
+        // Debug button (hidden by default)
+        const debugBtn = document.createElement('button');
+        debugBtn.textContent = '🔧 Debug';
+        debugBtn.style.cssText = `
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 9999;
+            background: #ff6b6b;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            cursor: pointer;
+        `;
+        debugBtn.onclick = function(e) {
+            e.preventDefault();
+            runDebugTests();
+        };
+        document.body.appendChild(debugBtn);
     });
+    
+    async function runDebugTests() {
+        console.group('🔧 DEBUG TESTS');
+        
+        // Test 1: Check localStorage
+        console.log('📦 localStorage:', {
+            authToken: localStorage.getItem('authToken'),
+            guardianId: localStorage.getItem('guardianId'),
+            userPhone: localStorage.getItem('userPhone'),
+            registeredPhone: localStorage.getItem('registeredPhone')
+        });
+        
+        // Test 2: Test API endpoints
+        try {
+            console.log('🌐 Testing /api/health...');
+            const healthResponse = await fetch('/api/health');
+            const healthData = await healthResponse.json();
+            console.log('✅ Health check:', healthData);
+        } catch (error) {
+            console.error('❌ Health check failed:', error);
+        }
+        
+        // Test 3: Test registration endpoint
+        try {
+            console.log('🌐 Testing /api/register-guardian endpoint...');
+            const testData = {
+                full_name: "Test User",
+                phone: "09123456789",
+                email: "test@example.com",
+                password: "test123",
+                address: "Test Address"
+            };
+            
+            console.log('📤 Test registration data:', testData);
+        } catch (error) {
+            console.error('❌ Registration test failed:', error);
+        }
+        
+        console.groupEnd();
+        
+        alert('🔧 Debug tests completed. Check console for details.');
+    }
     
     function checkPasswordStrength() {
         const password = document.getElementById('password').value;
@@ -471,7 +550,7 @@ if ('serviceWorker' in navigator) {
                 address: address
             };
             
-            console.log('📤 Sending registration request...');
+            console.log('📤 Sending registration request...', registrationData);
             
             // Send registration request
             const response = await fetch('/api/register-guardian', {
@@ -482,11 +561,16 @@ if ('serviceWorker' in navigator) {
                 body: JSON.stringify(registrationData)
             });
             
+            console.log('📥 Registration response status:', response.status);
+            
             const result = await response.json();
-            console.log('📥 Registration response:', result);
+            console.log('📥 Registration response data:', result);
             
             if (result.success) {
-                showSuccess('Account created successfully! Logging you in...');
+                showDebugAlert('REGISTRATION SUCCESSFUL', 'Account created successfully! Now attempting auto-login...', {
+                    guardian_id: result.guardian_id,
+                    phone: result.phone
+                });
                 
                 // Auto-login after successful registration
                 setTimeout(async () => {
@@ -499,7 +583,7 @@ if ('serviceWorker' in navigator) {
                         
                         console.log('🔐 Attempting auto-login with:', loginData);
                         
-                        const loginResponse = await fetch('/api/login', {  // CORRECTED ENDPOINT
+                        const loginResponse = await fetch('/api/login', {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -507,10 +591,18 @@ if ('serviceWorker' in navigator) {
                             body: JSON.stringify(loginData)
                         });
                         
+                        console.log('🔓 Login response status:', loginResponse.status);
+                        
                         const loginResult = await loginResponse.json();
-                        console.log('🔓 Login response:', loginResult);
+                        console.log('🔓 Login response data:', loginResult);
                         
                         if (loginResult.success && loginResult.session_token) {
+                            showDebugAlert('AUTO-LOGIN SUCCESSFUL', 'Login successful!', {
+                                guardian_id: loginResult.guardian_id,
+                                session_token: loginResult.session_token,
+                                full_name: loginResult.full_name
+                            });
+                            
                             // Store authentication token and user data
                             localStorage.setItem('authToken', loginResult.session_token);
                             localStorage.setItem('userType', 'guardian');
@@ -518,34 +610,35 @@ if ('serviceWorker' in navigator) {
                             localStorage.setItem('userName', loginResult.full_name);
                             localStorage.setItem('guardianId', loginResult.guardian_id);
                             
-                            // Store user info if available
-                            if (loginResult.user) {
-                                localStorage.setItem('userData', JSON.stringify(loginResult.user));
-                            }
-                            
                             // Show success message
                             showSuccess('Login successful! Redirecting to dashboard...');
                             
                             // Redirect to guardian dashboard after short delay
                             setTimeout(() => {
                                 console.log('🚀 Redirecting to dashboard...');
-                                // Redirect with query parameters
-                                window.location.href = `/guardian-dashboard.html?guardian_id=${loginResult.guardian_id}&token=${loginResult.session_token}`;
-                            }, 1500);
+                                // Construct redirect URL
+                                const redirectUrl = `/guardian-dashboard.html?guardian_id=${loginResult.guardian_id}&token=${loginResult.session_token}`;
+                                console.log('📋 Redirect URL:', redirectUrl);
+                                window.location.href = redirectUrl;
+                            }, 2000);
                             
                         } else {
-                            console.error('Auto-login failed:', loginResult.error || 'Unknown error');
-                            // If auto-login fails, show message and redirect to login page
-                            showError('Registration successful! Please login manually.');
+                            const errorMsg = loginResult.error || 'Unknown error during login';
+                            showDebugAlert('AUTO-LOGIN FAILED', `Login failed: ${errorMsg}`, loginResult);
+                            
+                            // If auto-login fails, redirect to login page
+                            showError(`Registration successful! ${errorMsg}`);
                             setTimeout(() => {
                                 // Store phone for auto-fill on login page
                                 localStorage.setItem('registeredPhone', phoneNumber);
                                 window.location.href = '/';
-                            }, 2000);
+                            }, 3000);
                         }
                         
                     } catch (loginError) {
-                        console.error('Auto-login error:', loginError);
+                        console.error('🚨 Auto-login error:', loginError);
+                        showDebugAlert('AUTO-LOGIN EXCEPTION', 'Error during auto-login:', loginError.message);
+                        
                         // If auto-login fails, redirect to login page with pre-filled phone
                         showSuccess('Registration successful! Please login to continue.');
                         setTimeout(() => {
@@ -556,11 +649,13 @@ if ('serviceWorker' in navigator) {
                 }, 1000);
                 
             } else {
+                showDebugAlert('REGISTRATION FAILED', result.error || 'Unknown registration error', result);
                 throw new Error(result.error || 'Registration failed');
             }
             
         } catch (error) {
-            console.error('Registration error:', error);
+            console.error('🚨 Registration error:', error);
+            showDebugAlert('REGISTRATION ERROR', 'Registration failed:', error.message);
             showError('Registration failed: ' + error.message);
         } finally {
             // Restore button after error
@@ -591,7 +686,7 @@ if ('serviceWorker' in navigator) {
         successDiv.style.display = 'block';
         
         // Hide error message if showing
-        document.getElementById('errorMessages').style.display = 'none';
+        document.getElementById('errorMessage').style.display = 'none';
     }
     
     function showTerms() {

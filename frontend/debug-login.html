@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Login</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .debug-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        input, button {
+            padding: 10px;
+            margin: 5px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="debug-container">
+        <h1>🔧 Debug Login Issues</h1>
+        
+        <div class="test-section">
+            <h2>Test 1: Check Server Health</h2>
+            <button onclick="testHealth()">Test /api/health</button>
+            <div id="healthResult" class="result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h2>Test 2: Check Database Connection</h2>
+            <button onclick="testDatabase()">Test /api/debug/db</button>
+            <div id="dbResult" class="result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h2>Test 3: Check Bcrypt</h2>
+            <button onclick="testBcrypt()">Test /api/test-bcrypt</button>
+            <div id="bcryptResult" class="result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h2>Test 4: Manual Login Test</h2>
+            <input type="text" id="testPhone" placeholder="Phone number (09123456789)">
+            <input type="password" id="testPassword" placeholder="Password">
+            <button onclick="testLogin()">Test Login</button>
+            <div id="loginResult" class="result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h2>Test 5: Manual Registration Test</h2>
+            <input type="text" id="regName" placeholder="Full Name">
+            <input type="text" id="regPhone" placeholder="Phone number (09123456789)">
+            <input type="password" id="regPassword" placeholder="Password">
+            <button onclick="testRegistration()">Test Registration</button>
+            <div id="regResult" class="result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h2>Test 6: Check Local Storage</h2>
+            <button onclick="checkLocalStorage()">Check LocalStorage</button>
+            <div id="storageResult" class="result"></div>
+        </div>
+    </div>
+    
+    <script>
+        async function testHealth() {
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                document.getElementById('healthResult').innerHTML = 
+                    `<strong>Status:</strong> ${response.status}\n` +
+                    `<strong>Data:</strong>\n${JSON.stringify(data, null, 2)}`;
+            } catch (error) {
+                document.getElementById('healthResult').innerHTML = 
+                    `<strong>Error:</strong> ${error.message}`;
+            }
+        }
+        
+        async function testDatabase() {
+            try {
+                const response = await fetch('/api/debug/db');
+                const data = await response.json();
+                document.getElementById('dbResult').innerHTML = 
+                    `<strong>Status:</strong> ${response.status}\n` +
+                    `<strong>Data:</strong>\n${JSON.stringify(data, null, 2)}`;
+            } catch (error) {
+                document.getElementById('dbResult').innerHTML = 
+                    `<strong>Error:</strong> ${error.message}`;
+            }
+        }
+        
+        async function testBcrypt() {
+            try {
+                const response = await fetch('/api/test-bcrypt');
+                const data = await response.json();
+                document.getElementById('bcryptResult').innerHTML = 
+                    `<strong>Status:</strong> ${response.status}\n` +
+                    `<strong>Data:</strong>\n${JSON.stringify(data, null, 2)}`;
+            } catch (error) {
+                document.getElementById('bcryptResult').innerHTML = 
+                    `<strong>Error:</strong> ${error.message}`;
+            }
+        }
+        
+        async function testLogin() {
+            const phone = document.getElementById('testPhone').value;
+            const password = document.getElementById('testPassword').value;
+            
+            if (!phone || !password) {
+                alert('Please enter phone and password');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ phone, password })
+                });
+                
+                const data = await response.json();
+                document.getElementById('loginResult').innerHTML = 
+                    `<strong>Status:</strong> ${response.status}\n` +
+                    `<strong>Success:</strong> ${data.success}\n` +
+                    `<strong>Error:</strong> ${data.error || 'None'}\n` +
+                    `<strong>Data:</strong>\n${JSON.stringify(data, null, 2)}`;
+                
+                if (data.success && data.session_token) {
+                    // Store for testing
+                    localStorage.setItem('debugToken', data.session_token);
+                    localStorage.setItem('debugGuardianId', data.guardian_id);
+                    
+                    // Test redirect
+                    setTimeout(() => {
+                        const url = `/guardian-dashboard.html?guardian_id=${data.guardian_id}&token=${data.session_token}`;
+                        document.getElementById('loginResult').innerHTML += 
+                            `\n\n<strong>Test Redirect URL:</strong> ${url}`;
+                    }, 1000);
+                }
+            } catch (error) {
+                document.getElementById('loginResult').innerHTML = 
+                    `<strong>Error:</strong> ${error.message}`;
+            }
+        }
+        
+        async function testRegistration() {
+            const name = document.getElementById('regName').value;
+            const phone = document.getElementById('regPhone').value;
+            const password = document.getElementById('regPassword').value;
+            
+            if (!name || !phone || !password) {
+                alert('Please fill all fields');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/register-guardian', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        full_name: name,
+                        phone: phone,
+                        email: 'test@example.com',
+                        password: password,
+                        address: 'Test Address'
+                    })
+                });
+                
+                const data = await response.json();
+                document.getElementById('regResult').innerHTML = 
+                    `<strong>Status:</strong> ${response.status}\n` +
+                    `<strong>Success:</strong> ${data.success}\n` +
+                    `<strong>Error:</strong> ${data.error || 'None'}\n` +
+                    `<strong>Data:</strong>\n${JSON.stringify(data, null, 2)}`;
+                
+                // If successful, try auto-login
+                if (data.success) {
+                    setTimeout(() => testAutoLogin(phone, password), 1000);
+                }
+            } catch (error) {
+                document.getElementById('regResult').innerHTML = 
+                    `<strong>Error:</strong> ${error.message}`;
+            }
+        }
+        
+        async function testAutoLogin(phone, password) {
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ phone, password })
+                });
+                
+                const data = await response.json();
+                document.getElementById('regResult').innerHTML += 
+                    `\n\n<strong>Auto-Login Result:</strong>\n` +
+                    `Status: ${response.status}\n` +
+                    `Success: ${data.success}\n` +
+                    `Error: ${data.error || 'None'}`;
+                
+                if (data.success) {
+                    document.getElementById('regResult').innerHTML += 
+                        `\n<strong>Redirect URL:</strong> /guardian-dashboard.html?guardian_id=${data.guardian_id}&token=${data.session_token}`;
+                }
+            } catch (error) {
+                document.getElementById('regResult').innerHTML += 
+                    `\n\n<strong>Auto-Login Error:</strong> ${error.message}`;
+            }
+        }
+        
+        function checkLocalStorage() {
+            const items = {};
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                items[key] = localStorage.getItem(key);
+            }
+            document.getElementById('storageResult').innerHTML = 
+                `<strong>LocalStorage Items:</strong>\n${JSON.stringify(items, null, 2)}`;
+        }
+    </script>
+</body>
+</html>

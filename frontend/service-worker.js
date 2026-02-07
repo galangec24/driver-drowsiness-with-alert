@@ -8,13 +8,17 @@ const CORE_ASSETS = [
   '/',
   '/login.html',
   '/manifest.json',
-  '/icon-192.png'
+  '/icon-192.png',
+  '/icon-96.png',
+  '/icon-152.png',
+  '/icon-72.png'
 ];
 
 // Optional assets that might exist
 const OPTIONAL_ASSETS = [
   '/index.html',
   '/admin_login.html',
+  '/debug-login.html',
   '/guardian-dashboard.html',
   '/guardian-register.html',
   '/register-driver.html',

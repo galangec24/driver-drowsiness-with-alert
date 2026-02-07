@@ -278,6 +278,44 @@
             color: var(--primary-color);
             text-decoration: underline;
         }
+        
+        /* Debug panel (hidden by default) */
+        .debug-panel {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 20px;
+            font-size: 12px;
+            border-left: 4px solid #ffc107;
+            display: none;
+        }
+        
+        .debug-panel h6 {
+            color: #ffc107;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        
+        .debug-toggle {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            background: #ffc107;
+            color: #333;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            cursor: pointer;
+            z-index: 1000;
+        }
+        
+        /* Shake animation for errors */
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+            20%, 40%, 60%, 80% { transform: translateX(5px); }
+        }
     </style>
 </head>
 <body>
@@ -350,14 +388,91 @@
                 <p>Register as a new guardian to create your own account. After registration, you can login and register drivers to monitor.</p>
                 <p><strong>Admin Access:</strong> <code>admin</code> / <code>admin123</code></p>
             </div>
+            
+            <!-- Debug Panel (initially hidden) -->
+            <div class="debug-panel" id="debugPanel">
+                <h6><i class="fas fa-bug me-1"></i> Debug Information</h6>
+                <div id="debugContent"></div>
+            </div>
         </div>
     </div>
+    
+    <!-- Debug Toggle Button -->
+    <button class="debug-toggle" id="debugToggle">🔧 Debug</button>
     
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     
     <script>
+        // Debug functions
+        function debugLog(message, data = null) {
+            console.log(`🔍 [LOGIN DEBUG] ${message}`, data || '');
+        }
+        
+        function showDebugInfo(message) {
+            const debugPanel = document.getElementById('debugPanel');
+            const debugContent = document.getElementById('debugContent');
+            debugContent.innerHTML = `<pre style="margin: 0; font-size: 11px;">${message}</pre>`;
+            debugPanel.style.display = 'block';
+        }
+        
+        function addDebugMessage(message) {
+            const debugContent = document.getElementById('debugContent');
+            const current = debugContent.innerHTML;
+            debugContent.innerHTML = current + `<div style="margin: 5px 0; font-size: 11px;">${message}</div>`;
+        }
+        
         document.addEventListener('DOMContentLoaded', function() {
+            debugLog('Login page loaded');
+            
+            // Parse URL parameters for auto-fill and messages
+            const urlParams = new URLSearchParams(window.location.search);
+            const registered = urlParams.get('registered');
+            const phone = urlParams.get('phone');
+            const sessionExpired = urlParams.get('session_expired');
+            const loggedOut = urlParams.get('logged_out');
+            
+            debugLog('URL Parameters:', {
+                registered, 
+                phone, 
+                sessionExpired, 
+                loggedOut
+            });
+            
+            // Auto-fill phone if provided in URL
+            if (phone) {
+                document.getElementById('phoneNumber').value = phone;
+                debugLog(`Auto-filled phone from URL: ${phone}`);
+            }
+            
+            // Show messages based on URL parameters
+            if (registered === 'true' && phone) {
+                showSuccess(`Registration successful! Your phone ${phone} has been registered. Please login.`);
+                document.getElementById('password').focus();
+            } else if (sessionExpired === 'true') {
+                showError('Your session has expired. Please login again.');
+            } else if (loggedOut === 'true') {
+                showSuccess('You have been logged out successfully.');
+            }
+            
+            // Check localStorage for saved phone from registration
+            const savedPhone = localStorage.getItem('registeredPhone');
+            if (savedPhone && !phone) {
+                document.getElementById('phoneNumber').value = savedPhone;
+                debugLog(`Auto-filled phone from localStorage: ${savedPhone}`);
+                localStorage.removeItem('registeredPhone');
+                showSuccess('Registration successful! Please login with your credentials.');
+                document.getElementById('password').focus();
+            }
+            
+            // Check for saved credentials
+            const savedGuardianId = localStorage.getItem('guardian_id');
+            const savedToken = localStorage.getItem('session_token');
+            if (savedGuardianId && savedToken) {
+                debugLog('Found saved credentials in localStorage');
+                addDebugMessage(`Found saved session: guardian_id=${savedGuardianId}, token=${savedToken?.substring(0, 10)}...`);
+            }
+            
             // Setup form
             document.getElementById('loginForm').addEventListener('submit', handleLogin);
             
@@ -370,18 +485,37 @@
                 showForgotPasswordMessage();
             });
             
-            // Auto-focus on phone field
-            document.getElementById('phoneNumber').focus();
+            // Debug toggle
+            document.getElementById('debugToggle').addEventListener('click', function() {
+                const debugPanel = document.getElementById('debugPanel');
+                debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
+            });
             
-            // Load saved phone number if available
-            const savedPhone = localStorage.getItem('registeredPhone');
-            if (savedPhone) {
-                document.getElementById('phoneNumber').value = savedPhone;
+            // Auto-focus on phone field if empty
+            if (!document.getElementById('phoneNumber').value) {
+                document.getElementById('phoneNumber').focus();
+            } else {
                 document.getElementById('password').focus();
-                // Clear the saved phone after using it once
-                localStorage.removeItem('registeredPhone');
             }
+            
+            // Test API connection on page load
+            setTimeout(() => {
+                testApiConnection();
+            }, 1000);
         });
+        
+        async function testApiConnection() {
+            try {
+                debugLog('Testing API connection...');
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                debugLog('API health check:', data);
+                addDebugMessage(`API Status: ${response.status} - ${data.status || 'Unknown'}`);
+            } catch (error) {
+                debugLog('API connection test failed:', error);
+                addDebugMessage(`❌ API Error: ${error.message}`);
+            }
+        }
         
         function togglePasswordVisibility() {
             const passwordInput = document.getElementById('password');
@@ -420,14 +554,25 @@
             const phoneNumber = document.getElementById('phoneNumber').value.trim();
             const password = document.getElementById('password').value;
             
+            // Clear previous messages
+            document.getElementById('errorMessage').style.display = 'none';
+            document.getElementById('successMessage').style.display = 'none';
+            
+            // Debug info
+            addDebugMessage(`\n--- Login Attempt ---`);
+            addDebugMessage(`Phone: ${phoneNumber}`);
+            addDebugMessage(`Password length: ${password.length} characters`);
+            
             // Validation
             if (!phoneNumber || !/^[0-9]{10,11}$/.test(phoneNumber)) {
                 showError('Valid phone number is required (10-11 digits)');
+                addDebugMessage(`❌ Validation failed: Invalid phone format`);
                 return;
             }
             
             if (password.length < 6) {
                 showError('Password must be at least 6 characters');
+                addDebugMessage(`❌ Validation failed: Password too short`);
                 return;
             }
             
@@ -439,6 +584,8 @@
             loginBtn.disabled = true;
             
             try {
+                addDebugMessage(`📤 Sending login request to /api/login...`);
+                
                 const response = await fetch('/api/login', {
                     method: 'POST',
                     headers: {
@@ -450,9 +597,22 @@
                     })
                 });
                 
-                const result = await response.json();
+                addDebugMessage(`📥 Received response: Status ${response.status}`);
+                
+                let result;
+                try {
+                    result = await response.json();
+                    addDebugMessage(`Response data: ${JSON.stringify(result, null, 2)}`);
+                } catch (parseError) {
+                    addDebugMessage(`❌ Failed to parse JSON response: ${parseError.message}`);
+                    throw new Error('Invalid server response');
+                }
                 
                 if (result.success) {
+                    addDebugMessage(`✅ Login successful!`);
+                    addDebugMessage(`Guardian ID: ${result.guardian_id}`);
+                    addDebugMessage(`Session Token: ${result.session_token?.substring(0, 20)}...`);
+                    
                     showSuccess('Login successful! Redirecting to dashboard...');
                     
                     // Store login info in localStorage
@@ -461,17 +621,36 @@
                     localStorage.setItem('guardian_phone', result.phone);
                     localStorage.setItem('session_token', result.session_token);
                     
+                    // Construct dashboard URL - FIXED: guardian-dashboard.html (not guardian-dashboard)
+                    const dashboardUrl = `/guardian-dashboard.html?guardian_id=${result.guardian_id}&token=${result.session_token}`;
+                    addDebugMessage(`Redirect URL: ${dashboardUrl}`);
+                    
                     // Redirect to dashboard after a brief delay
                     setTimeout(() => {
-                        window.location.href = `/guardian-dashboard?guardian_id=${result.guardian_id}&token=${result.session_token}`;
+                        debugLog(`Redirecting to: ${dashboardUrl}`);
+                        window.location.href = dashboardUrl;
                     }, 1500);
                     
                 } else {
-                    throw new Error(result.error || 'Login failed');
+                    const errorMsg = result.error || 'Login failed without specific error';
+                    addDebugMessage(`❌ Login failed: ${errorMsg}`);
+                    
+                    // Enhanced error messages
+                    let userFriendlyError = errorMsg;
+                    if (errorMsg.includes('Invalid phone or password')) {
+                        userFriendlyError = 'Invalid phone number or password. Please check your credentials.';
+                    } else if (errorMsg.includes('Account locked')) {
+                        userFriendlyError = 'Account is temporarily locked. Please try again later.';
+                    } else if (errorMsg.includes('Too many login attempts')) {
+                        userFriendlyError = 'Too many login attempts. Please wait a minute and try again.';
+                    }
+                    
+                    throw new Error(userFriendlyError);
                 }
                 
             } catch (error) {
                 console.error('Login error:', error);
+                addDebugMessage(`🚨 Login error: ${error.message}`);
                 showError('Login failed: ' + error.message);
                 
                 // Shake animation for error
@@ -503,6 +682,9 @@
             // Hide success message if showing
             document.getElementById('successMessage').style.display = 'none';
             
+            // Add to debug panel
+            addDebugMessage(`❌ Error: ${message}`);
+            
             // Scroll to error
             errorDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
@@ -517,20 +699,24 @@
             // Hide error message if showing
             document.getElementById('errorMessage').style.display = 'none';
             
+            // Add to debug panel
+            addDebugMessage(`✅ Success: ${message}`);
+            
             // Scroll to success
             successDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
         
-        // Add shake animation for errors
-        const style = document.createElement('style');
-        style.textContent = `
-            @keyframes shake {
-                0%, 100% { transform: translateX(0); }
-                10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
-                20%, 40%, 60%, 80% { transform: translateX(5px); }
-            }
-        `;
-        document.head.appendChild(style);
+        // Add a test login function for debugging
+        window.testLogin = async function(testPhone, testPassword) {
+            document.getElementById('phoneNumber').value = testPhone || '09123456789';
+            document.getElementById('password').value = testPassword || 'test123';
+            
+            addDebugMessage(`\n--- Test Login ---`);
+            addDebugMessage(`Using test credentials: ${testPhone || '09123456789'}`);
+            
+            // Trigger login
+            document.getElementById('loginForm').dispatchEvent(new Event('submit'));
+        };
     </script>
 </body>
 </html>
