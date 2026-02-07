@@ -1079,7 +1079,7 @@ def serve_icon(size):
 # ==================== API ENDPOINTS ====================
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
+    """Health check endpoint - FIXED VERSION"""
     try:
         # Basic health info
         health_info = {
@@ -1111,34 +1111,71 @@ def health_check():
                     'database_name': url.path[1:] if url.path.startswith('/') else url.path
                 })
                 
-                # Test connection
-                with get_db_connection() as conn:
+                # Use a simpler connection method for health check
+                try:
+                    # Fix URL format
+                    if database_url.startswith('postgres://'):
+                        database_url = database_url.replace('postgres://', 'postgresql://', 1)
+                    
+                    # Connect without RealDictCursor for health check
+                    conn = psycopg2.connect(
+                        database=url.path[1:] if url.path.startswith('/') else url.path,
+                        user=url.username,
+                        password=url.password,
+                        host=url.hostname,
+                        port=url.port or 5432,
+                        connect_timeout=5
+                    )
+                    
                     cursor = conn.cursor()
+                    
+                    # Get database version
                     cursor.execute('SELECT version()')
                     db_version = cursor.fetchone()[0]
                     
-                    cursor.execute('SELECT COUNT(*) as count FROM guardians')
-                    guardian_count = cursor.fetchone()[0]
+                    # Get counts - handle empty tables
+                    counts = {}
                     
-                    cursor.execute('SELECT COUNT(*) as count FROM drivers')
-                    driver_count = cursor.fetchone()[0]
+                    # Guardians count
+                    try:
+                        cursor.execute('SELECT COUNT(*) as count FROM guardians')
+                        counts['guardians'] = cursor.fetchone()[0]
+                    except:
+                        counts['guardians'] = 0
                     
-                    cursor.execute('SELECT COUNT(*) as count FROM alerts')
-                    alert_count = cursor.fetchone()[0]
+                    # Drivers count
+                    try:
+                        cursor.execute('SELECT COUNT(*) as count FROM drivers')
+                        counts['drivers'] = cursor.fetchone()[0]
+                    except:
+                        counts['drivers'] = 0
+                    
+                    # Alerts count
+                    try:
+                        cursor.execute('SELECT COUNT(*) as count FROM alerts')
+                        counts['alerts'] = cursor.fetchone()[0]
+                    except:
+                        counts['alerts'] = 0
+                    
+                    cursor.close()
+                    conn.close()
                     
                     health_info.update({
                         'database_status': 'connected',
                         'database_version': db_version,
-                        'statistics': {
-                            'guardians': guardian_count,
-                            'drivers': driver_count,
-                            'alerts': alert_count,
-                        }
+                        'statistics': counts
                     })
+                    
+                except Exception as conn_error:
+                    health_info.update({
+                        'database_status': 'disconnected',
+                        'database_error': f'Connection failed: {str(conn_error)}'
+                    })
+                    
         except Exception as db_error:
             health_info.update({
                 'database_status': 'disconnected',
-                'database_error': str(db_error)
+                'database_error': f'Setup error: {str(db_error)}'
             })
         
         return jsonify(health_info)
