@@ -7,7 +7,8 @@ eventlet==0.33.3
 gunicorn==21.2.0
 python-dotenv==1.0.0
 psycopg2-binary==2.9.7  # For PostgreSQL on Render
-
+Pillow==10.0.0  
+numpy==1.24.3
 # Security & Utilities
 pyjwt==2.8.0  # Optional for enhanced auth
 requests==2.31.0
