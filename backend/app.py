@@ -1,7 +1,7 @@
 ﻿"""
 CAPSTONE PROJECT - DRIVER ALERT SYSTEM
 PostgreSQL-only Version for Render.com Deployment
-CLEANED VERSION - Consistent Password Hashing
+UPDATED VERSION - Using bcrypt for Password Hashing
 """
 
 import os
@@ -16,11 +16,11 @@ import uuid
 import eventlet
 import base64
 import json
-import hashlib
 import secrets
 import threading
 import time
 import re
+import bcrypt
 from contextlib import contextmanager
 import urllib.parse
 
@@ -82,9 +82,12 @@ socketio = SocketIO(app,
                    engineio_logger=False)
 
 # ==================== SECURITY CONFIGURATION ====================
+# Generate bcrypt hash for admin password (admin123)
+# You can generate this by running: bcrypt.hashpw(b'admin123', bcrypt.gensalt())
 ADMIN_CREDENTIALS = {
     'admin': {
-        'password_hash': '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918',  # admin123
+        # bcrypt hash for 'admin123'
+        'password_hash': bcrypt.hashpw(b'admin123', bcrypt.gensalt()).decode('utf-8'),
         'full_name': 'System Administrator',
         'role': 'super_admin',
         'email': 'admin@driveralert.com',
@@ -96,22 +99,49 @@ admin_rate_limit = {}
 guardian_rate_limit = {}
 admin_sessions = {}
 
-# ==================== PASSWORD HASHING FUNCTION ====================
+# ==================== PASSWORD HASHING FUNCTIONS ====================
 def hash_password(password):
-    """Hash password using SHA-256 - SIMPLE AND CONSISTENT"""
-    # IMPORTANT: This function must be used consistently across ALL password operations
-    salt = "driver_alert_system_salt_2024"
-    return hashlib.sha256((password + salt).encode()).hexdigest()
+    """Hash password using bcrypt with automatic salt generation"""
+    try:
+        # Convert password to bytes and hash with bcrypt
+        password_bytes = password.encode('utf-8')
+        hashed = bcrypt.hashpw(password_bytes, bcrypt.gensalt())
+        return hashed.decode('utf-8')
+    except Exception as e:
+        print(f"❌ Error hashing password with bcrypt: {e}")
+        # Fallback to simple hash for compatibility (not recommended for production)
+        import hashlib
+        salt = "driver_alert_system_salt_2024"
+        return hashlib.sha256((password + salt).encode()).hexdigest()
+
+def verify_password(password, hashed_password):
+    """Verify password against bcrypt hash"""
+    try:
+        # Convert both to bytes
+        password_bytes = password.encode('utf-8')
+        hashed_bytes = hashed_password.encode('utf-8')
+        
+        # Use bcrypt to check password
+        return bcrypt.checkpw(password_bytes, hashed_bytes)
+    except Exception as e:
+        print(f"⚠️ Error verifying password with bcrypt: {e}")
+        # Fallback for compatibility with old SHA-256 hashes
+        try:
+            import hashlib
+            salt = "driver_alert_system_salt_2024"
+            provided_hash = hashlib.sha256((password + salt).encode()).hexdigest()
+            return provided_hash == hashed_password
+        except:
+            return False
 
 def verify_admin_credentials(username, password):
-    """Verify admin login credentials"""
+    """Verify admin login credentials using bcrypt"""
     if username not in ADMIN_CREDENTIALS:
         return None
     
-    # Use the SAME hash function
-    password_hash = hash_password(password)
+    stored_hash = ADMIN_CREDENTIALS[username]['password_hash']
     
-    if password_hash == ADMIN_CREDENTIALS[username]['password_hash']:
+    if verify_password(password, stored_hash):
         return {
             'username': username,
             'full_name': ADMIN_CREDENTIALS[username]['full_name'],
@@ -562,7 +592,7 @@ def invalidate_session(guardian_id, token=None):
 
 # ==================== AUTHENTICATION FUNCTIONS ====================
 def verify_guardian_credentials(phone, password):
-    """Verify guardian login credentials"""
+    """Verify guardian login credentials using bcrypt"""
     try:
         # Clean the phone number (remove spaces, dashes, parentheses)
         phone = str(phone).strip()
@@ -586,7 +616,7 @@ def verify_guardian_credentials(phone, password):
                 guardian_id, full_name, stored_hash, failed_attempts, locked_until = result
                 
                 print(f"✅ [LOGIN VERIFY] User found: {full_name}")
-                print(f"   Stored hash: {stored_hash[:20]}...")
+                print(f"   Stored hash type: bcrypt")
                 
                 # Check if account is locked
                 if locked_until:
@@ -603,12 +633,10 @@ def verify_guardian_credentials(phone, password):
                     except Exception as e:
                         print(f"⚠️ [LOGIN VERIFY] Error parsing lock time: {e}")
                 
-                # Verify password using the SAME hash function
-                provided_hash = hash_password(password)
-                print(f"   Provided hash: {provided_hash[:20]}...")
-                print(f"   Hashes match: {stored_hash == provided_hash}")
+                # Verify password using bcrypt
+                print(f"   Password verification...")
                 
-                if provided_hash == stored_hash:
+                if verify_password(password, stored_hash):
                     print(f"✅ [LOGIN VERIFY] Password matches!")
                     # Reset failed attempts on successful login
                     try:
@@ -1821,7 +1849,7 @@ def validate_session_endpoint():
 
 @app.route('/api/register-guardian', methods=['POST'])
 def register_guardian():
-    """Register a new guardian"""
+    """Register a new guardian using bcrypt for password hashing"""
     try:
         data = request.json
         
@@ -1885,9 +1913,9 @@ def register_guardian():
                     'error': 'Phone number already registered'
                 }), 409
             
-            # USE THE SAME hash_password FUNCTION AS LOGIN
+            # USE bcrypt for password hashing
             password_hash = hash_password(data['password'])
-            print(f"🔍 [REGISTRATION] Password hash: {password_hash[:20]}...")
+            print(f"🔍 [REGISTRATION] Password hash generated with bcrypt")
             
             try:
                 cursor.execute('''
@@ -2642,6 +2670,7 @@ def startup_tasks():
     
     print("🌐 DEPLOYMENT: Render.com Cloud")
     print("📊 Database: PostgreSQL (Persistent)")
+    print("🔒 Security: bcrypt password hashing enabled")
     
     # Check environment
     print("\n🔧 Environment Check:")
