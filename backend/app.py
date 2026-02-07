@@ -1,7 +1,7 @@
 ﻿"""
 CAPSTONE PROJECT - DRIVER ALERT SYSTEM
 PostgreSQL-only Version for Render.com Deployment
-COMPLETE VERSION - PostgreSQL syntax only
+CLEANED VERSION - Consistent Password Hashing
 """
 
 import os
@@ -96,9 +96,10 @@ admin_rate_limit = {}
 guardian_rate_limit = {}
 admin_sessions = {}
 
-# ==================== SECURITY FUNCTIONS ====================
+# ==================== PASSWORD HASHING FUNCTION ====================
 def hash_password(password):
-    """Hash password using SHA-256 with fixed salt"""
+    """Hash password using SHA-256 - SIMPLE AND CONSISTENT"""
+    # IMPORTANT: This function must be used consistently across ALL password operations
     salt = "driver_alert_system_salt_2024"
     return hashlib.sha256((password + salt).encode()).hexdigest()
 
@@ -107,6 +108,7 @@ def verify_admin_credentials(username, password):
     if username not in ADMIN_CREDENTIALS:
         return None
     
+    # Use the SAME hash function
     password_hash = hash_password(password)
     
     if password_hash == ADMIN_CREDENTIALS[username]['password_hash']:
@@ -206,21 +208,6 @@ def rate_limit_exceeded(ip, endpoint_type='general', limit=100):
     return False
 
 # ==================== DATABASE CONNECTION MANAGEMENT ====================
-def get_database_url():
-    """Get and validate database URL"""
-    database_url = os.environ.get('DATABASE_URL')
-    
-    if not database_url:
-        print("❌ DATABASE_URL environment variable is not set!")
-        return None
-    
-    # Fix common URL format issues
-    if database_url.startswith('postgres://'):
-        database_url = database_url.replace('postgres://', 'postgresql://', 1)
-        print("🔧 Fixed postgres:// to postgresql://")
-    
-    return database_url
-
 @contextmanager
 def get_db_connection():
     """Context manager for database connections"""
@@ -448,22 +435,6 @@ def init_db():
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_guardians_active ON guardians(is_active)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_admin_activity_timestamp ON admin_activity_log(timestamp)')
-            
-            # Insert demo guardian if not exists
-            try:
-                cursor.execute('SELECT COUNT(*) FROM guardians WHERE phone = %s', ('09123456789',))
-                count = cursor.fetchone()[0]
-                
-                if count == 0:
-                    demo_password_hash = hash_password('demo123')
-                    cursor.execute('''
-                        INSERT INTO guardians (full_name, phone, email, password_hash, address, last_login)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    ''', ('Demo Guardian', '09123456789', 'demo@driveralert.com', 
-                          demo_password_hash, 'Demo Address', datetime.now()))
-                    print("✅ Demo guardian created")
-            except Exception as e:
-                print(f"⚠️ Could not create demo guardian: {e}")
         
         print("✅ Database initialized successfully")
         return True
@@ -591,13 +562,13 @@ def invalidate_session(guardian_id, token=None):
 
 # ==================== AUTHENTICATION FUNCTIONS ====================
 def verify_guardian_credentials(phone, password):
-    """Verify guardian login credentials - ACCEPTS ALL FORMATS"""
+    """Verify guardian login credentials"""
     try:
         # Clean the phone number (remove spaces, dashes, parentheses)
         phone = str(phone).strip()
         phone = re.sub(r'[\s\-\(\)]', '', phone)
         
-        print(f"🔍 [LOGIN VERIFY] Phone after clean: '{phone}'")
+        print(f"🔍 [LOGIN VERIFY] Phone: '{phone}'")
         
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -611,52 +582,11 @@ def verify_guardian_credentials(phone, password):
             
             result = cursor.fetchone()
             
-            # If not found with exact match, try alternative formats
-            if not result:
-                print(f"🔍 [LOGIN VERIFY] Exact match not found, trying alternatives...")
-                
-                # Generate alternative formats
-                alternative_phones = []
-                
-                if phone.startswith('0'):
-                    # 09XXXXXXXXX -> try +639XXXXXXXXX
-                    alternative_phones.append('+63' + phone[1:])
-                    # 09XXXXXXXXX -> try 639XXXXXXXXX  
-                    alternative_phones.append('63' + phone[1:])
-                elif phone.startswith('63') and not phone.startswith('+'):
-                    # 639XXXXXXXXX -> try +639XXXXXXXXX
-                    alternative_phones.append('+' + phone)
-                    # 639XXXXXXXXX -> try 09XXXXXXXXX
-                    alternative_phones.append('0' + phone[2:])
-                elif phone.startswith('+63'):
-                    # +639XXXXXXXXX -> try 09XXXXXXXXX
-                    alternative_phones.append('0' + phone[3:])
-                    # +639XXXXXXXXX -> try 639XXXXXXXXX
-                    alternative_phones.append(phone[1:])
-                
-                # Remove duplicates
-                alternative_phones = list(set(alternative_phones))
-                print(f"🔍 [LOGIN VERIFY] Trying alternatives: {alternative_phones}")
-                
-                # Try each alternative
-                for alt_phone in alternative_phones:
-                    cursor.execute('''
-                        SELECT guardian_id, full_name, password_hash, failed_login_attempts, locked_until
-                        FROM guardians 
-                        WHERE phone = %s AND is_active = TRUE
-                    ''', (alt_phone,))
-                    
-                    result = cursor.fetchone()
-                    if result:
-                        print(f"✅ [LOGIN VERIFY] Found with alternative: {alt_phone}")
-                        break
-            
             if result:
                 guardian_id, full_name, stored_hash, failed_attempts, locked_until = result
                 
                 print(f"✅ [LOGIN VERIFY] User found: {full_name}")
-                print(f"   Stored hash (FULL): {stored_hash}")
-                print(f"   Stored hash length: {len(stored_hash)}")
+                print(f"   Stored hash: {stored_hash[:20]}...")
                 
                 # Check if account is locked
                 if locked_until:
@@ -673,10 +603,10 @@ def verify_guardian_credentials(phone, password):
                     except Exception as e:
                         print(f"⚠️ [LOGIN VERIFY] Error parsing lock time: {e}")
                 
-                # Verify password
+                # Verify password using the SAME hash function
                 provided_hash = hash_password(password)
-                print(f"   Provided hash (FULL): {provided_hash}")
-                print(f"   Provided hash length: {len(provided_hash)}")
+                print(f"   Provided hash: {provided_hash[:20]}...")
+                print(f"   Hashes match: {stored_hash == provided_hash}")
                 
                 if provided_hash == stored_hash:
                     print(f"✅ [LOGIN VERIFY] Password matches!")
@@ -695,14 +625,9 @@ def verify_guardian_credentials(phone, password):
                     }
                 else:
                     print(f"❌ [LOGIN VERIFY] Password mismatch")
-                    # Compare character by character
-                    for i, (s, p) in enumerate(zip(stored_hash, provided_hash)):
-                        if s != p:
-                            print(f"   First mismatch at position {i}: stored='{s}', provided='{p}'")
-                            break
                     return None
             else:
-                print(f"❌ [LOGIN VERIFY] No user found with phone: '{phone}' or any alternatives")
+                print(f"❌ [LOGIN VERIFY] No user found with phone: '{phone}'")
                     
     except Exception as e:
         print(f"❌ [LOGIN VERIFY] Error: {e}")
@@ -710,23 +635,6 @@ def verify_guardian_credentials(phone, password):
         traceback.print_exc()
     
     return None
-
-def normalize_phone_number(phone):
-    """Normalize phone number to +639 format (same as registration)"""
-    if not phone:
-        return phone
-    
-    phone = str(phone).strip()
-    phone = re.sub(r'[\s\-\(\)]', '', phone)
-    
-    if phone.startswith('0'):
-        return '+63' + phone[1:]
-    elif phone.startswith('63') and not phone.startswith('+'):
-        return '+' + phone
-    elif phone.startswith('+63'):
-        return phone
-    else:
-        return phone
 
 def get_guardian_by_id(guardian_id):
     """Get guardian information by ID"""
@@ -1977,7 +1885,9 @@ def register_guardian():
                     'error': 'Phone number already registered'
                 }), 409
             
+            # USE THE SAME hash_password FUNCTION AS LOGIN
             password_hash = hash_password(data['password'])
+            print(f"🔍 [REGISTRATION] Password hash: {password_hash[:20]}...")
             
             try:
                 cursor.execute('''
@@ -2209,7 +2119,7 @@ def register_driver():
 # ==================== ALERT ENDPOINTS ====================
 @app.route('/api/send-alert', methods=['POST'])
 def send_alert():
-    """Send drowsiness alert - Enhanced version with detailed detection data"""
+    """Send drowsiness alert"""
     try:
         data = request.json
         driver_id = data.get('driver_id')
@@ -2241,21 +2151,20 @@ def send_alert():
             print(f"✅ Found driver in DB: {driver_name} -> Guardian: {guardian_name}")
             
         else:
-            # Driver not found - create a temporary record or use demo guardian
-            print(f"⚠️ Driver not found: {driver_id}. Using demo guardian.")
+            # Driver not found - create a temporary record
+            print(f"⚠️ Driver not found: {driver_id}. Creating temp record.")
             
-            # Find demo guardian
+            # Find any guardian
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 try:
-                    cursor.execute('SELECT guardian_id, full_name, phone FROM guardians WHERE phone = %s', ('09123456789',))
-                
-                    demo_guardian = cursor.fetchone()
+                    cursor.execute('SELECT guardian_id, full_name, phone FROM guardians LIMIT 1')
+                    guardian_result = cursor.fetchone()
                     
-                    if demo_guardian:
-                        guardian_id, guardian_name, guardian_phone = demo_guardian['guardian_id'], demo_guardian['full_name'], demo_guardian['phone']
+                    if guardian_result:
+                        guardian_id, guardian_name, guardian_phone = guardian_result['guardian_id'], guardian_result['full_name'], guardian_result['phone']
                         
-                        # Create a temporary driver entry if needed
+                        # Create a temporary driver entry
                         temp_driver_id = f"TEMP{int(time.time())}"
                         try:
                             cursor.execute('''
@@ -2273,7 +2182,7 @@ def send_alert():
                             'error': 'No guardian found for this alert'
                         }), 404
                 except Exception as e:
-                    print(f"❌ Error finding demo guardian: {e}")
+                    print(f"❌ Error finding guardian: {e}")
                     return jsonify({
                         'success': False,
                         'error': 'System error'
@@ -2607,27 +2516,27 @@ def test_alert():
     try:
         data = request.json or {}
         
-        # Use demo guardian for testing
+        # Use first guardian for testing
         with get_db_connection() as conn:
             cursor = conn.cursor()
             try:
-                cursor.execute('SELECT guardian_id, full_name FROM guardians WHERE phone = %s', ('09123456789',))
+                cursor.execute('SELECT guardian_id, full_name FROM guardians LIMIT 1')
+                guardian_result = cursor.fetchone()
+                
+                if not guardian_result:
+                    return jsonify({
+                        'success': False,
+                        'error': 'No guardian found'
+                    }), 404
+                
+                guardian_id, guardian_name = guardian_result['guardian_id'], guardian_result['full_name']
+                
             except Exception as e:
-                print(f"❌ Error finding demo guardian: {e}")
+                print(f"❌ Error finding guardian: {e}")
                 return jsonify({
                     'success': False,
-                    'error': 'Demo guardian not found'
+                    'error': 'Guardian not found'
                 }), 404
-            
-            demo_guardian_result = cursor.fetchone()
-            
-            if not demo_guardian_result:
-                return jsonify({
-                    'success': False,
-                    'error': 'Demo guardian not found'
-                }), 404
-            
-            guardian_id, guardian_name = demo_guardian_result['guardian_id'], demo_guardian_result['full_name']
             
             # Create test driver if needed
             test_driver_id = data.get('driver_id', 'TEST123')
@@ -2762,10 +2671,6 @@ def startup_tasks():
     else:
         print("❌ DATABASE_URL not found")
         print("   Please add DATABASE_URL to environment variables")
-    
-    print(f"\n📱 DEMO CREDENTIALS:")
-    print("  Phone: 09123456789")
-    print("  Password: demo123")
     
     print(f"\n🔗 API Endpoints:")
     print("  • GET  /api/health - Health check")
