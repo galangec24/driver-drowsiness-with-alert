@@ -1,0 +1,42 @@
+# .gitattributes - Handle line endings properly
+*.py text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Binary files (should not be modified)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.so binary
+
+# Model files (binary)
+*.pkl binary
+*.h5 binary
+*.pth binary
+*.pt binary
+*.onnx binary
+*.pb binary
+
+# Environment files (never commit)
+.env binary
+.env.local binary
+.env.production binary
+.env.development binary
+service-account-key.json binary
+
+# Force LF for specific files
+.gitattributes text eol=lf
+.gitignore text eol=lf
+.editorconfig text eol=lf

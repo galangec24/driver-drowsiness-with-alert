@@ -21,3 +21,77 @@ instance/
 *.h5
 *.pth
 *.pkl
+
+# Cloudinary cache
+.cloudinary/
+
+# Service account keys (Google Cloud)
+*.json
+*.key
+*.pem
+credentials/
+keys/
+secrets/
+
+test_cloudinary.py
+test_*.py
+
+
+# Python virtual environment
+venv/
+env/
+.venv/
+ENV/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+temp_downloads/
+tmp/
+*.tmp
+*.temp
+
+# Logs
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite3
+*.sqlite
+
+# Media
+*.mp4
+*.avi
+*.mov
+*.wav
+*.mp3
+
+# Model checkpoints
+checkpoints/
+weights/
+runs/
+
+# Local configuration
+config/local.py
+config/development.py
+
+#Cloudinary Configuration
+config/cloudinary_config.py
+config/cloudinary_config_local.py
+config/local_settings.py
+config/development.py
+config/production.py

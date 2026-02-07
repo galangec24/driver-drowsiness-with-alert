@@ -5,7 +5,15 @@ UPDATED VERSION - Fixed bcrypt implementation
 """
 
 import os
+from pathlib import Path
+import sys
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=project_root / '.env')
 
 from flask import Flask, request, jsonify, send_from_directory, Response, redirect
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -28,6 +36,23 @@ import traceback
 # ==================== POSTGRESQL CONFIGURATION ====================
 import psycopg2
 from psycopg2.extras import RealDictCursor
+
+try:
+    from backend.utils.cloudinary_manager import get_cloudinary_storage
+    cloudinary_storage = get_cloudinary_storage()
+    print("✅ Cloudinary storage initialized")
+except ImportError as e:
+    print(f"⚠️ Cloudinary import error: {e}")
+    cloudinary_storage = None
+except Exception as e:
+    print(f"⚠️ Cloudinary initialization error: {e}")
+    cloudinary_storage = None
+
+# ==================== APP SETUP ====================
+app = Flask(__name__, 
+            static_folder=str(project_root / 'frontend'),
+            static_url_path='')
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
 POSTGRES_AVAILABLE = True
 
@@ -744,31 +769,37 @@ def is_mobile_device():
 
 # ==================== UTILITY FUNCTIONS ====================
 def save_base64_image(base64_string, driver_id, image_number):
-    """Save base64 image to file and database - THREAD-SAFE"""
+    """Save base64 image to Cloudinary"""
     try:
-        driver_dir = os.path.join(FACE_IMAGES_DIR, driver_id)
-        os.makedirs(driver_dir, exist_ok=True)
+        print(f"💾 Saving face {image_number} for driver {driver_id}...")
         
-        if base64_string.startswith('data:image'):
-            base64_string = base64_string.split(',')[1]
+        # Upload to Cloudinary
+        from utils.cloudinary_manager import get_cloudinary_storage
+        storage = get_cloudinary_storage()
         
-        image_data = base64.b64decode(base64_string)
-        image_filename = f'face_{image_number}_{int(time.time())}.jpg'
-        image_path = os.path.join(driver_dir, image_filename)
+        cloudinary_url = storage.upload_driver_face(
+            base64_string, driver_id, image_number
+        )
         
-        with open(image_path, 'wb') as f:
-            f.write(image_data)
+        if not cloudinary_url:
+            print(f"❌ Cloudinary upload failed for driver {driver_id}")
+            return None
         
-        with db_write_lock:
-            with get_db_cursor() as cursor:
-                try:
-                    cursor.execute('INSERT INTO face_images (driver_id, image_path) VALUES (%s, %s)', (driver_id, image_path))
-                except Exception as e:
-                    print(f"❌ Error saving image to database: {e}")
+        print(f"✅ Uploaded to: {cloudinary_url}")
         
-        return image_path
+        # Save to PostgreSQL
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO face_images (driver_id, image_path, cloudinary_url, image_number)
+                VALUES (%s, %s, %s, %s)
+            ''', (driver_id, cloudinary_url, cloudinary_url, image_number))
+        
+        return cloudinary_url
+        
     except Exception as e:
         print(f"❌ Error saving image: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def get_guardian_drivers(guardian_id):
