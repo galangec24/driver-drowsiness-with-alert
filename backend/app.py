@@ -1,7 +1,7 @@
 ﻿"""
 CAPSTONE PROJECT - DRIVER ALERT SYSTEM
 PostgreSQL-only Version for Render.com Deployment
-UPDATED VERSION - Fixed bcrypt implementation
+FIXED VERSION - Corrected bcrypt implementation and auto-login
 """
 
 import os
@@ -644,7 +644,8 @@ def verify_guardian_credentials(phone, password):
                 guardian_id, full_name, stored_hash, failed_attempts, locked_until = result
                 
                 print(f"✅ [LOGIN VERIFY] User found: {full_name}")
-                print(f"   Stored hash preview: {stored_hash[:30] if stored_hash else 'None'}...")
+                print(f"   Stored hash length: {len(stored_hash) if stored_hash else 0}")
+                print(f"   Hash preview: {stored_hash[:30] if stored_hash else 'None'}...")
                 
                 # Check if account is locked
                 if locked_until:
@@ -668,34 +669,47 @@ def verify_guardian_credentials(phone, password):
                         print(f"⚠️ [LOGIN VERIFY] Error parsing lock time '{locked_until}': {e}")
                         # Continue anyway, don't lock out due to parsing error
                 
+                # Check if hash is valid bcrypt format
+                if not stored_hash or not stored_hash.startswith('$2'):
+                    print(f"❌ [LOGIN VERIFY] Invalid bcrypt hash format in database")
+                    return None
+                
                 # Verify password using bcrypt
                 print(f"   Password verification...")
                 
-                if verify_password(password, stored_hash):
-                    print(f"✅ [LOGIN VERIFY] Password matches!")
-                    # Reset failed attempts on successful login
-                    try:
-                        cursor.execute('UPDATE guardians SET failed_login_attempts = 0, last_login = %s WHERE guardian_id = %s', 
-                                     (datetime.now(), guardian_id))
-                    except Exception as e:
-                        print(f"⚠️ [LOGIN VERIFY] Error resetting failed attempts: {e}")
-                    conn.commit()
+                try:
+                    password_bytes = password.encode('utf-8')
+                    hashed_bytes = stored_hash.encode('utf-8')
                     
-                    return {
-                        'guardian_id': guardian_id, 
-                        'full_name': full_name, 
-                        'phone': phone
-                    }
-                else:
-                    print(f"❌ [LOGIN VERIFY] Password mismatch")
-                    # Increment failed attempts
-                    try:
-                        cursor.execute('UPDATE guardians SET failed_login_attempts = failed_login_attempts + 1 WHERE guardian_id = %s', 
-                                     (guardian_id,))
+                    if bcrypt.checkpw(password_bytes, hashed_bytes):
+                        print(f"✅ [LOGIN VERIFY] Password verified successfully")
+                        # Reset failed attempts on successful login
+                        try:
+                            cursor.execute('UPDATE guardians SET failed_login_attempts = 0, last_login = %s WHERE guardian_id = %s', 
+                                         (datetime.now(), guardian_id))
+                        except Exception as e:
+                            print(f"⚠️ [LOGIN VERIFY] Error resetting failed attempts: {e}")
                         conn.commit()
-                    except Exception as e:
-                        print(f"⚠️ Error updating failed attempts: {e}")
-                    
+                        
+                        return {
+                            'guardian_id': guardian_id, 
+                            'full_name': full_name, 
+                            'phone': phone
+                        }
+                    else:
+                        print(f"❌ [LOGIN VERIFY] Password verification failed")
+                        # Increment failed attempts
+                        try:
+                            cursor.execute('UPDATE guardians SET failed_login_attempts = failed_login_attempts + 1 WHERE guardian_id = %s', 
+                                         (guardian_id,))
+                            conn.commit()
+                        except Exception as e:
+                            print(f"⚠️ Error updating failed attempts: {e}")
+                        
+                        return None
+                        
+                except Exception as hash_error:
+                    print(f"❌ [LOGIN VERIFY] Hash verification error: {hash_error}")
                     return None
             else:
                 print(f"❌ [LOGIN VERIFY] No user found with phone: '{phone}'")
@@ -1870,6 +1884,14 @@ def login():
                                  request.headers.get('User-Agent'))
             
             if token:
+                # Update last login timestamp
+                try:
+                    with get_db_cursor() as cursor:
+                        cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
+                                     (datetime.now(), guardian['guardian_id']))
+                except Exception as e:
+                    print(f"⚠️ Error updating last login: {e}")
+                
                 log_activity(guardian['guardian_id'], 'LOGIN', 
                             f'Guardian logged in from {request.remote_addr}')
                 
@@ -1889,6 +1911,7 @@ def login():
         
     except Exception as e:
         print(f"❌ Login error: {e}")
+        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': 'Login failed. Please try again.'
@@ -1973,7 +1996,7 @@ def validate_session_endpoint():
 
 @app.route('/api/register-guardian', methods=['POST'])
 def register_guardian():
-    """Register a new guardian using bcrypt for password hashing"""
+    """Register a new guardian using bcrypt for password hashing - FIXED VERSION"""
     try:
         data = request.json
         
@@ -2037,9 +2060,13 @@ def register_guardian():
                     'error': 'Phone number already registered'
                 }), 409
             
-            # USE bcrypt for password hashing
-            password_hash = hash_password(data['password'])
-            print(f"🔍 [REGISTRATION] Password hash generated with bcrypt: {password_hash[:30]}...")
+            # FIXED: Use bcrypt directly to generate hash
+            password_bytes = data['password'].encode('utf-8')
+            password_hash = bcrypt.hashpw(password_bytes, bcrypt.gensalt(rounds=12)).decode('utf-8')
+            
+            print(f"🔍 [REGISTRATION] Generated bcrypt hash: {password_hash[:60]}...")
+            print(f"🔍 [REGISTRATION] Hash starts with: {password_hash[:10]}")
+            print(f"🔍 [REGISTRATION] Hash length: {len(password_hash)}")
             
             try:
                 cursor.execute('''
@@ -2055,6 +2082,7 @@ def register_guardian():
                 ))
             except Exception as e:
                 print(f"❌ Error inserting guardian: {e}")
+                traceback.print_exc()
                 return jsonify({
                     'success': False,
                     'error': 'Registration failed. Please try again.'
@@ -2064,16 +2092,38 @@ def register_guardian():
                 cursor.execute('SELECT LASTVAL()')
                 guardian_id = cursor.fetchone()[0]
             except:
-                guardian_id = None
+                # Fallback: get the ID by phone
+                cursor.execute('SELECT guardian_id FROM guardians WHERE phone = %s', (phone,))
+                result = cursor.fetchone()
+                guardian_id = result[0] if result else None
         
         print(f"✅ Guardian registered: {data['full_name']} (ID: {guardian_id}, Phone: '{phone}')")
+        
+        # Immediately attempt to create a session for auto-login
+        if guardian_id:
+            token = create_session(guardian_id, request.remote_addr, 
+                                 request.headers.get('User-Agent'))
+            
+            if token:
+                print(f"✅ Session created for auto-login: {token[:20]}...")
+                
+                return jsonify({
+                    'success': True,
+                    'guardian_id': guardian_id,
+                    'full_name': data['full_name'],
+                    'phone': phone,
+                    'session_token': token,  # Return token for immediate login
+                    'message': 'Registration successful. Auto-login enabled.'
+                })
+            else:
+                print(f"⚠️ Could not create session, but registration succeeded")
         
         return jsonify({
             'success': True,
             'guardian_id': guardian_id,
             'full_name': data['full_name'],
-            'phone': phone,  # Return the exact phone stored
-            'message': 'Registration successful'
+            'phone': phone,
+            'message': 'Registration successful. Please login.'
         })
         
     except Exception as e:
@@ -2742,6 +2792,36 @@ def test_alert():
             'error': str(e)
         }), 500
 
+# ==================== DATABASE FIX FUNCTIONS ====================
+def fix_password_hashes():
+    """Fix password hashes for existing users (run once)"""
+    try:
+        print("🛠️  Checking password hashes...")
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get all guardians
+            cursor.execute('SELECT guardian_id, phone, password_hash FROM guardians')
+            guardians = cursor.fetchall()
+            
+            for guardian in guardians:
+                guardian_id, phone, stored_hash = guardian['guardian_id'], guardian['phone'], guardian['password_hash']
+                
+                # Check if hash is valid bcrypt format
+                if stored_hash and not stored_hash.startswith('$2'):
+                    print(f"⚠️ Found invalid hash for guardian {guardian_id} ({phone}): {stored_hash[:30]}...")
+                    print(f"   Hash starts with: {stored_hash[:10] if stored_hash else 'None'}")
+                    print(f"   Hash length: {len(stored_hash) if stored_hash else 0}")
+                    
+                    # You would need to reset password here
+                    # For now, just log it
+                    
+        print("✅ Password hash check completed")
+        
+    except Exception as e:
+        print(f"❌ Error checking password hashes: {e}")
+
 # ==================== CLEANUP FUNCTIONS ====================
 def cleanup_expired_sessions():
     """Clean up expired sessions periodically"""
@@ -2838,6 +2918,9 @@ def startup_tasks():
     print("  • Admin Username: admin")
     print("  • Admin Password: admin123")
     print("  • Password Hashing: bcrypt (12 rounds)")
+    
+    print(f"\n🛠️  Running database fixes...")
+    fix_password_hashes()
     
     print(f"{'='*70}\n")
     
