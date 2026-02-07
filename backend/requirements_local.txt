@@ -1,5 +1,5 @@
 # First install server dependencies
--r requirements-server.txt
+# -r requirements-server.txt
 
 # Computer Vision & ML (Local Only)
 opencv-python==4.8.1.78
