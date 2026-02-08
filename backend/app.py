@@ -1871,71 +1871,89 @@ def admin_clear_alerts():
 # ==================== GUARDIAN AUTHENTICATION ENDPOINTS ====================
 @app.route('/api/login', methods=['POST'])
 def login():
-    """Guardian login"""
+    """Guardian login with bcrypt verification"""
     try:
         data = request.json
-        phone = data.get('phone')
-        password = data.get('password')
-        
+        phone = data.get('phone', '').strip()
+        password = data.get('password', '')
+
         if not phone or not password:
-            return jsonify({
-                'success': False,
-                'error': 'Phone and password required'
-            }), 400
-        
+            return jsonify({'success': False, 'error': 'Phone and password required'}), 400
+
         ip = request.remote_addr
         if rate_limit_exceeded(ip, 'guardian_login', limit=10):
-            return jsonify({
-                'success': False,
-                'error': 'Too many login attempts'
-            }), 429
-        
-        guardian = verify_guardian_credentials(phone, password)
-        
-        if guardian:
-            if 'error' in guardian and guardian['error'] == 'Account locked':
-                return jsonify({
-                    'success': False,
-                    'error': 'Account locked. Please try again later.',
-                    'locked_until': guardian.get('locked_until')
-                }), 423
-            
-            token = create_session(guardian['guardian_id'], request.remote_addr, 
-                                 request.headers.get('User-Agent'))
-            
-            if token:
-                # Update last login timestamp
-                try:
-                    with get_db_cursor() as cursor:
-                        cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
-                                     (datetime.now(), guardian['guardian_id']))
-                except Exception as e:
-                    print(f"⚠️ Error updating last login: {e}")
-                
-                log_activity(guardian['guardian_id'], 'LOGIN', 
-                            f'Guardian logged in from {request.remote_addr}')
-                
-                return jsonify({
-                    'success': True,
-                    'guardian_id': guardian['guardian_id'],
-                    'full_name': guardian['full_name'],
-                    'phone': guardian['phone'],
-                    'session_token': token,
-                    'message': 'Login successful'
-                })
-        
+            return jsonify({'success': False, 'error': 'Too many login attempts'}), 429
+
+        # --- Normalize phone to 09XXXXXXXXX ---
+        phone_clean = re.sub(r'[\s\-\(\)\+]', '', phone)
+        if len(phone_clean) == 12 and phone_clean.startswith('639'):
+            lookup_phone = '09' + phone_clean[3:]
+        elif len(phone_clean) == 11 and phone_clean.startswith('63'):
+            lookup_phone = '09' + phone_clean[2:]
+        elif len(phone_clean) == 10 and phone_clean.startswith('9'):
+            lookup_phone = '0' + phone_clean
+        elif len(phone_clean) >= 10:
+            lookup_phone = '09' + phone_clean[-10:]
+        else:
+            return jsonify({'success': False, 'error': 'Invalid phone number format'}), 400
+
+        # --- Fetch guardian from DB ---
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT guardian_id, full_name, password_hash, is_active
+                FROM guardians
+                WHERE phone = %s
+            ''', (lookup_phone,))
+            result = cursor.fetchone()
+
+            if not result:
+                return jsonify({'success': False, 'error': 'Invalid phone or password'}), 401
+
+            guardian_id, full_name, stored_hash, is_active = result
+
+            if not is_active:
+                return jsonify({'success': False, 'error': 'Account locked. Please contact support.'}), 423
+
+            # --- Verify password ---
+            try:
+                if not stored_hash:
+                    return jsonify({'success': False, 'error': 'Password not set for user'}), 500
+
+                if not bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
+                    return jsonify({'success': False, 'error': 'Invalid phone or password'}), 401
+            except Exception as hash_error:
+                print(f"❌ Password verification error: {hash_error}")
+                traceback.print_exc()
+                return jsonify({'success': False, 'error': 'Login failed. Please try again.'}), 500
+
+            # --- Password correct, create session ---
+            token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
+
+            # --- Update last login ---
+            try:
+                cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s',
+                               (datetime.now(), guardian_id))
+                conn.commit()
+            except Exception as update_error:
+                print(f"⚠️ Error updating last login: {update_error}")
+
+            # --- Log activity ---
+            log_activity(guardian_id, 'LOGIN', f'Guardian logged in from {request.remote_addr}')
+
         return jsonify({
-            'success': False,
-            'error': 'Invalid phone or password'
-        }), 401
-        
+            'success': True,
+            'guardian_id': guardian_id,
+            'full_name': full_name,
+            'phone': lookup_phone,
+            'session_token': token,
+            'message': 'Login successful'
+        })
+
     except Exception as e:
         print(f"❌ Login error: {e}")
         traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': 'Login failed. Please try again.'
-        }), 500
+        return jsonify({'success': False, 'error': 'Login failed. Please try again.'}), 500
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
@@ -2016,7 +2034,6 @@ def validate_session_endpoint():
 
 @app.route('/api/register-guardian', methods=['POST'])
 def register_guardian():
-    """Register a new guardian using bcrypt for password hashing - FIXED VERSION"""
     try:
         print("🔍 [REGISTRATION] Endpoint called")
         
@@ -2055,11 +2072,10 @@ def register_guardian():
                 'error': 'Password must be at least 6 characters long'
             }), 400
         
-        # Clean phone number - remove spaces, dashes, parentheses, plus sign
+        # Clean phone number
         phone_clean = re.sub(r'[\s\-\(\)\+]', '', phone)
         print(f"🔍 [REGISTRATION] Cleaned phone (digits only): '{phone_clean}'")
         
-        # VALIDATION: Must be 10-11 digits total
         if not phone_clean.isdigit():
             print(f"❌ [REGISTRATION] Phone contains non-digits: '{phone}'")
             return jsonify({
@@ -2067,56 +2083,18 @@ def register_guardian():
                 'error': 'Phone number can only contain digits'
             }), 400
         
-        # Check length: 10-11 digits for Philippine numbers
-        if len(phone_clean) < 10 or len(phone_clean) > 11:
-            print(f"❌ [REGISTRATION] Invalid phone length: {len(phone_clean)} digits")
-            return jsonify({
-                'success': False,
-                'error': 'Phone number must be 10-11 digits (e.g., 09123456789)'
-            }), 400
-        
-        # FORCE 09 format for ALL numbers
+        # Convert to 09XXXXXXXXX format
         final_phone = phone_clean
-        
-        # If it starts with 639 (12 digits total), convert to 09 (remove first 2 digits)
         if phone_clean.startswith('639') and len(phone_clean) == 12:
-            final_phone = '09' + phone_clean[3:]  # Convert 639XXXXXXXXX to 09XXXXXXXXX
-            print(f"🔍 [REGISTRATION] Converted 639 to 09 format: '{final_phone}'")
-        
-        # If it starts with 63 (11 digits total), convert to 09 (remove first 2 digits)
+            final_phone = '09' + phone_clean[3:]
         elif phone_clean.startswith('63') and len(phone_clean) == 11:
-            final_phone = '09' + phone_clean[2:]  # Convert 63XXXXXXXXX to 09XXXXXXXXX
-            print(f"🔍 [REGISTRATION] Converted 63 to 09 format: '{final_phone}'")
-        
-        # If it starts with 9 (10 digits total), add 0 at the beginning
+            final_phone = '09' + phone_clean[2:]
         elif phone_clean.startswith('9') and len(phone_clean) == 10:
-            final_phone = '0' + phone_clean  # Convert 9XXXXXXXXX to 09XXXXXXXXX
-            print(f"🔍 [REGISTRATION] Added leading 0: '{final_phone}'")
+            final_phone = '0' + phone_clean
+        elif not phone_clean.startswith('09') and len(phone_clean) >= 10:
+            final_phone = '09' + phone_clean[-10:]
         
-        # If it doesn't start with 09, force it to start with 09
-        elif not phone_clean.startswith('09'):
-            # Take last 10 digits and add 09 at the beginning
-            if len(phone_clean) >= 10:
-                last_10_digits = phone_clean[-10:]  # Get last 10 digits
-                final_phone = '09' + last_10_digits
-                print(f"🔍 [REGISTRATION] Forced 09 format from digits: '{final_phone}'")
-            else:
-                print(f"❌ [REGISTRATION] Cannot convert to 09 format: {phone_clean}")
-                return jsonify({
-                    'success': False,
-                    'error': 'Invalid phone number format. Must be 10-11 digits.'
-                }), 400
-        
-        # Final validation: Must now be exactly 11 digits starting with 09
-        if not final_phone.startswith('09'):
-            print(f"❌ [REGISTRATION] Final phone doesn't start with 09: '{final_phone}'")
-            return jsonify({
-                'success': False,
-                'error': 'Phone number must start with 09 (e.g., 09123456789)'
-            }), 400
-        
-        if len(final_phone) != 11:
-            print(f"❌ [REGISTRATION] Invalid final length: {len(final_phone)} digits")
+        if not final_phone.startswith('09') or len(final_phone) != 11:
             return jsonify({
                 'success': False,
                 'error': 'Phone number must be 11 digits (09XXXXXXXXX)'
@@ -2124,95 +2102,48 @@ def register_guardian():
         
         print(f"✅ [REGISTRATION] Final phone to store: '{final_phone}'")
         
-        # Use the existing get_db_cursor context manager
+        # Database operations
         with get_db_cursor() as cursor:
             # Check if phone already exists
             cursor.execute('SELECT guardian_id FROM guardians WHERE phone = %s', (final_phone,))
             existing = cursor.fetchone()
-            
             if existing:
-                print(f"❌ [REGISTRATION] Phone already exists: '{final_phone}'")
                 return jsonify({
                     'success': False,
                     'error': 'Phone number already registered'
                 }), 409
             
-            # Generate bcrypt hash
+            # 🔑 Proper bcrypt hash with salt
             password_bytes = password.encode('utf-8')
-            
-            try:
-                salt = bcrypt.gensalt(rounds=10)
-                password_hash_bytes = bcrypt.hashpw(password_bytes, salt)
-                password_hash = password_hash_bytes.decode('utf-8')
-                print(f"✅ [REGISTRATION] Hash generated successfully, length: {len(password_hash)}")
-                print(f"✅ [REGISTRATION] Hash preview: {password_hash[:60]}...")
-            except Exception as hash_error:
-                print(f"❌ [REGISTRATION] Hash generation failed: {hash_error}")
-                return jsonify({
-                    'success': False,
-                    'error': 'Password processing failed'
-                }), 500
+            password_hash_bytes = bcrypt.hashpw(password_bytes, bcrypt.gensalt())
+            password_hash = password_hash_bytes.decode('utf-8')
+            print(f"✅ [REGISTRATION] Password hash generated")
             
             # Insert into database
-            try:
-                cursor.execute('''
-                    INSERT INTO guardians (
-                        full_name, 
-                        phone, 
-                        email, 
-                        password_hash, 
-                        address, 
-                        registration_date,
-                        last_login,
-                        is_active
-                    )
-                    VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, TRUE)
-                ''', (
-                    full_name,
-                    final_phone,
-                    data.get('email', ''),
-                    password_hash,
-                    data.get('address', '')
-                ))
-                
-                print(f"✅ [REGISTRATION] Database insert successful")
-                
-            except Exception as db_error:
-                print(f"❌ [REGISTRATION] Database error: {db_error}")
-                import traceback
-                traceback.print_exc()
-                
-                # Check for specific database errors
-                error_str = str(db_error).lower()
-                if 'unique constraint' in error_str or 'duplicate key' in error_str:
-                    return jsonify({
-                        'success': False,
-                        'error': 'Phone number already registered'
-                    }), 409
-                elif 'password_hash' in error_str or 'value too long' in error_str:
-                    return jsonify({
-                        'success': False,
-                        'error': 'System error with password storage. Please try a different password.'
-                    }), 500
-                else:
-                    return jsonify({
-                        'success': False,
-                        'error': f'Database error: {str(db_error)[:100]}...'
-                    }), 500
+            cursor.execute('''
+                INSERT INTO guardians (
+                    full_name, 
+                    phone, 
+                    email, 
+                    password_hash, 
+                    address, 
+                    registration_date,
+                    last_login,
+                    is_active
+                )
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, TRUE)
+            ''', (
+                full_name,
+                final_phone,
+                data.get('email', ''),
+                password_hash,
+                data.get('address', '')
+            ))
             
-            # Get the new guardian ID
-            try:
-                cursor.execute('SELECT guardian_id FROM guardians WHERE phone = %s', (final_phone,))
-                result = cursor.fetchone()
-                guardian_id = result[0] if result else None
-                
-                print(f"✅ [REGISTRATION] Guardian created with ID: {guardian_id}")
-                
-            except Exception as id_error:
-                print(f"⚠️ [REGISTRATION] Could not get guardian ID: {id_error}")
-                guardian_id = None
+            cursor.execute('SELECT guardian_id FROM guardians WHERE phone = %s', (final_phone,))
+            result = cursor.fetchone()
+            guardian_id = result[0] if result else None
         
-        # Success response
         response_data = {
             'success': True,
             'guardian_id': guardian_id,
@@ -2222,9 +2153,9 @@ def register_guardian():
             'message': 'Registration successful! You can now login.'
         }
         
-        print(f"✅ [REGISTRATION] Registration complete, returning success")
+        print(f"✅ [REGISTRATION] Registration complete")
         return jsonify(response_data)
-        
+    
     except Exception as e:
         print(f"❌ [REGISTRATION] Unexpected error: {e}")
         import traceback
