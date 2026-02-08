@@ -436,8 +436,8 @@ if ('serviceWorker' in navigator) {
         return;
     }
     
-    if (!phoneNumber || !/^[0-9]{10,11}$/.test(phoneNumber)) {
-        showError('Valid phone number is required (10-11 digits)');
+    if (!phoneNumber || !/^[0-9+\s\-\(\)]{10,15}$/.test(phoneNumber)) {
+        showError('Valid phone number is required (e.g., 09123456789 or +639123456789)');
         return;
     }
     

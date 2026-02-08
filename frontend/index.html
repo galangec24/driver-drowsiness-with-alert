@@ -837,7 +837,7 @@
             
             if (!username || !token) {
                 // Not logged in, redirect to login
-                window.location.href = 'admin-login.html';
+                window.location.href = 'admin_login.html';
                 return false;
             }
             
@@ -867,7 +867,7 @@
                 } else {
                     // Invalid session, clear and redirect
                     localStorage.clear();
-                    window.location.href = 'admin-login.html';
+                    window.location.href = 'admin_login.html';
                     return false;
                 }
             } catch (error) {
@@ -1112,7 +1112,7 @@
             
             // Clear local storage and redirect
             localStorage.clear();
-            window.location.href = 'admin-login.html';
+            window.location.href = 'admin_login.html';
         }
         
         // ==================== SECURE API REQUESTS ====================
