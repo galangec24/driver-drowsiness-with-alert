@@ -579,26 +579,36 @@ def verify_guardian_credentials(phone, password):
             print(f"❌ [LOGIN VERIFY] Phone contains non-digits")
             return None
         
-        # Convert to 09 format (same logic as registration)
+        # Convert to 09 format - FIXED LOGIC
         lookup_phone = phone_clean
         
-        if len(lookup_phone) == 12 and lookup_phone.startswith('639'):
+        # Check if it's already in 09XXXXXXXXX format (11 digits)
+        if len(lookup_phone) == 11 and lookup_phone.startswith('09'):
+            # Already in correct format, no conversion needed
+            print(f"   Already in 09XXXXXXXXX format, using as-is")
+        elif len(lookup_phone) == 12 and lookup_phone.startswith('639'):
             # 639XXXXXXXXX -> 09XXXXXXXXX
             lookup_phone = '09' + lookup_phone[3:]
+            print(f"   Converted 639XXXXXXXXX -> {lookup_phone}")
         elif len(lookup_phone) == 11 and lookup_phone.startswith('63'):
             # 63XXXXXXXXX -> 09XXXXXXXXX
             lookup_phone = '09' + lookup_phone[2:]
+            print(f"   Converted 63XXXXXXXXX -> {lookup_phone}")
         elif len(lookup_phone) == 10 and lookup_phone.startswith('9'):
             # 9XXXXXXXXX -> 09XXXXXXXXX
             lookup_phone = '0' + lookup_phone
-        elif len(lookup_phone) >= 10:
-            # Take last 10 digits and prepend 09
-            last_10_digits = lookup_phone[-10:]
-            lookup_phone = '09' + last_10_digits
+            print(f"   Converted 9XXXXXXXXX -> {lookup_phone}")
+        elif len(lookup_phone) == 10:
+            # XXXXXXXXXX -> 09XXXXXXXXX (assuming missing 09 prefix)
+            lookup_phone = '09' + lookup_phone
+            print(f"   Added 09 prefix -> {lookup_phone}")
+        else:
+            print(f"❌ [LOGIN VERIFY] Invalid phone length: {len(lookup_phone)} digits")
+            return None
         
         # Final validation
         if not lookup_phone.startswith('09') or len(lookup_phone) != 11:
-            print(f"❌ [LOGIN VERIFY] Invalid final format: '{lookup_phone}'")
+            print(f"❌ [LOGIN VERIFY] Invalid final format: '{lookup_phone}' (length: {len(lookup_phone)})")
             return None
         
         print(f"   Looking up in DB as: '{lookup_phone}'")
@@ -1575,24 +1585,47 @@ def register_guardian():
                 'error': 'Phone number can only contain digits'
             }), 400
         
-        # Convert to 09XXXXXXXXX format
+        # ==================== FIXED PHONE CONVERSION LOGIC ====================
+        # Convert to 09XXXXXXXXX format - FIXED VERSION
         final_phone = phone_clean
-        if phone_clean.startswith('639') and len(phone_clean) == 12:
-            final_phone = '09' + phone_clean[3:]
-        elif phone_clean.startswith('63') and len(phone_clean) == 11:
-            final_phone = '09' + phone_clean[2:]
-        elif phone_clean.startswith('9') and len(phone_clean) == 10:
-            final_phone = '0' + phone_clean
-        elif not phone_clean.startswith('09') and len(phone_clean) >= 10:
-            final_phone = '09' + phone_clean[-10:]
         
-        if not final_phone.startswith('09') or len(final_phone) != 11:
+        # Check if it's already in 09XXXXXXXXX format (11 digits)
+        if len(final_phone) == 11 and final_phone.startswith('09'):
+            # Already in correct format, no conversion needed
+            print(f"✅ [REGISTRATION] Phone already in correct 09XXXXXXXXX format")
+        elif len(final_phone) == 12 and final_phone.startswith('639'):
+            # 639XXXXXXXXX -> 09XXXXXXXXX
+            final_phone = '09' + final_phone[3:]
+            print(f"✅ [REGISTRATION] Converted 639XXXXXXXXX -> {final_phone}")
+        elif len(final_phone) == 11 and final_phone.startswith('63'):
+            # 63XXXXXXXXX -> 09XXXXXXXXX
+            final_phone = '09' + final_phone[2:]
+            print(f"✅ [REGISTRATION] Converted 63XXXXXXXXX -> {final_phone}")
+        elif len(final_phone) == 10 and final_phone.startswith('9'):
+            # 9XXXXXXXXX -> 09XXXXXXXXX
+            final_phone = '0' + final_phone
+            print(f"✅ [REGISTRATION] Converted 9XXXXXXXXX -> {final_phone}")
+        elif len(final_phone) == 10:
+            # XXXXXXXXXX -> 09XXXXXXXXX (assuming missing 09 prefix)
+            final_phone = '09' + final_phone
+            print(f"✅ [REGISTRATION] Added 09 prefix -> {final_phone}")
+        else:
+            print(f"❌ [REGISTRATION] Invalid phone length: {len(final_phone)} digits")
             return jsonify({
                 'success': False,
-                'error': 'Phone number must be 11 digits (09XXXXXXXXX)'
+                'error': f'Phone number must be 11 digits (09XXXXXXXXX). Current: {len(final_phone)} digits'
+            }), 400
+        
+        # Final validation
+        if not final_phone.startswith('09') or len(final_phone) != 11:
+            print(f"❌ [REGISTRATION] Invalid final format: '{final_phone}' (length: {len(final_phone)})")
+            return jsonify({
+                'success': False,
+                'error': 'Phone number must be 11 digits starting with 09'
             }), 400
         
         print(f"✅ [REGISTRATION] Final phone to store: '{final_phone}'")
+        # ==================== END FIXED PHONE CONVERSION ====================
         
         # Database operations
         with get_db_cursor() as cursor:
@@ -1600,6 +1633,7 @@ def register_guardian():
             cursor.execute('SELECT guardian_id FROM guardians WHERE phone = %s', (final_phone,))
             existing = cursor.fetchone()
             if existing:
+                print(f"❌ [REGISTRATION] Phone already registered: {final_phone}")
                 return jsonify({
                     'success': False,
                     'error': 'Phone number already registered'
@@ -1608,6 +1642,8 @@ def register_guardian():
             # 🔑 Hash password (password is already cleaned)
             password_hash = hash_password(password)
             print(f"✅ [REGISTRATION] Password hash generated: {password_hash[:30]}...")
+            print(f"   Hash length: {len(password_hash)}")
+            print(f"   Is bcrypt format: {password_hash.startswith('$2')}")
             
             # Insert into database
             cursor.execute('''
@@ -1633,6 +1669,8 @@ def register_guardian():
             cursor.execute('SELECT guardian_id FROM guardians WHERE phone = %s', (final_phone,))
             result = cursor.fetchone()
             guardian_id = result[0] if result else None
+            
+            print(f"✅ [REGISTRATION] Database record created with guardian_id: {guardian_id}")
         
         response_data = {
             'success': True,
