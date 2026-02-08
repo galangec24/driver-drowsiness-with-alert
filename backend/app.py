@@ -913,6 +913,194 @@ def serve_guardian_dashboard():
     else:
         return redirect('/?logged_out=true')
 
+@app.route('/api/debug/login-flow', methods=['POST'])
+def debug_login_flow():
+    """Debug the exact login flow step by step"""
+    try:
+        data = request.json
+        phone = data.get('phone', '').strip()
+        password = data.get('password', '')
+        
+        result = {
+            'success': True,
+            'steps': [],
+            'input': {
+                'phone': phone,
+                'password': password,
+                'password_length': len(password)
+            }
+        }
+        
+        # Step 1: Initial input
+        result['steps'].append({
+            'step': 1,
+            'action': 'Input received',
+            'phone': phone,
+            'password': '***' + password[-3:] if len(password) > 3 else '***'
+        })
+        
+        # Step 2: Clean phone
+        phone_clean = str(phone).strip()
+        phone_clean = re.sub(r'[\s\-\(\)\+]', '', phone_clean)
+        result['steps'].append({
+            'step': 2,
+            'action': 'Clean phone',
+            'phone_clean': phone_clean,
+            'is_digits': phone_clean.isdigit()
+        })
+        
+        if not phone_clean.isdigit():
+            result['error'] = 'Phone contains non-digits'
+            result['success'] = False
+            return jsonify(result)
+        
+        # Step 3: Convert to 09 format
+        lookup_phone = phone_clean
+        conversion_note = 'No conversion needed'
+        
+        if len(lookup_phone) == 12 and lookup_phone.startswith('639'):
+            lookup_phone = '09' + lookup_phone[3:]
+            conversion_note = '639XXXXXXXXX -> 09XXXXXXXXX'
+        elif len(lookup_phone) == 11 and lookup_phone.startswith('63'):
+            lookup_phone = '09' + lookup_phone[2:]
+            conversion_note = '63XXXXXXXXX -> 09XXXXXXXXX'
+        elif len(lookup_phone) == 10 and lookup_phone.startswith('9'):
+            lookup_phone = '0' + lookup_phone
+            conversion_note = '9XXXXXXXXX -> 09XXXXXXXXX'
+        elif len(lookup_phone) >= 10:
+            last_10_digits = lookup_phone[-10:]
+            lookup_phone = '09' + last_10_digits
+            conversion_note = 'Last 10 digits -> 09XXXXXXXXX'
+        
+        result['steps'].append({
+            'step': 3,
+            'action': 'Convert phone format',
+            'lookup_phone': lookup_phone,
+            'conversion_note': conversion_note,
+            'is_valid_format': lookup_phone.startswith('09') and len(lookup_phone) == 11
+        })
+        
+        if not lookup_phone.startswith('09') or len(lookup_phone) != 11:
+            result['error'] = f'Invalid phone format: {lookup_phone}'
+            result['success'] = False
+            return jsonify(result)
+        
+        # Step 4: Check database
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # First check what's in the database
+            cursor.execute('SELECT phone, guardian_id FROM guardians ORDER BY guardian_id DESC LIMIT 5')
+            all_users = cursor.fetchall()
+            
+            result['steps'].append({
+                'step': 4,
+                'action': 'Database check - all users',
+                'all_users_in_db': [dict(user) for user in all_users]
+            })
+            
+            # Now search for our phone
+            cursor.execute('''
+                SELECT guardian_id, full_name, password_hash, is_active
+                FROM guardians 
+                WHERE phone = %s
+            ''', (lookup_phone,))
+            
+            db_result = cursor.fetchone()
+            
+            if not db_result:
+                result['steps'].append({
+                    'step': 5,
+                    'action': 'User not found in database',
+                    'lookup_phone_used': lookup_phone,
+                    'user_found': False
+                })
+                result['error'] = f'No user found with phone: {lookup_phone}'
+                result['success'] = False
+                return jsonify(result)
+            
+            guardian_id, full_name, stored_hash, is_active = db_result
+            
+            result['steps'].append({
+                'step': 5,
+                'action': 'User found in database',
+                'guardian_id': guardian_id,
+                'full_name': full_name,
+                'is_active': is_active,
+                'stored_hash_preview': stored_hash[:30] + '...' if stored_hash else 'None',
+                'hash_length': len(stored_hash) if stored_hash else 0,
+                'is_bcrypt': stored_hash.startswith('$2') if stored_hash else False
+            })
+            
+            if not is_active:
+                result['error'] = 'Account is not active'
+                result['success'] = False
+                return jsonify(result)
+            
+            # Step 6: Clean password
+            cleaned_password = clean_password(password)
+            result['steps'].append({
+                'step': 6,
+                'action': 'Clean password',
+                'cleaned_password': '***' + cleaned_password[-3:] if len(cleaned_password) > 3 else '***',
+                'cleaned_length': len(cleaned_password)
+            })
+            
+            # Step 7: Manual verification
+            try:
+                password_bytes = cleaned_password.encode('utf-8')
+                hash_bytes = stored_hash.encode('utf-8')
+                
+                manual_verify = bcrypt.checkpw(password_bytes, hash_bytes)
+                
+                result['steps'].append({
+                    'step': 7,
+                    'action': 'Manual bcrypt.checkpw verification',
+                    'result': manual_verify,
+                    'method': 'bcrypt.checkpw(password_bytes, hash_bytes)'
+                })
+                
+                # Step 8: Use verify_password function
+                func_verify = verify_password(password, stored_hash)
+                
+                result['steps'].append({
+                    'step': 8,
+                    'action': 'verify_password() function',
+                    'result': func_verify,
+                    'method': 'verify_password(password, stored_hash)'
+                })
+                
+                result['final_verification'] = {
+                    'manual_bcrypt': manual_verify,
+                    'verify_password_func': func_verify,
+                    'should_login_succeed': manual_verify and func_verify
+                }
+                
+                if manual_verify and func_verify:
+                    result['login_possible'] = True
+                    result['message'] = 'Password verification successful - login should work'
+                else:
+                    result['login_possible'] = False
+                    result['message'] = 'Password verification failed'
+                
+            except Exception as verify_error:
+                result['steps'].append({
+                    'step': 7,
+                    'action': 'Verification error',
+                    'error': str(verify_error)
+                })
+                result['error'] = f'Verification error: {verify_error}'
+                result['success'] = False
+            
+        return jsonify(result)
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
 @app.route('/register-driver')
 def serve_register_driver():
     """Driver registration page"""
