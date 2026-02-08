@@ -374,7 +374,7 @@ def init_db():
                     full_name TEXT NOT NULL,
                     phone TEXT UNIQUE NOT NULL,
                     email TEXT,
-                    password_hash TEXT NOT NULL,
+                    password_hash VARCHAR(255) NOT NULL,
                     address TEXT,
                     registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     last_login TIMESTAMP,
@@ -2942,7 +2942,7 @@ def fix_password_hash_column():
         print("🛠️ Checking password_hash column type...")
         
         with get_db_cursor() as cursor:
-            # Check current column type
+            # Check current column type - use regular cursor (not RealDictCursor)
             cursor.execute("""
                 SELECT column_name, data_type, character_maximum_length
                 FROM information_schema.columns 
@@ -2953,28 +2953,62 @@ def fix_password_hash_column():
             column_info = cursor.fetchone()
             
             if column_info:
-                print(f"📊 Current password_hash column: {column_info}")
+                # column_info is a tuple: (column_name, data_type, character_maximum_length)
+                column_name = column_info[0]
+                data_type = column_info[1]
+                max_length = column_info[2]
                 
-                # If it's TEXT, change it to VARCHAR(255)
-                if column_info['data_type'] == 'text':
-                    print("🔄 Changing password_hash from TEXT to VARCHAR(255)...")
+                print(f"📊 Current password_hash column: Name={column_name}, Type={data_type}, MaxLength={max_length}")
+                
+                # If it's TEXT or has wrong type, change it to VARCHAR(255)
+                if data_type == 'text' or (data_type == 'character varying' and max_length != 255):
+                    print("🔄 Ensuring password_hash is VARCHAR(255)...")
                     try:
-                        cursor.execute('ALTER TABLE guardians ALTER COLUMN password_hash TYPE VARCHAR(255)')
-                        print("✅ Column type changed to VARCHAR(255)")
+                        # First, check if there's data in the column
+                        cursor.execute('SELECT COUNT(*) FROM guardians WHERE password_hash IS NOT NULL')
+                        count = cursor.fetchone()[0]
+                        print(f"   Found {count} existing password hashes")
+                        
+                        if count > 0:
+                            print("⚠️  Column has data. Creating backup column...")
+                            # Create a temporary backup
+                            cursor.execute('ALTER TABLE guardians ADD COLUMN password_hash_backup TEXT')
+                            cursor.execute('UPDATE guardians SET password_hash_backup = password_hash')
+                            print("   Backup created")
+                        
+                        # Drop and recreate the column
+                        cursor.execute('ALTER TABLE guardians DROP COLUMN IF EXISTS password_hash')
+                        cursor.execute('ALTER TABLE guardians ADD COLUMN password_hash VARCHAR(255)')
+                        print("✅ Column recreated as VARCHAR(255)")
+                        
+                        if count > 0:
+                            print("🔄 Restoring data from backup...")
+                            # Restore data (will need to re-hash passwords if they're not bcrypt)
+                            cursor.execute('UPDATE guardians SET password_hash = password_hash_backup')
+                            cursor.execute('ALTER TABLE guardians DROP COLUMN password_hash_backup')
+                            print("✅ Data restored")
+                            
                     except Exception as alter_error:
                         print(f"⚠️ Could not alter column: {alter_error}")
-                        # Try dropping and recreating
+                        # Try a simpler approach
                         try:
-                            cursor.execute('ALTER TABLE guardians DROP COLUMN password_hash')
-                            cursor.execute('ALTER TABLE guardians ADD COLUMN password_hash VARCHAR(255) NOT NULL')
-                            print("✅ Column recreated as VARCHAR(255)")
-                        except Exception as recreate_error:
-                            print(f"❌ Could not recreate column: {recreate_error}")
+                            print("   Trying simpler alter...")
+                            cursor.execute('ALTER TABLE guardians ALTER COLUMN password_hash TYPE VARCHAR(255)')
+                            print("✅ Column type altered to VARCHAR(255)")
+                        except Exception as simple_error:
+                            print(f"❌ Simple alter also failed: {simple_error}")
                 else:
-                    print(f"✅ Column is already {column_info['data_type']} with max length {column_info['character_maximum_length']}")
+                    print(f"✅ Column is already {data_type} with max length {max_length}")
             else:
                 print("❌ password_hash column not found in guardians table")
-                
+                # Create it if it doesn't exist
+                try:
+                    print("🔄 Creating password_hash column...")
+                    cursor.execute('ALTER TABLE guardians ADD COLUMN password_hash VARCHAR(255) NOT NULL')
+                    print("✅ password_hash column created")
+                except Exception as create_error:
+                    print(f"❌ Could not create column: {create_error}")
+                    
     except Exception as e:
         print(f"❌ Error checking password_hash column: {e}")
 
