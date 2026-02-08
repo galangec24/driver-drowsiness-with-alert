@@ -1,10 +1,9 @@
-<!-- frontend/login.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Login - Driver Alert System</title>
+    <title>Driver Alert - Guardian Login</title>
     
     <!-- Bootstrap 5 -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -13,7 +12,7 @@
     
     <!-- PWA Configuration -->
     <link rel="manifest" href="/manifest.json">
-    <meta name="theme-color" content="#4e73df">
+    <meta name="theme-color" content="#1a237e">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Driver Alert">
@@ -26,6 +25,7 @@
             --secondary-color: #757575;
             --success-color: #1cc88a;
             --danger-color: #e74a3b;
+            --warning-color: #f6c23e;
             --gradient-start: #667eea;
             --gradient-end: #764ba2;
         }
@@ -91,7 +91,7 @@
             padding: 15px;
             border-radius: 10px;
             border: 2px solid #e1e5e9;
-            margin-bottom: 15px;
+            margin-bottom: 20px;
             transition: all 0.3s;
             font-size: 16px;
         }
@@ -99,39 +99,6 @@
         .form-control:focus {
             border-color: var(--primary-color);
             box-shadow: 0 0 0 3px rgba(26, 35, 126, 0.1);
-        }
-        
-        /* Password input group styles */
-        .input-group {
-            margin-bottom: 15px;
-        }
-        
-        .input-group .form-control {
-            margin-bottom: 0;
-            border-top-right-radius: 0;
-            border-bottom-right-radius: 0;
-        }
-        
-        .input-group .btn-outline-secondary {
-            border: 2px solid #e1e5e9;
-            border-left: 0;
-            background: white;
-            color: var(--secondary-color);
-            padding: 0 20px;
-            font-size: 18px;
-            border-top-right-radius: 10px;
-            border-bottom-right-radius: 10px;
-            transition: all 0.3s;
-        }
-        
-        .input-group .btn-outline-secondary:hover {
-            background: #f8f9fa;
-            color: var(--primary-color);
-            border-color: #e1e5e9;
-        }
-        
-        .input-group .btn-outline-secondary:focus {
-            box-shadow: none;
         }
         
         .btn-login {
@@ -155,9 +122,9 @@
         
         .btn-login:disabled {
             opacity: 0.7;
+            cursor: not-allowed;
             transform: none;
             box-shadow: none;
-            cursor: not-allowed;
         }
         
         .error-message {
@@ -181,61 +148,34 @@
             border-left: 4px solid var(--success-color);
         }
         
-        .register-link {
-            color: var(--primary-color);
-            text-decoration: none;
-            font-weight: 600;
+        .divider {
+            display: flex;
+            align-items: center;
+            margin: 30px 0;
+            color: var(--secondary-color);
         }
         
-        .register-link:hover {
-            text-decoration: underline;
+        .divider::before, .divider::after {
+            content: '';
+            flex: 1;
+            border-bottom: 1px solid #e1e5e9;
         }
         
-        .demo-credentials {
+        .divider span {
+            padding: 0 15px;
+        }
+        
+        .guest-login {
             background: #f8f9fa;
-            border-radius: 10px;
-            padding: 15px;
-            margin-top: 20px;
-            text-align: left;
-            font-size: 13px;
-            border-left: 4px solid var(--primary-color);
+            color: var(--secondary-color);
+            border: 2px solid #e1e5e9;
         }
         
-        .demo-credentials h6 {
-            color: var(--primary-color);
-            margin-bottom: 8px;
-            font-weight: 600;
-        }
-        
-        .demo-credentials code {
+        .guest-login:hover {
             background: #e9ecef;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 12px;
+            border-color: #d1d5db;
         }
         
-        @media (max-width: 480px) {
-            .login-card {
-                padding: 25px;
-            }
-            .app-logo {
-                width: 80px;
-                height: 80px;
-                font-size: 32px;
-            }
-            .app-title {
-                font-size: 24px;
-            }
-            .app-subtitle {
-                font-size: 14px;
-            }
-            .demo-credentials {
-                font-size: 12px;
-                padding: 12px;
-            }
-        }
-        
-        /* Loading animation */
         .loading-dots {
             display: inline-block;
         }
@@ -250,84 +190,52 @@
             animation: loading 1.4s infinite ease-in-out both;
         }
         
-        .loading-dots span:nth-child(1) {
-            animation-delay: -0.32s;
-        }
-        
-        .loading-dots span:nth-child(2) {
-            animation-delay: -0.16s;
-        }
+        .loading-dots span:nth-child(1) { animation-delay: -0.32s; }
+        .loading-dots span:nth-child(2) { animation-delay: -0.16s; }
         
         @keyframes loading {
             0%, 80%, 100% { transform: scale(0); }
             40% { transform: scale(1.0); }
         }
         
-        /* Forgot password link */
-        .forgot-password {
-            display: block;
-            text-align: right;
-            font-size: 14px;
-            color: var(--secondary-color);
-            text-decoration: none;
-            margin-top: 5px;
-            margin-bottom: 20px;
-        }
-        
-        .forgot-password:hover {
-            color: var(--primary-color);
-            text-decoration: underline;
-        }
-        
-        /* Debug panel (hidden by default) */
-        .debug-panel {
-            background: #f8f9fa;
-            border-radius: 10px;
-            padding: 15px;
-            margin-top: 20px;
-            font-size: 12px;
-            border-left: 4px solid #ffc107;
-            display: none;
-        }
-        
-        .debug-panel h6 {
-            color: #ffc107;
-            margin-bottom: 8px;
-            font-weight: 600;
-        }
-        
-        .debug-toggle {
-            position: fixed;
-            bottom: 10px;
-            right: 10px;
-            background: #ffc107;
-            color: #333;
-            border: none;
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-size: 12px;
-            cursor: pointer;
-            z-index: 1000;
-        }
-        
-        /* Shake animation for errors */
-        @keyframes shake {
-            0%, 100% { transform: translateX(0); }
-            10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
-            20%, 40%, 60%, 80% { transform: translateX(5px); }
+        @media (max-width: 480px) {
+            .login-card {
+                padding: 25px;
+            }
+            .app-logo {
+                width: 80px;
+                height: 80px;
+                font-size: 32px;
+            }
+            .app-title {
+                font-size: 24px;
+            }
         }
     </style>
 </head>
+<script>
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/service-worker.js')
+            .then(function(registration) {
+                console.log('Service Worker registered with scope:', registration.scope);
+            })
+            .catch(function(error) {
+                console.log('Service Worker registration failed:', error);
+            });
+    });
+}
+</script>
 <body>
     <div class="login-container">
         <div class="login-card">
             <!-- App Logo -->
             <div class="app-logo">
-                <i class="fas fa-car-side"></i>
+                <i class="fas fa-car"></i>
             </div>
             
-            <h1 class="app-title">Driver Alert System</h1>
-            <p class="app-subtitle">Guardian Login</p>
+            <h1 class="app-title">Driver Alert</h1>
+            <p class="app-subtitle">Guardian Login Portal</p>
             
             <!-- Login Form -->
             <form id="loginForm">
@@ -339,27 +247,18 @@
                            required
                            pattern="[0-9]{10,11}"
                            maxlength="11"
-                           inputmode="numeric"
-                           autocomplete="tel">
-                    <small class="text-muted" style="display: block; text-align: left; margin-top: 5px; font-size: 12px;">
-                        10-11 digit phone number (used during registration)
-                    </small>
+                           value="">
                 </div>
                 
-                <div class="input-group">
+                <div class="mb-3">
                     <input type="password" 
                            class="form-control" 
                            id="password" 
                            placeholder="Password"
                            required
-                           minlength="6"
-                           autocomplete="current-password">
-                    <button class="btn btn-outline-secondary" type="button" id="togglePassword">
-                        <i class="fas fa-eye"></i>
-                    </button>
+                           minlength="4"
+                           value="">
                 </div>
-                
-                <a href="#" class="forgot-password" id="forgotPasswordLink">Forgot Password?</a>
                 
                 <button type="submit" class="btn btn-login" id="loginButton">
                     <i class="fas fa-sign-in-alt me-2"></i> <span id="loginText">Login</span>
@@ -367,338 +266,161 @@
                 
                 <div class="error-message" id="errorMessage">
                     <i class="fas fa-exclamation-circle me-2"></i>
-                    <span id="errorText"></span>
+                    <span id="errorText">Invalid credentials</span>
                 </div>
                 
                 <div class="success-message" id="successMessage" style="display: none;">
                     <i class="fas fa-check-circle me-2"></i>
-                    <span id="successText"></span>
+                    <span id="successText">Login successful! Redirecting...</span>
                 </div>
             </form>
             
-            <!-- Registration Link -->
-            <p class="mt-4 text-muted" style="font-size: 14px;">
-                Don't have an account? 
-                <a href="/guardian-register" class="register-link">Register here</a>
-            </p>
+            <div class="divider">
+                <span>OR</span>
+            </div>
             
-    
+            <button class="btn btn-login guest-login" onclick="guestAccess()">
+                <i class="fas fa-user-clock me-2"></i> Quick Access
+            </button>
+            
+            <p class="mt-3 text-muted" style="font-size: 14px;">
+                Register a new account? 
+                <a href="/guardian-register" class="text-primary" style="text-decoration: none; font-weight: 600;">
+                    <i class="fas fa-user-plus me-1"></i> Register
+                </a>
+            </p>
         </div>
     </div>
     
-    <!-- Debug Toggle Button -->
-    
-    <!-- Bootstrap JS -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    
     <script>
-        // Debug functions
-        function debugLog(message, data = null) {
-            console.log(`🔍 [LOGIN DEBUG] ${message}`, data || '');
+    // Initialize when DOM is loaded
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log('🚀 Login page loading...');
+        
+        // Clear any existing session if coming from logout
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('logged_out')) {
+            console.log('🔒 Clearing previous session data');
+            localStorage.clear();
         }
         
-        function showDebugInfo(message) {
-            const debugPanel = document.getElementById('debugPanel');
-            const debugContent = document.getElementById('debugContent');
-            debugContent.innerHTML = `<pre style="margin: 0; font-size: 11px;">${message}</pre>`;
-            debugPanel.style.display = 'block';
+        // Set up form
+        document.getElementById('loginForm').addEventListener('submit', handleLogin);
+        
+        console.log('✅ Login page ready');
+    });
+    
+    // ==================== LOGIN FUNCTION ====================
+    async function handleLogin(e) {
+        e.preventDefault();
+        
+        const phone = document.getElementById('phoneNumber').value.trim();
+        const password = document.getElementById('password').value;
+        
+        // Hide previous messages
+        document.getElementById('errorMessage').style.display = 'none';
+        document.getElementById('successMessage').style.display = 'none';
+        
+        // Validation
+        if (!phone || !password) {
+            showError('Please fill all fields');
+            return;
         }
         
-        function addDebugMessage(message) {
-            const debugContent = document.getElementById('debugContent');
-            const current = debugContent.innerHTML;
-            debugContent.innerHTML = current + `<div style="margin: 5px 0; font-size: 11px;">${message}</div>`;
+        const phoneRegex = /^[0-9]{10,11}$/;
+        if (!phoneRegex.test(phone)) {
+            showError('Please enter a valid 10-11 digit phone number');
+            return;
         }
         
-        document.addEventListener('DOMContentLoaded', function() {
-            debugLog('Login page loaded');
+        // Show loading
+        const loginBtn = document.getElementById('loginButton');
+        const loginText = document.getElementById('loginText');
+        const originalText = loginText.innerHTML;
+        loginText.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span>';
+        loginBtn.disabled = true;
+        
+        try {
+            console.log('🔐 Attempting login with phone:', phone);
             
-            // Parse URL parameters for auto-fill and messages
-            const urlParams = new URLSearchParams(window.location.search);
-            const registered = urlParams.get('registered');
-            const phone = urlParams.get('phone');
-            const sessionExpired = urlParams.get('session_expired');
-            const loggedOut = urlParams.get('logged_out');
-            
-            debugLog('URL Parameters:', {
-                registered, 
-                phone, 
-                sessionExpired, 
-                loggedOut
+            // Use the login API endpoint
+            const response = await fetch('/api/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    phone: phone,
+                    password: password
+                })
             });
             
-            // Auto-fill phone if provided in URL
-            if (phone) {
-                document.getElementById('phoneNumber').value = phone;
-                debugLog(`Auto-filled phone from URL: ${phone}`);
-            }
+            console.log('📡 Login response status:', response.status);
             
-            // Show messages based on URL parameters
-            if (registered === 'true' && phone) {
-                showSuccess(`Registration successful! Your phone ${phone} has been registered. Please login.`);
-                document.getElementById('password').focus();
-            } else if (sessionExpired === 'true') {
-                showError('Your session has expired. Please login again.');
-            } else if (loggedOut === 'true') {
-                showSuccess('You have been logged out successfully.');
-            }
+            const data = await response.json();
+            console.log('📡 Login response data:', data);
             
-            // Check localStorage for saved phone from registration
-            const savedPhone = localStorage.getItem('registeredPhone');
-            if (savedPhone && !phone) {
-                document.getElementById('phoneNumber').value = savedPhone;
-                debugLog(`Auto-filled phone from localStorage: ${savedPhone}`);
-                localStorage.removeItem('registeredPhone');
-                showSuccess('Registration successful! Please login with your credentials.');
-                document.getElementById('password').focus();
-            }
-            
-            // Check for saved credentials
-            const savedGuardianId = localStorage.getItem('guardian_id');
-            const savedToken = localStorage.getItem('session_token');
-            if (savedGuardianId && savedToken) {
-                debugLog('Found saved credentials in localStorage');
-                addDebugMessage(`Found saved session: guardian_id=${savedGuardianId}, token=${savedToken?.substring(0, 10)}...`);
-            }
-            
-            // Setup form
-            document.getElementById('loginForm').addEventListener('submit', handleLogin);
-            
-            // Password visibility toggle
-            document.getElementById('togglePassword').addEventListener('click', togglePasswordVisibility);
-            
-            // Forgot password link
-            document.getElementById('forgotPasswordLink').addEventListener('click', function(e) {
-                e.preventDefault();
-                showForgotPasswordMessage();
-            });
-                        
-            // Auto-focus on phone field if empty
-            if (!document.getElementById('phoneNumber').value) {
-                document.getElementById('phoneNumber').focus();
-            } else {
-                document.getElementById('password').focus();
-            }
-            
-            // Test API connection on page load
-            setTimeout(() => {
-                testApiConnection();
-            }, 1000);
-        });
-        
-        async function testApiConnection() {
-            try {
-                debugLog('Testing API connection...');
-                const response = await fetch('/api/health');
-                const data = await response.json();
-                debugLog('API health check:', data);
-                addDebugMessage(`API Status: ${response.status} - ${data.status || 'Unknown'}`);
-            } catch (error) {
-                debugLog('API connection test failed:', error);
-                addDebugMessage(`❌ API Error: ${error.message}`);
-            }
-        }
-        
-        function togglePasswordVisibility() {
-            const passwordInput = document.getElementById('password');
-            const toggleButton = document.getElementById('togglePassword');
-            const icon = toggleButton.querySelector('i');
-            
-            if (passwordInput.type === 'password') {
-                passwordInput.type = 'text';
-                icon.classList.remove('fa-eye');
-                icon.classList.add('fa-eye-slash');
-                toggleButton.setAttribute('aria-label', 'Hide password');
-            } else {
-                passwordInput.type = 'password';
-                icon.classList.remove('fa-eye-slash');
-                icon.classList.add('fa-eye');
-                toggleButton.setAttribute('aria-label', 'Show password');
-            }
-        }
-        
-        function showForgotPasswordMessage() {
-            const phoneNumber = document.getElementById('phoneNumber').value.trim();
-            
-            if (!phoneNumber) {
-                showError('Please enter your phone number first, then click Forgot Password');
-                document.getElementById('phoneNumber').focus();
-                return;
-            }
-            
-            showSuccess(`Password reset instructions will be sent to phone: ${phoneNumber}. Contact system administrator for assistance.`);
-        }
-        
-        async function handleLogin(e) {
-            e.preventDefault();
-            
-            // Get form values
-            const phoneNumber = document.getElementById('phoneNumber').value.trim();
-            const password = document.getElementById('password').value;
-            
-            // Clear previous messages
-            document.getElementById('errorMessage').style.display = 'none';
-            document.getElementById('successMessage').style.display = 'none';
-            
-            // Debug info
-            addDebugMessage(`\n--- Login Attempt ---`);
-            addDebugMessage(`Phone: ${phoneNumber}`);
-            addDebugMessage(`Password length: ${password.length} characters`);
-            
-            // Validation
-            if (!phoneNumber || !/^[0-9]{10,11}$/.test(phoneNumber)) {
-                showError('Valid phone number is required (10-11 digits)');
-                addDebugMessage(`❌ Validation failed: Invalid phone format`);
-                return;
-            }
-            
-            if (password.length < 6) {
-                showError('Password must be at least 6 characters');
-                addDebugMessage(`❌ Validation failed: Password too short`);
-                return;
-            }
-            
-            // Show loading
-            const loginBtn = document.getElementById('loginButton');
-            const loginText = document.getElementById('loginText');
-            const originalText = loginText.innerHTML;
-            loginText.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span>';
-            loginBtn.disabled = true;
-            
-            try {
-                addDebugMessage(`📤 Sending login request to /api/login...`);
+            if (data.success) {
+                // Store ALL guardian session data
+                localStorage.setItem('guardianId', data.guardian_id);
+                localStorage.setItem('guardianName', data.full_name);
+                localStorage.setItem('guardianPhone', phone);
+                localStorage.setItem('guardianToken', data.session_token); // CRITICAL: Save the token!
                 
-                const response = await fetch('/api/login', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        phone: phoneNumber,
-                        password: password
-                    })
+                console.log('✅ Login successful!');
+                console.log('📝 Saved to localStorage:', {
+                    guardianId: data.guardian_id,
+                    guardianName: data.full_name,
+                    guardianToken: data.session_token.substring(0, 20) + '...'
                 });
                 
-                addDebugMessage(`📥 Received response: Status ${response.status}`);
+                showSuccess('✅ Login successful! Redirecting...');
                 
-                let result;
-                try {
-                    result = await response.json();
-                    addDebugMessage(`Response data: ${JSON.stringify(result, null, 2)}`);
-                } catch (parseError) {
-                    addDebugMessage(`❌ Failed to parse JSON response: ${parseError.message}`);
-                    throw new Error('Invalid server response');
-                }
-                
-                if (result.success) {
-                    addDebugMessage(`✅ Login successful!`);
-                    addDebugMessage(`Guardian ID: ${result.guardian_id}`);
-                    addDebugMessage(`Session Token: ${result.session_token?.substring(0, 20)}...`);
-                    
-                    showSuccess('Login successful! Redirecting to dashboard...');
-                    
-                    // Store login info in localStorage
-                    localStorage.setItem('guardian_id', result.guardian_id);
-                    localStorage.setItem('guardian_name', result.full_name);
-                    localStorage.setItem('guardian_phone', result.phone);
-                    localStorage.setItem('session_token', result.session_token);
-                    
-                    // Construct dashboard URL - FIXED: guardian-dashboard.html (not guardian-dashboard)
-                    const dashboardUrl = `/guardian-dashboard.html?guardian_id=${result.guardian_id}&token=${result.session_token}`;
-                    addDebugMessage(`Redirect URL: ${dashboardUrl}`);
-                    
-                    // Redirect to dashboard after a brief delay
-                    setTimeout(() => {
-                        debugLog(`Redirecting to: ${dashboardUrl}`);
-                        window.location.href = dashboardUrl;
-                    }, 1500);
-                    
-                } else {
-                    const errorMsg = result.error || 'Login failed without specific error';
-                    addDebugMessage(`❌ Login failed: ${errorMsg}`);
-                    
-                    // Enhanced error messages
-                    let userFriendlyError = errorMsg;
-                    if (errorMsg.includes('Invalid phone or password')) {
-                        userFriendlyError = 'Invalid phone number or password. Please check your credentials.';
-                    } else if (errorMsg.includes('Account locked')) {
-                        userFriendlyError = 'Account is temporarily locked. Please try again later.';
-                    } else if (errorMsg.includes('Too many login attempts')) {
-                        userFriendlyError = 'Too many login attempts. Please wait a minute and try again.';
-                    }
-                    
-                    throw new Error(userFriendlyError);
-                }
-                
-            } catch (error) {
-                console.error('Login error:', error);
-                addDebugMessage(`🚨 Login error: ${error.message}`);
-                showError('Login failed: ' + error.message);
-                
-                // Shake animation for error
-                const loginCard = document.querySelector('.login-card');
-                loginCard.style.animation = 'none';
+                // Redirect to dashboard WITH authentication parameters
                 setTimeout(() => {
-                    loginCard.style.animation = 'shake 0.5s ease';
-                }, 10);
+                    console.log('🔄 Redirecting to dashboard...');
+                    window.location.href = `/guardian-dashboard?guardian_id=${data.guardian_id}&token=${data.session_token}`;
+                }, 1000);
                 
-                // Remove shake animation after it completes
-                setTimeout(() => {
-                    loginCard.style.animation = '';
-                }, 600);
-                
-            } finally {
-                // Restore button
-                loginText.innerHTML = originalText;
-                loginBtn.disabled = false;
+            } else {
+                console.log('❌ Login failed:', data.error);
+                showError(data.error || 'Invalid phone or password');
             }
+            
+        } catch (error) {
+            console.error('❌ Login error:', error);
+            showError('Connection error. Please check if server is running');
+        } finally {
+            loginText.innerHTML = originalText;
+            loginBtn.disabled = false;
         }
+    }
+    
+    function guestAccess() {
+        showError('Please register and login to use the system');
+    }
+    
+    // ==================== UTILITY FUNCTIONS ====================
+    function showError(message) {
+        const errorDiv = document.getElementById('errorMessage');
+        const errorText = document.getElementById('errorText');
         
-        function showError(message) {
-            const errorDiv = document.getElementById('errorMessage');
-            const errorText = document.getElementById('errorText');
-            
-            errorText.textContent = message;
-            errorDiv.style.display = 'block';
-            
-            // Hide success message if showing
-            document.getElementById('successMessage').style.display = 'none';
-            
-            // Add to debug panel
-            addDebugMessage(`❌ Error: ${message}`);
-            
-            // Scroll to error
-            errorDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
+        errorText.textContent = message;
+        errorDiv.style.display = 'block';
         
-        function showSuccess(message) {
-            const successDiv = document.getElementById('successMessage');
-            const successText = document.getElementById('successText');
-            
-            successText.textContent = message;
-            successDiv.style.display = 'block';
-            
-            // Hide error message if showing
-            document.getElementById('errorMessage').style.display = 'none';
-            
-            // Add to debug panel
-            addDebugMessage(`✅ Success: ${message}`);
-            
-            // Scroll to success
-            successDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
+        setTimeout(() => {
+            errorDiv.style.display = 'none';
+        }, 5000);
+    }
+    
+    function showSuccess(message) {
+        const successDiv = document.getElementById('successMessage');
+        const successText = document.getElementById('successText');
         
-        // Add a test login function for debugging
-        window.testLogin = async function(testPhone, testPassword) {
-            document.getElementById('phoneNumber').value = testPhone || '09123456789';
-            document.getElementById('password').value = testPassword || 'test123';
-            
-            addDebugMessage(`\n--- Test Login ---`);
-            addDebugMessage(`Using test credentials: ${testPhone || '09123456789'}`);
-            
-            // Trigger login
-            document.getElementById('loginForm').dispatchEvent(new Event('submit'));
-        };
+        successText.textContent = message;
+        successDiv.style.display = 'block';
+        document.getElementById('errorMessage').style.display = 'none';
+    }
     </script>
 </body>
 </html>

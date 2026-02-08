@@ -1857,71 +1857,93 @@ def admin_clear_alerts():
 # ==================== GUARDIAN AUTHENTICATION ENDPOINTS ====================
 @app.route('/api/login', methods=['POST'])
 def login():
-    """Guardian login"""
+    """Login guardian with bcrypt verification"""
     try:
         data = request.json
-        phone = data.get('phone')
-        password = data.get('password')
         
-        if not phone or not password:
-            return jsonify({
-                'success': False,
-                'error': 'Phone and password required'
-            }), 400
+        if not data or 'phone' not in data or 'password' not in data:
+            return jsonify({'success': False, 'error': 'Missing credentials'}), 400
         
-        ip = request.remote_addr
-        if rate_limit_exceeded(ip, 'guardian_login', limit=10):
-            return jsonify({
-                'success': False,
-                'error': 'Too many login attempts'
-            }), 429
+        phone = data['phone'].strip()
+        password = data['password']
         
-        guardian = verify_guardian_credentials(phone, password)
+        # Clean phone number for query
+        phone_clean = re.sub(r'[\s\-\(\)]', '', phone)
         
-        if guardian:
-            if 'error' in guardian and guardian['error'] == 'Account locked':
-                return jsonify({
-                    'success': False,
-                    'error': 'Account locked. Please try again later.',
-                    'locked_until': guardian.get('locked_until')
-                }), 423
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT guardian_id, full_name, password_hash, is_active
+                FROM guardians 
+                WHERE phone = %s
+            ''', (phone_clean,))
             
-            token = create_session(guardian['guardian_id'], request.remote_addr, 
-                                 request.headers.get('User-Agent'))
+            guardian = cursor.fetchone()
             
-            if token:
-                # Update last login timestamp
-                try:
-                    with get_db_cursor() as cursor:
-                        cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
-                                     (datetime.now(), guardian['guardian_id']))
-                except Exception as e:
-                    print(f"⚠️ Error updating last login: {e}")
+            if not guardian:
+                return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
+            
+            guardian_id, full_name, password_hash, is_active = guardian
+            
+            # Check if account is active
+            if not is_active:
+                return jsonify({'success': False, 'error': 'Account is deactivated'}), 403
+            
+            # IMPORTANT: Convert stored hash back to bytes for bcrypt
+            # password_hash is stored as VARCHAR string, need bytes for verification
+            try:
+                # If it's already bytes
+                if isinstance(password_hash, bytes):
+                    hash_bytes = password_hash
+                else:
+                    # If it's string (should be after our VARCHAR change)
+                    hash_bytes = password_hash.encode('utf-8')
                 
-                log_activity(guardian['guardian_id'], 'LOGIN', 
-                            f'Guardian logged in from {request.remote_addr}')
+                # Verify password
+                if bcrypt.checkpw(password.encode('utf-8'), hash_bytes):
+                    # Update last login
+                    cursor.execute('''
+                        UPDATE guardians 
+                        SET last_login = %s, failed_login_attempts = 0
+                        WHERE guardian_id = %s
+                    ''', (datetime.now(), guardian_id))
+                    
+                    # Create session
+                    token = create_session(guardian_id, request.remote_addr,
+                                         request.headers.get('User-Agent'))
+                    
+                    if token:
+                        return jsonify({
+                            'success': True,
+                            'guardian_id': guardian_id,
+                            'full_name': full_name,
+                            'phone': phone_clean,
+                            'session_token': token,
+                            'message': 'Login successful'
+                        })
+                    else:
+                        return jsonify({
+                            'success': True,
+                            'guardian_id': guardian_id,
+                            'full_name': full_name,
+                            'phone': phone_clean,
+                            'message': 'Login successful (no session)'
+                        })
+                else:
+                    # Increment failed attempts
+                    cursor.execute('''
+                        UPDATE guardians 
+                        SET failed_login_attempts = failed_login_attempts + 1
+                        WHERE guardian_id = %s
+                    ''', (guardian_id,))
+                    return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
+                    
+            except Exception as hash_error:
+                print(f"❌ Password verification error: {hash_error}")
+                return jsonify({'success': False, 'error': 'Authentication error'}), 500
                 
-                return jsonify({
-                    'success': True,
-                    'guardian_id': guardian['guardian_id'],
-                    'full_name': guardian['full_name'],
-                    'phone': guardian['phone'],
-                    'session_token': token,
-                    'message': 'Login successful'
-                })
-        
-        return jsonify({
-            'success': False,
-            'error': 'Invalid phone or password'
-        }), 401
-        
     except Exception as e:
         print(f"❌ Login error: {e}")
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': 'Login failed. Please try again.'
-        }), 500
+        return jsonify({'success': False, 'error': 'Login failed'}), 500
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
@@ -2002,7 +2024,7 @@ def validate_session_endpoint():
 
 @app.route('/api/register-guardian', methods=['POST'])
 def register_guardian():
-    """Register a new guardian using bcrypt for password hashing - FIXED VERSION"""
+    """Register a new guardian using bcrypt for password hashing"""
     try:
         data = request.json
         
@@ -2014,6 +2036,14 @@ def register_guardian():
                     'error': f'Missing required field: {field}'
                 }), 400
         
+        # Validate password length
+        password = data['password']
+        if len(password) < 8:
+            return jsonify({
+                'success': False,
+                'error': 'Password must be at least 8 characters long'
+            }), 400
+        
         # Get phone as entered by user
         phone = data['phone'].strip()
         
@@ -2024,11 +2054,6 @@ def register_guardian():
         print(f"🔍 [REGISTRATION] Cleaned phone: '{phone}'")
         
         # Accept Filipino phone numbers in ANY format
-        # - 09XXXXXXXXX (11 digits starting with 09)
-        # - +639XXXXXXXXX (13 digits starting with +639)
-        # - 639XXXXXXXXX (12 digits starting with 639)
-        
-        # Remove + for validation
         validation_phone = phone.replace('+', '') if phone.startswith('+') else phone
         
         # Check if it's a valid Philippine number
@@ -2046,7 +2071,7 @@ def register_guardian():
         if len(validation_phone) != 12:
             return jsonify({
                 'success': False,
-                'error': 'Phone number must be 11-13 digits total'
+                'error': 'Phone number must be 11 digits (09XXXXXXXXX) or 13 digits with country code'
             }), 400
         
         # Check if all remaining characters are digits
@@ -2056,7 +2081,7 @@ def register_guardian():
                 'error': 'Phone number can only contain digits and optional + prefix'
             }), 400
         
-        with get_db_cursor() as cursor:
+        with get_db_cursor(commit=True) as cursor:  # Ensure commit=True
             # Check if phone already exists (exact match)
             cursor.execute('SELECT guardian_id FROM guardians WHERE phone = %s', (phone,))
             
@@ -2066,42 +2091,48 @@ def register_guardian():
                     'error': 'Phone number already registered'
                 }), 409
             
-            # FIXED: Use bcrypt directly to generate hash
-            password_bytes = data['password'].encode('utf-8')
-            password_hash = bcrypt.hashpw(password_bytes, bcrypt.gensalt(rounds=12)).decode('utf-8')
+            # Generate bcrypt hash (60 characters always for bcrypt)
+            password_bytes = password.encode('utf-8')
+            password_hash = bcrypt.hashpw(password_bytes, bcrypt.gensalt(rounds=12))
             
-            print(f"🔍 [REGISTRATION] Generated bcrypt hash: {password_hash[:60]}...")
-            print(f"🔍 [REGISTRATION] Hash starts with: {password_hash[:10]}")
-            print(f"🔍 [REGISTRATION] Hash length: {len(password_hash)}")
+            # IMPORTANT: bcrypt.hashpw returns bytes, convert to string for VARCHAR storage
+            password_hash_str = password_hash.decode('utf-8')
+            
+            print(f"🔍 [REGISTRATION] Generated bcrypt hash: {password_hash_str}")
+            print(f"🔍 [REGISTRATION] Hash length: {len(password_hash_str)}")
             
             try:
                 cursor.execute('''
-                    INSERT INTO guardians (full_name, phone, email, password_hash, address, last_login)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO guardians (
+                        full_name, 
+                        phone, 
+                        email, 
+                        password_hash, 
+                        address, 
+                        last_login,
+                        registration_date
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                 ''', (
                     data['full_name'],
-                    phone,  # Store EXACTLY as user entered (cleaned)
+                    phone,
                     data.get('email', ''),
-                    password_hash,
+                    password_hash_str,  # Store as string (VARCHAR)
                     data.get('address', ''),
                     datetime.now()
                 ))
             except Exception as e:
                 print(f"❌ Error inserting guardian: {e}")
-                traceback.print_exc()
-                return jsonify({
-                    'success': False,
-                    'error': 'Registration failed. Please try again.'
-                }), 500
+                if 'password_hash' in str(e) and 'value too long' in str(e).lower():
+                    return jsonify({
+                        'success': False,
+                        'error': 'System error: Password storage issue'
+                    }), 500
+                raise e
             
-            try:
-                cursor.execute('SELECT LASTVAL()')
-                guardian_id = cursor.fetchone()[0]
-            except:
-                # Fallback: get the ID by phone
-                cursor.execute('SELECT guardian_id FROM guardians WHERE phone = %s', (phone,))
-                result = cursor.fetchone()
-                guardian_id = result[0] if result else None
+            # Get the new guardian ID
+            cursor.execute('SELECT CURRVAL(pg_get_serial_sequence(\'guardians\', \'guardian_id\'))')
+            guardian_id = cursor.fetchone()[0]
         
         print(f"✅ Guardian registered: {data['full_name']} (ID: {guardian_id}, Phone: '{phone}')")
         
@@ -2118,26 +2149,26 @@ def register_guardian():
                     'guardian_id': guardian_id,
                     'full_name': data['full_name'],
                     'phone': phone,
-                    'session_token': token,  # Return token for immediate login
+                    'email': data.get('email', ''),
+                    'session_token': token,
                     'message': 'Registration successful. Auto-login enabled.'
                 })
-            else:
-                print(f"⚠️ Could not create session, but registration succeeded")
         
         return jsonify({
             'success': True,
             'guardian_id': guardian_id,
             'full_name': data['full_name'],
             'phone': phone,
-            'message': 'Registration successful. Please login.'
+            'message': 'Registration successful.'
         })
         
     except Exception as e:
         print(f"❌ Guardian registration error: {e}")
+        import traceback
         traceback.print_exc()
         return jsonify({
             'success': False,
-            'error': str(e)
+            'error': 'Registration failed. Please try again.'
         }), 500
 
 # ==================== GUARDIAN DASHBOARD ENDPOINTS ====================
