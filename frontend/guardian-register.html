@@ -247,10 +247,28 @@
             font-size: 11px;
             cursor: pointer;
             opacity: 0.7;
+            transition: opacity 0.3s;
         }
         
         .debug-btn:hover {
             opacity: 1;
+        }
+        
+        .debug-btn.danger {
+            background: #dc3545;
+        }
+        
+        .debug-btn.success {
+            background: #28a745;
+        }
+        
+        .debug-btn.warning {
+            background: #ffc107;
+            color: #212529;
+        }
+        
+        .debug-btn.info {
+            background: #17a2b8;
         }
     </style>
 </head>
@@ -367,6 +385,8 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     
     <script>
+    // ==================== INITIALIZATION ====================
+    
     // Service Worker Registration
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', function() {
@@ -380,9 +400,6 @@
         });
     }
     
-    // ==================== REGISTRATION FUNCTIONS ====================
-    
-    // DOM Ready
     document.addEventListener('DOMContentLoaded', function() {
         console.log('✅ Registration page loaded');
         
@@ -399,17 +416,21 @@
         // Auto-focus on name field
         document.getElementById('fullName').focus();
         
-        // Add debug buttons
-        addDebugButtons();
-        
-        // Check if coming from login page with pre-filled phone
+        // Check URL parameters
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('phone')) {
             document.getElementById('phoneNumber').value = urlParams.get('phone');
         }
+        
+        // Add debug buttons
+        addDebugButtons();
+        
+        // Clear any old session data
+        clearStaleSessionData();
     });
     
-    // Main Registration Handler
+    // ==================== REGISTRATION HANDLER ====================
+    
     async function handleRegistration(e) {
         e.preventDefault();
         
@@ -467,7 +488,7 @@
         
         try {
             // STEP 1: REGISTER THE USER
-            console.log('📤 STEP 1: Sending registration request...');
+            console.log('📤 STEP 1: Registering user...');
             const registrationData = {
                 full_name: fullName,
                 phone: phoneNumber,
@@ -476,62 +497,47 @@
                 address: address || ''
             };
             
-            console.log('📦 Registration payload:', { 
-                ...registrationData, 
-                password: '***' + password.substring(password.length - 2) 
-            });
-            
-            const response = await fetch('/api/register-guardian', {
+            const regResponse = await fetch('/api/register-guardian', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(registrationData)
             });
             
-            console.log('📥 Registration response status:', response.status);
+            console.log('📥 Registration response status:', regResponse.status);
             
-            const registrationResult = await response.json();
-            console.log('📥 Registration response data:', registrationResult);
+            const regResult = await regResponse.json();
+            console.log('📥 Registration response:', regResult);
             
-            if (!registrationResult.success) {
-                throw new Error(registrationResult.error || 'Registration failed');
+            if (!regResult.success) {
+                throw new Error(regResult.error || 'Registration failed');
             }
             
-            console.log('✅ STEP 1 COMPLETE: Registration successful!');
-            console.log('   Guardian ID:', registrationResult.guardian_id);
-            console.log('   Phone:', registrationResult.phone);
+            console.log('✅ Registration successful!');
+            console.log('   Guardian ID:', regResult.guardian_id);
+            console.log('   Has session token:', !!regResult.session_token);
             
             // Give database a moment
             await new Promise(resolve => setTimeout(resolve, 300));
             
-            // STEP 2: AUTO-LOGIN AFTER REGISTRATION
-            console.log('🔐 STEP 2: Attempting auto-login...');
-            
-            const loginData = {
-                phone: phoneNumber,
-                password: password
-            };
-            
-            console.log('📤 Login payload:', { phone: loginData.phone, password: '***' });
+            // STEP 2: ATTEMPT LOGIN
+            console.log('🔐 STEP 2: Attempting login...');
             
             const loginResponse = await fetch('/api/login', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(loginData)
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    phone: phoneNumber,
+                    password: password
+                })
             });
             
             console.log('📥 Login response status:', loginResponse.status);
             
             const loginResult = await loginResponse.json();
-            console.log('📥 Login response data:', loginResult);
+            console.log('📥 Login response:', loginResult);
             
             if (loginResult.success) {
-                console.log('✅ STEP 2 COMPLETE: Auto-login successful!');
-                console.log('   Session token:', loginResult.session_token ? loginResult.session_token.substring(0, 20) + '...' : 'None');
-                console.log('   Guardian ID:', loginResult.guardian_id);
+                console.log('✅ Login successful!');
                 
                 // Store authentication data
                 localStorage.setItem('authToken', loginResult.session_token);
@@ -540,56 +546,65 @@
                 localStorage.setItem('userName', loginResult.full_name);
                 localStorage.setItem('userType', 'guardian');
                 
-                showSuccess('Registration successful! Auto-login complete. Redirecting to dashboard...');
+                // Clear any old session flags
+                sessionStorage.removeItem('justLoggedOut');
+                sessionStorage.removeItem('sessionExpired');
                 
-                // STEP 3: REDIRECT TO DASHBOARD
-                console.log('🚀 STEP 3: Redirecting to dashboard...');
+                showSuccess('Registration successful! Redirecting to dashboard...');
                 
-                // Small delay to show success message
+                // Wait a moment then redirect
                 setTimeout(() => {
+                    console.log('🚀 Redirecting to dashboard...');
+                    // IMPORTANT: Use the exact format your backend expects
                     const dashboardUrl = `/guardian-dashboard?guardian_id=${loginResult.guardian_id}&token=${loginResult.session_token}`;
-                    console.log('📍 Dashboard URL:', dashboardUrl);
+                    console.log('📍 URL:', dashboardUrl);
                     window.location.href = dashboardUrl;
                 }, 1500);
                 
             } else {
-                console.error('❌ STEP 2 FAILED: Auto-login failed:', loginResult.error);
+                console.error('❌ Login failed:', loginResult.error);
                 
                 // Check if we got a session token from registration
-                if (registrationResult.session_token) {
+                if (regResult.session_token) {
                     console.log('⚠️ Using session token from registration...');
                     
-                    // Store authentication data from registration
-                    localStorage.setItem('authToken', registrationResult.session_token);
-                    localStorage.setItem('guardianId', registrationResult.guardian_id);
-                    localStorage.setItem('userPhone', registrationResult.phone);
-                    localStorage.setItem('userName', registrationResult.full_name);
+                    // Store authentication data
+                    localStorage.setItem('authToken', regResult.session_token);
+                    localStorage.setItem('guardianId', regResult.guardian_id);
+                    localStorage.setItem('userPhone', regResult.phone);
+                    localStorage.setItem('userName', regResult.full_name);
                     localStorage.setItem('userType', 'guardian');
                     
-                    showSuccess('Registration successful! Using registration token. Redirecting to dashboard...');
+                    showSuccess('Registration successful! Redirecting to dashboard...');
                     
                     setTimeout(() => {
-                        const dashboardUrl = `/guardian-dashboard?guardian_id=${registrationResult.guardian_id}&token=${registrationResult.session_token}`;
-                        console.log('📍 Dashboard URL (registration token):', dashboardUrl);
+                        console.log('🚀 Redirecting with registration token...');
+                        const dashboardUrl = `/guardian-dashboard?guardian_id=${regResult.guardian_id}&token=${regResult.session_token}`;
+                        console.log('📍 URL:', dashboardUrl);
                         window.location.href = dashboardUrl;
                     }, 1500);
                     
                 } else {
-                    // Registration succeeded but login failed and no registration token
-                    showSuccess('Registration successful! However, auto-login failed. Please login manually.');
+                    // Both login and registration token failed
+                    console.log('⚠️ Registration succeeded but login failed');
                     
                     // Store phone for auto-fill
-                    localStorage.setItem('lastRegisteredPhone', phoneNumber);
+                    sessionStorage.setItem('justRegistered', 'true');
+                    sessionStorage.setItem('registeredPhone', phoneNumber);
                     
-                    // Redirect to login page
+                    showSuccess('Registration successful! Please login with your credentials.');
+                    
+                    // Redirect to clean login page
                     setTimeout(() => {
-                        window.location.href = '/?registered=true';
+                        console.log('📍 Redirecting to login page...');
+                        // Use a clean login URL without logout parameters
+                        window.location.href = '/?justRegistered=true';
                     }, 2000);
                 }
             }
             
         } catch (error) {
-            console.error('🚨 Registration process error:', error);
+            console.error('🚨 Registration error:', error);
             
             let errorMessage = 'Registration failed. ';
             
@@ -702,41 +717,57 @@
         alert('Privacy Policy:\n\n1. We store your information securely.\n2. Your data is only used for driver monitoring alerts.\n3. We do not share your information with third parties.\n4. You can request data deletion at any time.');
     }
     
-    // ==================== DEBUG FUNCTIONS ====================
+    function clearStaleSessionData() {
+        // Clear session storage items that might cause issues
+        sessionStorage.removeItem('justLoggedOut');
+        sessionStorage.removeItem('sessionExpired');
+        console.log('✅ Cleared stale session data');
+    }
+    
+    // ==================== DEBUG & TESTING FUNCTIONS ====================
     
     function addDebugButtons() {
-        // Debug Registration Button
-        const debugRegBtn = document.createElement('button');
-        debugRegBtn.textContent = '🔧 Debug';
-        debugRegBtn.className = 'debug-btn';
-        debugRegBtn.style.top = '10px';
-        debugRegBtn.onclick = function(e) {
-            e.preventDefault();
-            runDebugTests();
-        };
-        document.body.appendChild(debugRegBtn);
+        const buttons = [
+            {
+                text: '🔧 Debug',
+                top: '10px',
+                className: 'debug-btn',
+                onclick: runDebugTests
+            },
+            {
+                text: '🔐 Test Login',
+                top: '50px',
+                className: 'debug-btn info',
+                onclick: testLoginManually
+            },
+            {
+                text: '📝 Test Data',
+                top: '90px',
+                className: 'debug-btn warning',
+                onclick: fillTestData
+            },
+            {
+                text: '🚀 Quick Test',
+                top: '130px',
+                className: 'debug-btn success',
+                onclick: quickTest
+            },
+            {
+                text: '🧹 Clear Data',
+                top: '170px',
+                className: 'debug-btn danger',
+                onclick: clearAllData
+            }
+        ];
         
-        // Test Login Button
-        const debugLoginBtn = document.createElement('button');
-        debugLoginBtn.textContent = '🔐 Test Login';
-        debugLoginBtn.className = 'debug-btn';
-        debugLoginBtn.style.top = '50px';
-        debugLoginBtn.onclick = function(e) {
-            e.preventDefault();
-            testLoginManually();
-        };
-        document.body.appendChild(debugLoginBtn);
-        
-        // Fill Test Data Button
-        const testDataBtn = document.createElement('button');
-        testDataBtn.textContent = '📝 Test Data';
-        testDataBtn.className = 'debug-btn';
-        testDataBtn.style.top = '90px';
-        testDataBtn.onclick = function(e) {
-            e.preventDefault();
-            fillTestData();
-        };
-        document.body.appendChild(testDataBtn);
+        buttons.forEach(btn => {
+            const button = document.createElement('button');
+            button.textContent = btn.text;
+            button.className = btn.className;
+            button.style.top = btn.top;
+            button.onclick = btn.onclick;
+            document.body.appendChild(button);
+        });
     }
     
     async function runDebugTests() {
@@ -761,32 +792,19 @@
                 console.log('   ❌ Bcrypt test failed:', bcryptError.message);
             }
             
-            // Test 3: Test registration endpoint
-            console.log('3️⃣ Testing registration endpoint...');
-            const testPhone = '09' + Math.floor(100000000 + Math.random() * 900000000);
-            const testData = {
-                full_name: "Test User",
-                phone: testPhone,
-                password: "test123",
-                email: "test@example.com",
-                address: "Test Address"
-            };
+            // Test 3: Test endpoints
+            console.log('3️⃣ Testing endpoints...');
+            const endpoints = ['/api/debug/db', '/api/test-connection'];
             
-            console.log('   📱 Test phone:', testPhone);
-            
-            const testResponse = await fetch('/api/register-guardian', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(testData)
-            });
-            
-            const testResult = await testResponse.json();
-            console.log('   ✅ Registration test:', testResult.success ? 'SUCCESS' : 'FAILED');
-            console.log('   📊 Result:', {
-                success: testResult.success,
-                error: testResult.error || 'none',
-                has_token: !!testResult.session_token
-            });
+            for (const endpoint of endpoints) {
+                try {
+                    const response = await fetch(endpoint);
+                    const data = await response.json();
+                    console.log(`   ${endpoint}:`, data.success ? '✅ OK' : '❌ Failed');
+                } catch (e) {
+                    console.log(`   ${endpoint}: ❌ ${e.message}`);
+                }
+            }
             
         } catch (error) {
             console.error('❌ Debug test failed:', error);
@@ -794,6 +812,109 @@
         
         console.groupEnd();
         alert('🧪 Debug tests completed. Check console for details.');
+    }
+    
+    async function quickTest() {
+        console.group('🚀 QUICK TEST');
+        
+        const testPhone = '09' + Math.floor(100000000 + Math.random() * 900000000);
+        const testPassword = 'test123';
+        const testData = {
+            full_name: "Quick Test User",
+            phone: testPhone,
+            password: testPassword,
+            email: "quicktest@example.com",
+            address: "Test Address"
+        };
+        
+        console.log('📱 Test phone:', testPhone);
+        console.log('🔑 Test password:', testPassword);
+        
+        try {
+            // 1. Test registration
+            console.log('1️⃣ Testing registration...');
+            const regResponse = await fetch('/api/register-guardian', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(testData)
+            });
+            
+            const regResult = await regResponse.json();
+            console.log('   Registration:', regResult.success ? '✅ SUCCESS' : '❌ FAILED');
+            console.log('   Details:', {
+                guardian_id: regResult.guardian_id,
+                has_token: !!regResult.session_token,
+                error: regResult.error || 'none'
+            });
+            
+            if (!regResult.success) {
+                throw new Error('Registration failed: ' + regResult.error);
+            }
+            
+            // Wait for database
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // 2. Test login
+            console.log('2️⃣ Testing login...');
+            
+            const loginResponse = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    phone: testPhone,
+                    password: testPassword
+                })
+            });
+            
+            const loginResult = await loginResponse.json();
+            console.log('   Login:', loginResult.success ? '✅ SUCCESS' : '❌ FAILED');
+            console.log('   Details:', {
+                guardian_id: loginResult.guardian_id,
+                session_token: loginResult.session_token ? loginResult.session_token.substring(0, 20) + '...' : 'none',
+                error: loginResult.error || 'none'
+            });
+            
+            if (loginResult.success) {
+                // 3. Test session validation
+                console.log('3️⃣ Testing session validation...');
+                
+                const validateResponse = await fetch('/api/validate-session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        guardian_id: loginResult.guardian_id,
+                        token: loginResult.session_token
+                    })
+                });
+                
+                const validateResult = await validateResponse.json();
+                console.log('   Validation:', validateResult.valid ? '✅ VALID' : '❌ INVALID');
+                
+                // 4. Test dashboard access
+                console.log('4️⃣ Testing dashboard URL...');
+                const dashboardUrl = `/guardian-dashboard?guardian_id=${loginResult.guardian_id}&token=${loginResult.session_token}`;
+                console.log('   Dashboard URL:', dashboardUrl);
+                console.log('   Click the link below to test:');
+                console.log(`   ${window.location.origin}${dashboardUrl}`);
+                
+                // Create a clickable link in console
+                console.log('%c📋 Test Credentials:', 'color: blue; font-weight: bold');
+                console.log(`   Phone: ${testPhone}`);
+                console.log(`   Password: ${testPassword}`);
+                console.log(`   Dashboard: ${window.location.origin}${dashboardUrl}`);
+                
+                alert(`✅ Test Complete!\n\nPhone: ${testPhone}\nPassword: ${testPassword}\n\nCheck console for dashboard link.`);
+                
+            } else {
+                alert(`⚠️ Registration worked but login failed:\n\n${loginResult.error}`);
+            }
+            
+        } catch (error) {
+            console.error('❌ Test failed:', error);
+            alert('❌ Test failed: ' + error.message);
+        }
+        
+        console.groupEnd();
     }
     
     function testLoginManually() {
@@ -813,7 +934,12 @@
                 console.log('📥 Login test result:', data);
                 
                 if (data.success) {
-                    alert(`✅ Login successful!\nGuardian ID: ${data.guardian_id}\nName: ${data.full_name}`);
+                    alert(`✅ Login successful!\n\nGuardian ID: ${data.guardian_id}\nName: ${data.full_name}\n\nDashboard URL:\n${window.location.origin}/guardian-dashboard?guardian_id=${data.guardian_id}&token=${data.session_token}`);
+                    
+                    // Offer to go to dashboard
+                    if (confirm('Go to dashboard now?')) {
+                        window.location.href = `/guardian-dashboard?guardian_id=${data.guardian_id}&token=${data.session_token}`;
+                    }
                 } else {
                     alert(`❌ Login failed: ${data.error || 'Unknown error'}`);
                 }
@@ -836,23 +962,54 @@
         document.getElementById('address').value = 'Test Address';
         document.getElementById('acceptTerms').checked = true;
         
-        console.log('📝 Filled test data with phone:', testPhone);
-        alert(`Test data filled!\nPhone: ${testPhone}\nPassword: test123`);
+        console.log('📝 Filled test data');
+        console.log('   Phone:', testPhone);
+        console.log('   Password: test123');
+        
+        alert(`Test data filled!\n\nPhone: ${testPhone}\nPassword: test123`);
     }
     
-    // ==================== UTILITY FUNCTIONS ====================
-    
-    function clearForm() {
+    function clearAllData() {
+        console.log('🧹 Clearing all local data...');
+        
+        // Clear localStorage
+        localStorage.clear();
+        console.log('✅ localStorage cleared');
+        
+        // Clear sessionStorage
+        sessionStorage.clear();
+        console.log('✅ sessionStorage cleared');
+        
+        // Try to clear cookies
+        try {
+            document.cookie.split(";").forEach(function(c) {
+                document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
+            });
+            console.log('✅ Cookies cleared');
+        } catch (e) {
+            console.log('⚠️ Could not clear cookies:', e.message);
+        }
+        
+        // Clear form
         document.getElementById('guardianRegisterForm').reset();
         document.getElementById('errorMessage').style.display = 'none';
         document.getElementById('successMessage').style.display = 'none';
         document.getElementById('passwordStrength').style.width = '0%';
+        
+        alert('All local data cleared. Page will reload.');
+        
+        // Force reload without cache
+        setTimeout(() => {
+            window.location.href = window.location.href.split('?')[0] + '?nocache=' + Date.now();
+        }, 500);
     }
     
-    // Export functions to global scope for onclick handlers
+    // ==================== EXPORT FUNCTIONS ====================
+    
     window.showTerms = showTerms;
     window.showPrivacy = showPrivacy;
     window.fillTestData = fillTestData;
+    window.clearAllData = clearAllData;
     
     </script>
 </body>

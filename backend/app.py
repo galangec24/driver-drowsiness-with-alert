@@ -1021,12 +1021,18 @@ def send_pending_alerts(guardian_id, client_id):
 @app.route('/')
 def serve_home():
     """Main route - Redirects to admin login for desktop, mobile login for mobile"""
+    # Check for logout parameter
+    logged_out = request.args.get('logged_out')
+    
     if request.args.get('force') == 'mobile':
         return send_from_directory(FRONTEND_DIR, 'login.html')
     if request.args.get('force') == 'desktop':
         return send_from_directory(FRONTEND_DIR, 'admin_login.html')
     
     if is_mobile_device():
+        # If logged out, pass the parameter
+        if logged_out:
+            return redirect('/login.html?logged_out=true')
         return send_from_directory(FRONTEND_DIR, 'login.html')
     else:
         return send_from_directory(FRONTEND_DIR, 'admin_login.html')
