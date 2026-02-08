@@ -1,7 +1,7 @@
 ﻿"""
 CAPSTONE PROJECT - DRIVER ALERT SYSTEM
 PostgreSQL-only Version for Render.com Deployment
-FIXED VERSION - Corrected password handling to prevent double-cleaning
+FINAL FIXED VERSION - Complete with all debug endpoints
 """
 
 import os
@@ -1808,6 +1808,243 @@ def acknowledge_alert():
             'redirect': '/?logged_out=true'
         }), 500
 
+# ==================== DEBUG ENDPOINTS ====================
+@app.route('/api/test-bcrypt', methods=['GET'])
+def test_bcrypt():
+    """Test bcrypt functionality"""
+    try:
+        # Test bcrypt
+        test_password = "test123"
+        
+        # Generate hash
+        password_hash = hash_password(test_password)
+        
+        # Verify hash
+        is_valid = verify_password(test_password, password_hash)
+        
+        # Test with wrong password
+        is_wrong = verify_password("wrong", password_hash)
+        
+        # Test admin password
+        admin_valid = verify_password("admin123", ADMIN_PASSWORD_HASH)
+        
+        # Manual bcrypt test
+        password_bytes = test_password.encode('utf-8')
+        salt = bcrypt.gensalt(rounds=12)
+        manual_hash = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
+        manual_valid = bcrypt.checkpw(password_bytes, manual_hash.encode('utf-8'))
+        
+        return jsonify({
+            'success': True,
+            'test_password': test_password,
+            'hash_generated': password_hash[:50] + "..." if len(password_hash) > 50 else password_hash,
+            'hash_length': len(password_hash),
+            'hash_starts_with': password_hash[:10],
+            'hash_format_valid': password_hash.startswith('$2'),
+            'correct_password_matches': is_valid,
+            'wrong_password_matches': is_wrong,
+            'admin_password_valid': admin_valid,
+            'manual_bcrypt_hash': manual_hash[:50] + "...",
+            'manual_bcrypt_valid': manual_valid,
+            'note': 'bcrypt hash should start with $2b$12$ and be ~60 chars long'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        })
+
+@app.route('/api/debug/password', methods=['GET'])
+def debug_password():
+    """Debug password hash for a specific guardian"""
+    try:
+        guardian_id = request.args.get('guardian_id')
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT guardian_id, phone, password_hash, LENGTH(password_hash) as hash_length
+                FROM guardians 
+                WHERE guardian_id = %s
+            ''', (guardian_id,))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                guardian_data = dict(result)
+                password_hash = guardian_data['password_hash']
+                return jsonify({
+                    'success': True,
+                    'guardian': guardian_data,
+                    'hash_starts_with': password_hash[:30] if password_hash else 'None',
+                    'hash_ends_with': password_hash[-10:] if password_hash else 'None',
+                    'is_bcrypt': password_hash.startswith('$2') if password_hash else False,
+                    'hash_raw_preview': repr(password_hash)[:100] if password_hash else 'None'
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Guardian not found'
+                })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/debug/verify', methods=['POST'])
+def debug_verify():
+    """Debug password verification"""
+    try:
+        data = request.json
+        guardian_id = data.get('guardian_id')
+        password = data.get('password')
+        
+        if not guardian_id or not password:
+            return jsonify({
+                'success': False,
+                'error': 'Missing guardian_id or password'
+            }), 400
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT password_hash FROM guardians WHERE guardian_id = %s
+            ''', (guardian_id,))
+            
+            result = cursor.fetchone()
+            
+            if not result:
+                return jsonify({
+                    'success': False,
+                    'error': 'Guardian not found'
+                })
+            
+            stored_hash = result['password_hash']
+            
+            # Clean the password
+            cleaned_password = clean_password(password)
+            
+            # Manual bcrypt verification
+            try:
+                password_bytes = cleaned_password.encode('utf-8')
+                hash_bytes = stored_hash.encode('utf-8')
+                
+                is_valid = bcrypt.checkpw(password_bytes, hash_bytes)
+                
+                return jsonify({
+                    'success': True,
+                    'guardian_id': guardian_id,
+                    'password_provided': password,
+                    'password_cleaned': cleaned_password,
+                    'cleaned_length': len(cleaned_password),
+                    'stored_hash_preview': stored_hash[:50] + '...' if len(stored_hash) > 50 else stored_hash,
+                    'stored_hash_full': stored_hash,
+                    'hash_length': len(stored_hash),
+                    'is_bcrypt_format': stored_hash.startswith('$2'),
+                    'bcrypt_prefix': stored_hash[:10] if stored_hash else 'None',
+                    'verification_result': is_valid,
+                    'notes': 'This is the manual bcrypt.checkpw() result'
+                })
+            except Exception as bcrypt_error:
+                return jsonify({
+                    'success': False,
+                    'error': f'Bcrypt error: {str(bcrypt_error)}',
+                    'stored_hash_preview': stored_hash[:50] + '...' if len(stored_hash) > 50 else stored_hash,
+                    'stored_hash_full': stored_hash,
+                    'hash_length': len(stored_hash),
+                    'bcrypt_prefix': stored_hash[:10] if stored_hash else 'None'
+                })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/debug/db-hash', methods=['GET'])
+def debug_db_hash():
+    """Debug database hash storage"""
+    try:
+        phone = request.args.get('phone', '09776540694')
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT guardian_id, phone, password_hash, 
+                       LENGTH(password_hash) as hash_len,
+                       SUBSTRING(password_hash, 1, 10) as hash_start,
+                       SUBSTRING(password_hash, 50, 10) as hash_middle,
+                       SUBSTRING(password_hash, -10) as hash_end
+                FROM guardians 
+                WHERE phone LIKE %s
+                ORDER BY guardian_id DESC
+                LIMIT 5
+            ''', (f'%{phone}%',))
+            
+            results = cursor.fetchall()
+            
+            guardians = []
+            for row in results:
+                guardians.append(dict(row))
+            
+            return jsonify({
+                'success': True,
+                'phone_search': phone,
+                'guardians': guardians,
+                'count': len(guardians)
+            })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/debug/register-test', methods=['POST'])
+def debug_register_test():
+    """Debug registration and immediate verification"""
+    try:
+        data = request.json
+        phone = data.get('phone', '09776540696')
+        password = data.get('password', '12345678')
+        
+        # Clean password
+        cleaned_password = clean_password(password)
+        
+        # Hash password
+        password_hash = hash_password(cleaned_password)
+        
+        # Try to verify immediately
+        verify_result = verify_password(password, password_hash)
+        
+        # Manual bcrypt verification
+        password_bytes = cleaned_password.encode('utf-8')
+        hash_bytes = password_hash.encode('utf-8')
+        manual_result = bcrypt.checkpw(password_bytes, hash_bytes)
+        
+        return jsonify({
+            'success': True,
+            'phone': phone,
+            'password': password,
+            'cleaned_password': cleaned_password,
+            'hash_generated': password_hash[:50] + '...',
+            'hash_length': len(password_hash),
+            'is_bcrypt': password_hash.startswith('$2'),
+            'verify_password_result': verify_result,
+            'manual_bcrypt_result': manual_result,
+            'notes': 'Testing if hash/verify works in the same process'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 # ==================== STATIC FILES ====================
 @app.route('/<path:filename>')
 def serve_static(filename):
@@ -1856,6 +2093,7 @@ def startup_tasks():
     print(f"\n🔗 API Endpoints:")
     print("  • GET  /api/health - Health check")
     print("  • POST /api/send-alert - Receive alerts from drowsiness detection")
+    print("  • GET  /api/test-bcrypt - Test bcrypt functionality")
     
     print(f"\n🔐 Authentication Info:")
     print("  • Admin Username: admin")
@@ -1875,6 +2113,7 @@ if __name__ == '__main__':
     print(f"🚀 Starting server on {host}:{port}")
     print(f"🌐 WebSocket endpoint: ws://{host}:{port}")
     print(f"📡 Alert endpoint: http://{host}:{port}/api/send-alert")
+    print(f"🔧 Debug endpoints available at /api/debug/*")
     
     # Run the application
     socketio.run(app, 
