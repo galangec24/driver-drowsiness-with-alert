@@ -425,11 +425,11 @@
         // Add debug buttons
         addDebugButtons();
         
-        // Clear any old session data
-        clearStaleSessionData();
+        // Clear any problematic session data
+        clearProblematicData();
     });
     
-    // ==================== REGISTRATION HANDLER ====================
+    // ==================== FIXED REGISTRATION HANDLER ====================
     
     async function handleRegistration(e) {
         e.preventDefault();
@@ -516,11 +516,40 @@
             console.log('   Guardian ID:', regResult.guardian_id);
             console.log('   Has session token:', !!regResult.session_token);
             
-            // Give database a moment
-            await new Promise(resolve => setTimeout(resolve, 300));
+            // IMPORTANT: Clear any logout flags BEFORE redirecting
+            clearLogoutFlags();
             
-            // STEP 2: ATTEMPT LOGIN
+            // Check if we got a session token directly from registration
+            if (regResult.session_token) {
+                console.log('🎉 Using session token from registration...');
+                
+                // Store authentication data
+                localStorage.setItem('authToken', regResult.session_token);
+                localStorage.setItem('guardianId', regResult.guardian_id);
+                localStorage.setItem('userPhone', regResult.phone);
+                localStorage.setItem('userName', regResult.full_name);
+                localStorage.setItem('userType', 'guardian');
+                
+                showSuccess('Registration successful! Redirecting to dashboard...');
+                
+                // Wait a moment then redirect DIRECTLY to dashboard
+                setTimeout(() => {
+                    console.log('🚀 Redirecting to dashboard with registration token...');
+                    // Use the CORRECT dashboard URL
+                    const dashboardUrl = `/guardian-dashboard?guardian_id=${regResult.guardian_id}&token=${regResult.session_token}`;
+                    console.log('📍 Dashboard URL:', dashboardUrl);
+                    
+                    // CRITICAL: Redirect directly, NOT through login page
+                    window.location.href = dashboardUrl;
+                }, 1500);
+                return;
+            }
+            
+            // If no session token from registration, try to login
             console.log('🔐 STEP 2: Attempting login...');
+            
+            // Wait for database to sync
+            await new Promise(resolve => setTimeout(resolve, 500));
             
             const loginResponse = await fetch('/api/login', {
                 method: 'POST',
@@ -546,61 +575,35 @@
                 localStorage.setItem('userName', loginResult.full_name);
                 localStorage.setItem('userType', 'guardian');
                 
-                // Clear any old session flags
-                sessionStorage.removeItem('justLoggedOut');
-                sessionStorage.removeItem('sessionExpired');
-                
                 showSuccess('Registration successful! Redirecting to dashboard...');
                 
-                // Wait a moment then redirect
+                // Wait a moment then redirect DIRECTLY to dashboard
                 setTimeout(() => {
-                    console.log('🚀 Redirecting to dashboard...');
-                    // IMPORTANT: Use the exact format your backend expects
+                    console.log('🚀 Redirecting to dashboard with login token...');
+                    // Use the CORRECT dashboard URL
                     const dashboardUrl = `/guardian-dashboard?guardian_id=${loginResult.guardian_id}&token=${loginResult.session_token}`;
-                    console.log('📍 URL:', dashboardUrl);
+                    console.log('📍 Dashboard URL:', dashboardUrl);
+                    
+                    // CRITICAL: Redirect directly, NOT through login page
                     window.location.href = dashboardUrl;
                 }, 1500);
                 
             } else {
                 console.error('❌ Login failed:', loginResult.error);
                 
-                // Check if we got a session token from registration
-                if (regResult.session_token) {
-                    console.log('⚠️ Using session token from registration...');
-                    
-                    // Store authentication data
-                    localStorage.setItem('authToken', regResult.session_token);
-                    localStorage.setItem('guardianId', regResult.guardian_id);
-                    localStorage.setItem('userPhone', regResult.phone);
-                    localStorage.setItem('userName', regResult.full_name);
-                    localStorage.setItem('userType', 'guardian');
-                    
-                    showSuccess('Registration successful! Redirecting to dashboard...');
-                    
-                    setTimeout(() => {
-                        console.log('🚀 Redirecting with registration token...');
-                        const dashboardUrl = `/guardian-dashboard?guardian_id=${regResult.guardian_id}&token=${regResult.session_token}`;
-                        console.log('📍 URL:', dashboardUrl);
-                        window.location.href = dashboardUrl;
-                    }, 1500);
-                    
-                } else {
-                    // Both login and registration token failed
-                    console.log('⚠️ Registration succeeded but login failed');
-                    
-                    // Store phone for auto-fill
-                    sessionStorage.setItem('justRegistered', 'true');
-                    sessionStorage.setItem('registeredPhone', phoneNumber);
-                    
-                    showSuccess('Registration successful! Please login with your credentials.');
-                    
-                    // Redirect to clean login page
-                    setTimeout(() => {
-                        console.log('📍 Redirecting to login page...');
-                        // Use a clean login URL without logout parameters
-                        window.location.href = '/?justRegistered=true';
-                    }, 2000);
-                }
+                // Both methods failed - tell user to login manually
+                showSuccess('Registration successful! Please login with your credentials.');
+                
+                // Store phone for auto-fill
+                sessionStorage.setItem('justRegistered', 'true');
+                sessionStorage.setItem('registeredPhone', phoneNumber);
+                
+                // Wait then redirect to login page WITHOUT logout parameter
+                setTimeout(() => {
+                    console.log('📍 Redirecting to login page...');
+                    // Use a clean URL without any problematic parameters
+                    window.location.href = '/login.html?justRegistered=true&phone=' + encodeURIComponent(phoneNumber);
+                }, 2000);
             }
             
         } catch (error) {
@@ -717,11 +720,35 @@
         alert('Privacy Policy:\n\n1. We store your information securely.\n2. Your data is only used for driver monitoring alerts.\n3. We do not share your information with third parties.\n4. You can request data deletion at any time.');
     }
     
-    function clearStaleSessionData() {
-        // Clear session storage items that might cause issues
+    function clearProblematicData() {
+        // Clear localStorage items that might cause logout messages
+        localStorage.removeItem('justLoggedOut');
+        localStorage.removeItem('sessionExpired');
+        localStorage.removeItem('logged_out');
+        
+        // Clear sessionStorage
         sessionStorage.removeItem('justLoggedOut');
         sessionStorage.removeItem('sessionExpired');
-        console.log('✅ Cleared stale session data');
+        
+        console.log('✅ Cleared problematic session data');
+    }
+    
+    function clearLogoutFlags() {
+        // Clear anything that might trigger logout message
+        const itemsToClear = [
+            'justLoggedOut',
+            'logged_out',
+            'logout',
+            'sessionExpired',
+            'expired'
+        ];
+        
+        itemsToClear.forEach(item => {
+            localStorage.removeItem(item);
+            sessionStorage.removeItem(item);
+        });
+        
+        console.log('✅ Cleared logout flags');
     }
     
     // ==================== DEBUG & TESTING FUNCTIONS ====================
@@ -757,6 +784,12 @@
                 top: '170px',
                 className: 'debug-btn danger',
                 onclick: clearAllData
+            },
+            {
+                text: '🎯 Test Dashboard',
+                top: '210px',
+                className: 'debug-btn',
+                onclick: testDashboardAccess
             }
         ];
         
@@ -768,6 +801,51 @@
             button.onclick = btn.onclick;
             document.body.appendChild(button);
         });
+    }
+    
+    async function testDashboardAccess() {
+        const guardianId = prompt('Enter Guardian ID:');
+        const token = prompt('Enter Session Token:');
+        
+        if (guardianId && token) {
+            console.log('🎯 Testing dashboard access...');
+            console.log('   Guardian ID:', guardianId);
+            console.log('   Token:', token.substring(0, 20) + '...');
+            
+            // Test session validation first
+            try {
+                const validateResponse = await fetch('/api/validate-session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        guardian_id: guardianId,
+                        token: token
+                    })
+                });
+                
+                const validateResult = await validateResponse.json();
+                console.log('📥 Validation result:', validateResult);
+                
+                if (validateResult.valid) {
+                    // Store the token
+                    localStorage.setItem('authToken', token);
+                    localStorage.setItem('guardianId', guardianId);
+                    
+                    // Redirect to dashboard
+                    const dashboardUrl = `/guardian-dashboard?guardian_id=${guardianId}&token=${token}`;
+                    console.log('📍 Going to dashboard:', dashboardUrl);
+                    
+                    if (confirm('Session is valid! Go to dashboard now?')) {
+                        window.location.href = dashboardUrl;
+                    }
+                } else {
+                    alert('❌ Session is invalid: ' + (validateResult.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('❌ Validation failed:', error);
+                alert('Validation failed: ' + error.message);
+            }
+        }
     }
     
     async function runDebugTests() {
@@ -792,19 +870,29 @@
                 console.log('   ❌ Bcrypt test failed:', bcryptError.message);
             }
             
-            // Test 3: Test endpoints
-            console.log('3️⃣ Testing endpoints...');
-            const endpoints = ['/api/debug/db', '/api/test-connection'];
+            // Test 3: Test registration
+            console.log('3️⃣ Testing registration endpoint...');
+            const testPhone = '09' + Math.floor(100000000 + Math.random() * 900000000);
             
-            for (const endpoint of endpoints) {
-                try {
-                    const response = await fetch(endpoint);
-                    const data = await response.json();
-                    console.log(`   ${endpoint}:`, data.success ? '✅ OK' : '❌ Failed');
-                } catch (e) {
-                    console.log(`   ${endpoint}: ❌ ${e.message}`);
-                }
-            }
+            const regResponse = await fetch('/api/register-guardian', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    full_name: "Debug Test User",
+                    phone: testPhone,
+                    password: "debug123",
+                    email: "debug@test.com",
+                    address: "Debug Address"
+                })
+            });
+            
+            const regResult = await regResponse.json();
+            console.log('   ✅ Registration:', regResult.success ? 'SUCCESS' : 'FAILED');
+            console.log('   📊 Result:', {
+                guardian_id: regResult.guardian_id,
+                has_token: !!regResult.session_token,
+                error: regResult.error || 'none'
+            });
             
         } catch (error) {
             console.error('❌ Debug test failed:', error);
@@ -819,42 +907,38 @@
         
         const testPhone = '09' + Math.floor(100000000 + Math.random() * 900000000);
         const testPassword = 'test123';
-        const testData = {
-            full_name: "Quick Test User",
-            phone: testPhone,
-            password: testPassword,
-            email: "quicktest@example.com",
-            address: "Test Address"
-        };
         
         console.log('📱 Test phone:', testPhone);
         console.log('🔑 Test password:', testPassword);
         
         try {
-            // 1. Test registration
+            // 1. Clear old data first
+            clearAllData();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // 2. Test registration
             console.log('1️⃣ Testing registration...');
             const regResponse = await fetch('/api/register-guardian', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(testData)
+                body: JSON.stringify({
+                    full_name: "Quick Test User",
+                    phone: testPhone,
+                    password: testPassword,
+                    email: "quick@test.com",
+                    address: "Test Address"
+                })
             });
             
             const regResult = await regResponse.json();
             console.log('   Registration:', regResult.success ? '✅ SUCCESS' : '❌ FAILED');
-            console.log('   Details:', {
-                guardian_id: regResult.guardian_id,
-                has_token: !!regResult.session_token,
-                error: regResult.error || 'none'
-            });
             
             if (!regResult.success) {
                 throw new Error('Registration failed: ' + regResult.error);
             }
             
-            // Wait for database
+            // 3. Wait then test login
             await new Promise(resolve => setTimeout(resolve, 500));
-            
-            // 2. Test login
             console.log('2️⃣ Testing login...');
             
             const loginResponse = await fetch('/api/login', {
@@ -868,42 +952,35 @@
             
             const loginResult = await loginResponse.json();
             console.log('   Login:', loginResult.success ? '✅ SUCCESS' : '❌ FAILED');
-            console.log('   Details:', {
-                guardian_id: loginResult.guardian_id,
-                session_token: loginResult.session_token ? loginResult.session_token.substring(0, 20) + '...' : 'none',
-                error: loginResult.error || 'none'
-            });
             
             if (loginResult.success) {
-                // 3. Test session validation
-                console.log('3️⃣ Testing session validation...');
-                
-                const validateResponse = await fetch('/api/validate-session', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        guardian_id: loginResult.guardian_id,
-                        token: loginResult.session_token
-                    })
-                });
-                
-                const validateResult = await validateResponse.json();
-                console.log('   Validation:', validateResult.valid ? '✅ VALID' : '❌ INVALID');
-                
-                // 4. Test dashboard access
-                console.log('4️⃣ Testing dashboard URL...');
+                console.log('3️⃣ Testing dashboard URL...');
                 const dashboardUrl = `/guardian-dashboard?guardian_id=${loginResult.guardian_id}&token=${loginResult.session_token}`;
+                
+                console.log('%c🎉 TEST SUCCESS!', 'color: green; font-weight: bold; font-size: 16px');
+                console.log('📋 Credentials:');
+                console.log('   Phone:', testPhone);
+                console.log('   Password:', testPassword);
                 console.log('   Dashboard URL:', dashboardUrl);
-                console.log('   Click the link below to test:');
-                console.log(`   ${window.location.origin}${dashboardUrl}`);
                 
-                // Create a clickable link in console
-                console.log('%c📋 Test Credentials:', 'color: blue; font-weight: bold');
-                console.log(`   Phone: ${testPhone}`);
-                console.log(`   Password: ${testPassword}`);
-                console.log(`   Dashboard: ${window.location.origin}${dashboardUrl}`);
+                // Store the credentials
+                localStorage.setItem('testPhone', testPhone);
+                localStorage.setItem('testPassword', testPassword);
+                localStorage.setItem('testDashboardUrl', dashboardUrl);
                 
-                alert(`✅ Test Complete!\n\nPhone: ${testPhone}\nPassword: ${testPassword}\n\nCheck console for dashboard link.`);
+                // Ask if user wants to go to dashboard
+                const goToDashboard = confirm(`✅ Test Complete!\n\nPhone: ${testPhone}\nPassword: ${testPassword}\n\nGo to dashboard now?`);
+                
+                if (goToDashboard) {
+                    // Store auth data
+                    localStorage.setItem('authToken', loginResult.session_token);
+                    localStorage.setItem('guardianId', loginResult.guardian_id);
+                    localStorage.setItem('userPhone', loginResult.phone);
+                    localStorage.setItem('userName', loginResult.full_name);
+                    
+                    // Go directly to dashboard
+                    window.location.href = dashboardUrl;
+                }
                 
             } else {
                 alert(`⚠️ Registration worked but login failed:\n\n${loginResult.error}`);
@@ -934,11 +1011,18 @@
                 console.log('📥 Login test result:', data);
                 
                 if (data.success) {
-                    alert(`✅ Login successful!\n\nGuardian ID: ${data.guardian_id}\nName: ${data.full_name}\n\nDashboard URL:\n${window.location.origin}/guardian-dashboard?guardian_id=${data.guardian_id}&token=${data.session_token}`);
+                    const dashboardUrl = `/guardian-dashboard?guardian_id=${data.guardian_id}&token=${data.session_token}`;
                     
-                    // Offer to go to dashboard
-                    if (confirm('Go to dashboard now?')) {
-                        window.location.href = `/guardian-dashboard?guardian_id=${data.guardian_id}&token=${data.session_token}`;
+                    // Store auth data
+                    localStorage.setItem('authToken', data.session_token);
+                    localStorage.setItem('guardianId', data.guardian_id);
+                    localStorage.setItem('userPhone', data.phone);
+                    localStorage.setItem('userName', data.full_name);
+                    
+                    const goToDashboard = confirm(`✅ Login successful!\n\nGo to dashboard now?\n\nDashboard URL:\n${dashboardUrl}`);
+                    
+                    if (goToDashboard) {
+                        window.location.href = dashboardUrl;
                     }
                 } else {
                     alert(`❌ Login failed: ${data.error || 'Unknown error'}`);
@@ -996,12 +1080,7 @@
         document.getElementById('successMessage').style.display = 'none';
         document.getElementById('passwordStrength').style.width = '0%';
         
-        alert('All local data cleared. Page will reload.');
-        
-        // Force reload without cache
-        setTimeout(() => {
-            window.location.href = window.location.href.split('?')[0] + '?nocache=' + Date.now();
-        }, 500);
+        console.log('✅ All data cleared');
     }
     
     // ==================== EXPORT FUNCTIONS ====================
