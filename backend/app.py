@@ -620,131 +620,116 @@ def invalidate_session(guardian_id, token=None):
 
 # ==================== AUTHENTICATION FUNCTIONS ====================
 def verify_guardian_credentials(phone, password):
-    """Verify guardian login credentials using bcrypt"""
+    """Verify guardian login credentials using bcrypt - SIMPLIFIED FIXED VERSION"""
     try:
-        # Clean the phone number (remove spaces, dashes, parentheses, plus sign)
-        phone = str(phone).strip()
-        phone_clean = re.sub(r'[\s\-\(\)\+]', '', phone)
+        print(f"\n🔍 [LOGIN VERIFY] Starting verification")
+        print(f"   Phone received: '{phone}'")
+        print(f"   Password received: '{password[:3]}...' (length: {len(password)})")
         
-        print(f"🔍 [LOGIN VERIFY] Phone entered: '{phone}'")
-        print(f"🔍 [LOGIN VERIFY] Cleaned phone: '{phone_clean}'")
+        # Clean the phone number
+        phone_clean = str(phone).strip()
+        phone_clean = re.sub(r'[\s\-\(\)\+]', '', phone_clean)
+        print(f"   Cleaned phone: '{phone_clean}'")
         
-        # Convert to 09 format for database lookup
+        # Check if it's all digits
+        if not phone_clean.isdigit():
+            print(f"❌ [LOGIN VERIFY] Phone contains non-digits")
+            return None
+        
+        # Convert to 09 format (same logic as registration)
         lookup_phone = phone_clean
         
-        # If it starts with 639 (12 digits), convert to 09
-        if phone_clean.startswith('639') and len(phone_clean) == 12:
-            lookup_phone = '09' + phone_clean[3:]  # Convert 639XXXXXXXXX to 09XXXXXXXXX
-            print(f"🔍 [LOGIN VERIFY] Converted 639 to 09 format: '{lookup_phone}'")
+        if len(lookup_phone) == 12 and lookup_phone.startswith('639'):
+            # 639XXXXXXXXX -> 09XXXXXXXXX
+            lookup_phone = '09' + lookup_phone[3:]
+        elif len(lookup_phone) == 11 and lookup_phone.startswith('63'):
+            # 63XXXXXXXXX -> 09XXXXXXXXX
+            lookup_phone = '09' + lookup_phone[2:]
+        elif len(lookup_phone) == 10 and lookup_phone.startswith('9'):
+            # 9XXXXXXXXX -> 09XXXXXXXXX
+            lookup_phone = '0' + lookup_phone
+        elif len(lookup_phone) >= 10:
+            # Take last 10 digits and prepend 09
+            last_10_digits = lookup_phone[-10:]
+            lookup_phone = '09' + last_10_digits
         
-        # If it starts with 63 (11 digits), convert to 09
-        elif phone_clean.startswith('63') and len(phone_clean) == 11:
-            lookup_phone = '09' + phone_clean[2:]  # Convert 63XXXXXXXXX to 09XXXXXXXXX
-            print(f"🔍 [LOGIN VERIFY] Converted 63 to 09 format: '{lookup_phone}'")
+        # Final validation
+        if not lookup_phone.startswith('09') or len(lookup_phone) != 11:
+            print(f"❌ [LOGIN VERIFY] Invalid final format: '{lookup_phone}'")
+            return None
         
-        # If it starts with 9 (10 digits), add 0
-        elif phone_clean.startswith('9') and len(phone_clean) == 10:
-            lookup_phone = '0' + phone_clean  # Convert 9XXXXXXXXX to 09XXXXXXXXX
-            print(f"🔍 [LOGIN VERIFY] Added leading 0: '{lookup_phone}'")
+        print(f"   Looking up in DB as: '{lookup_phone}'")
         
-        # If it doesn't start with 09, try to convert
-        elif not phone_clean.startswith('09'):
-            if len(phone_clean) >= 10:
-                last_10_digits = phone_clean[-10:]  # Get last 10 digits
-                lookup_phone = '09' + last_10_digits
-                print(f"🔍 [LOGIN VERIFY] Converted to 09 format: '{lookup_phone}'")
-        
-        print(f"🔍 [LOGIN VERIFY] Final phone for lookup: '{lookup_phone}'")
-        
+        # Check database
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Try exact match with converted phone
+            # SIMPLE query - just get the user
             cursor.execute('''
-                SELECT guardian_id, full_name, password_hash, failed_login_attempts, locked_until
+                SELECT guardian_id, full_name, password_hash
                 FROM guardians 
-                WHERE phone = %s AND is_active = TRUE
+                WHERE phone = %s
             ''', (lookup_phone,))
             
             result = cursor.fetchone()
             
-            if result:
-                guardian_id, full_name, stored_hash, failed_attempts, locked_until = result
-                
-                print(f"✅ [LOGIN VERIFY] User found: {full_name}")
-                print(f"   Stored hash length: {len(stored_hash) if stored_hash else 0}")
-                print(f"   Hash preview: {stored_hash[:30] if stored_hash else 'None'}...")
-                
-                # Check if account is locked
-                if locked_until:
-                    try:
-                        # Handle both string and datetime objects
-                        if isinstance(locked_until, str):
-                            # Try to parse the string
-                            try:
-                                lock_time = datetime.fromisoformat(locked_until.replace('Z', '+00:00'))
-                            except:
-                                # Try alternative format
-                                lock_time = datetime.strptime(locked_until, '%Y-%m-%d %H:%M:%S.%f')
-                        else:
-                            lock_time = locked_until
-                        
-                        if lock_time > datetime.now():
-                            remaining_minutes = (lock_time - datetime.now()).seconds // 60
-                            print(f"🔒 [LOGIN VERIFY] Account locked for {remaining_minutes} more minutes")
-                            return {'error': 'Account locked', 'locked_until': locked_until}
-                    except Exception as e:
-                        print(f"⚠️ [LOGIN VERIFY] Error parsing lock time '{locked_until}': {e}")
-                        # Continue anyway, don't lock out due to parsing error
-                
-                # Check if hash is valid bcrypt format
-                if not stored_hash or not stored_hash.startswith('$2'):
-                    print(f"❌ [LOGIN VERIFY] Invalid bcrypt hash format in database")
-                    return None
-                
-                # Verify password using bcrypt
-                print(f"   Password verification...")
-                
-                try:
-                    password_bytes = password.encode('utf-8')
-                    hashed_bytes = stored_hash.encode('utf-8')
-                    
-                    if bcrypt.checkpw(password_bytes, hashed_bytes):
-                        print(f"✅ [LOGIN VERIFY] Password verified successfully")
-                        # Reset failed attempts on successful login
-                        try:
-                            cursor.execute('UPDATE guardians SET failed_login_attempts = 0, last_login = %s WHERE guardian_id = %s', 
-                                         (datetime.now(), guardian_id))
-                        except Exception as e:
-                            print(f"⚠️ [LOGIN VERIFY] Error resetting failed attempts: {e}")
-                        conn.commit()
-                        
-                        return {
-                            'guardian_id': guardian_id, 
-                            'full_name': full_name, 
-                            'phone': lookup_phone  # Return the standardized phone
-                        }
-                    else:
-                        print(f"❌ [LOGIN VERIFY] Password verification failed")
-                        # Increment failed attempts
-                        try:
-                            cursor.execute('UPDATE guardians SET failed_login_attempts = failed_login_attempts + 1 WHERE guardian_id = %s', 
-                                         (guardian_id,))
-                            conn.commit()
-                        except Exception as e:
-                            print(f"⚠️ Error updating failed attempts: {e}")
-                        
-                        return None
-                        
-                except Exception as hash_error:
-                    print(f"❌ [LOGIN VERIFY] Hash verification error: {hash_error}")
-                    return None
-            else:
+            if not result:
                 print(f"❌ [LOGIN VERIFY] No user found with phone: '{lookup_phone}'")
-                print(f"   (Original: '{phone}', Cleaned: '{phone_clean}')")
+                
+                # Debug: Show what's in the database
+                cursor.execute('SELECT phone, full_name FROM guardians LIMIT 5')
+                all_phones = cursor.fetchall()
+                print(f"   First 5 phones in DB: {[p[0] for p in all_phones]}")
+                
+                return None
+            
+            # Unpack result
+            guardian_id, full_name, stored_hash = result
+            
+            print(f"✅ [LOGIN VERIFY] User found: {full_name} (ID: {guardian_id})")
+            print(f"   Stored hash: {stored_hash[:30]}...")
+            print(f"   Hash length: {len(stored_hash)}")
+            print(f"   Is bcrypt format: {stored_hash.startswith('$2') if stored_hash else False}")
+            
+            # Check if we have a hash
+            if not stored_hash:
+                print(f"❌ [LOGIN VERIFY] No password hash stored for user")
+                return None
+            
+            # Verify password
+            try:
+                password_bytes = password.encode('utf-8')
+                hash_bytes = stored_hash.encode('utf-8')
+                
+                print(f"   Verifying password with bcrypt...")
+                
+                if bcrypt.checkpw(password_bytes, hash_bytes):
+                    print(f"✅ [LOGIN VERIFY] Password verified successfully!")
                     
+                    # Update last login
+                    try:
+                        cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
+                                     (datetime.now(), guardian_id))
+                        conn.commit()
+                    except Exception as update_error:
+                        print(f"⚠️ [LOGIN VERIFY] Error updating last login: {update_error}")
+                    
+                    return {
+                        'guardian_id': guardian_id, 
+                        'full_name': full_name, 
+                        'phone': lookup_phone
+                    }
+                else:
+                    print(f"❌ [LOGIN VERIFY] Password does not match")
+                    return None
+                    
+            except Exception as hash_error:
+                print(f"❌ [LOGIN VERIFY] Hash verification error: {hash_error}")
+                return None
+                
     except Exception as e:
-        print(f"❌ [LOGIN VERIFY] Error: {e}")
+        print(f"❌ [LOGIN VERIFY] Unexpected error: {e}")
+        import traceback
         traceback.print_exc()
     
     return None
