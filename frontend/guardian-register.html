@@ -418,95 +418,105 @@ if ('serviceWorker' in navigator) {
         }
         
         async function handleRegistration(e) {
-            e.preventDefault();
+    e.preventDefault();
+    
+    // Get form values
+    const fullName = document.getElementById('fullName').value.trim();
+    const phoneNumber = document.getElementById('phoneNumber').value.trim();
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+    const confirmPassword = document.getElementById('confirmPassword').value;
+    const address = document.getElementById('address').value.trim();
+    
+    console.log("📝 Registration attempt:", { fullName, phoneNumber, email });
+    
+    // Validation
+    if (!fullName) {
+        showError('Full name is required');
+        return;
+    }
+    
+    if (!phoneNumber || !/^[0-9]{10,11}$/.test(phoneNumber)) {
+        showError('Valid phone number is required (10-11 digits)');
+        return;
+    }
+    
+    if (password.length < 6) {
+        showError('Password must be at least 6 characters');
+        return;
+    }
+    
+    if (password !== confirmPassword) {
+        showError('Passwords do not match');
+        return;
+    }
+    
+    if (!document.getElementById('acceptTerms').checked) {
+        showError('You must accept the terms and conditions');
+        return;
+    }
+    
+    // Show loading
+    const registerBtn = document.getElementById('registerButton');
+    const registerText = document.getElementById('registerText');
+    const originalText = registerText.innerHTML;
+    registerText.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span>';
+    registerBtn.disabled = true;
+    
+    try {
+        // Prepare registration data
+        const registrationData = {
+            full_name: fullName,
+            phone: phoneNumber,
+            password: password,
+            email: email || '',  // Ensure email is empty string if not provided
+            address: address || ''  // Ensure address is empty string if not provided
+        };
+        
+        console.log("📤 Sending registration data:", registrationData);
+        
+        // Send registration request
+        const response = await fetch('/api/register-guardian', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(registrationData)
+        });
+        
+        console.log("📡 Registration response status:", response.status);
+        
+        const result = await response.json();
+        console.log("📡 Registration response data:", result);
+        
+        if (result.success) {
+            showSuccess('Account created successfully! Redirecting to login...');
             
-            // Get form values
-            const fullName = document.getElementById('fullName').value.trim();
-            const phoneNumber = document.getElementById('phoneNumber').value.trim();
-            const email = document.getElementById('email').value.trim();
-            const password = document.getElementById('password').value;
-            const confirmPassword = document.getElementById('confirmPassword').value;
-            const address = document.getElementById('address').value.trim();
+            // Clear form
+            document.getElementById('guardianRegisterForm').reset();
             
-            // Validation
-            if (!fullName) {
-                showError('Full name is required');
-                return;
-            }
+            // Store phone for auto-fill
+            localStorage.setItem('registeredPhone', phoneNumber);
             
-            if (!phoneNumber || !/^[0-9]{10,11}$/.test(phoneNumber)) {
-                showError('Valid phone number is required (10-11 digits)');
-                return;
-            }
+            // Redirect to login after delay
+            setTimeout(() => {
+                window.location.href = '/?prefilled_phone=' + encodeURIComponent(phoneNumber);
+            }, 2000);
             
-            if (password.length < 6) {
-                showError('Password must be at least 6 characters');
-                return;
-            }
-            
-            if (password !== confirmPassword) {
-                showError('Passwords do not match');
-                return;
-            }
-            
-            if (!document.getElementById('acceptTerms').checked) {
-                showError('You must accept the terms and conditions');
-                return;
-            }
-            
-            // Show loading
-            const registerBtn = document.getElementById('registerButton');
-            const registerText = document.getElementById('registerText');
-            const originalText = registerText.innerHTML;
-            registerText.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span>';
-            registerBtn.disabled = true;
-            
-            try {
-                // Prepare registration data
-                const registrationData = {
-                    full_name: fullName,
-                    phone: phoneNumber,
-                    email: email,
-                    password: password,
-                    address: address
-                };
-                
-                // Send registration request
-                const response = await fetch('/api/register-guardian', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(registrationData)
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    showSuccess('Account created successfully! Redirecting to login...');
-                    
-                    // Auto-login after registration
-                    setTimeout(() => {
-                        // Store phone for auto-fill
-                        localStorage.setItem('registeredPhone', phoneNumber);
-                        
-                        // Redirect to login
-                        window.location.href = '/';
-                    }, 2000);
-                    
-                } else {
-                    throw new Error(result.error || 'Registration failed');
-                }
-                
-            } catch (error) {
-                console.error('Registration error:', error);
-                showError('Registration failed: ' + error.message);
-            } finally {
-                // Restore button
-                registerText.innerHTML = originalText;
-                registerBtn.disabled = false;
-            }
+        } else {
+            console.error("❌ Registration failed:", result.error);
+            showError('Registration failed: ' + (result.error || 'Unknown error'));
         }
+        
+    } catch (error) {
+        console.error('Network error:', error);
+        showError('Network error. Please check your connection and try again.');
+    } finally {
+        // Restore button
+        registerText.innerHTML = originalText;
+        registerBtn.disabled = false;
+    }
+}
         
         function showError(message) {
             const errorDiv = document.getElementById('errorMessage');
