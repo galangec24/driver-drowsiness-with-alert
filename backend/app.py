@@ -1941,6 +1941,12 @@ def login():
             # --- Log activity ---
             log_activity(guardian_id, 'LOGIN', f'Guardian logged in from {request.remote_addr}')
 
+            print("==== DEBUG LOGIN ====")
+            print("lookup_phone:", lookup_phone)
+            print("password:", password)
+            print("stored_hash length:", len(stored_hash))
+            print("stored_hash repr:", repr(stored_hash))
+            print("=====================")
         return jsonify({
             'success': True,
             'guardian_id': guardian_id,
