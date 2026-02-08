@@ -1,7 +1,7 @@
 ﻿"""
 CAPSTONE PROJECT - DRIVER ALERT SYSTEM
 PostgreSQL-only Version for Render.com Deployment
-FIXED VERSION - Corrected bcrypt implementation and auto-login
+CLEANED & OPTIMIZED VERSION - Removed redundant code
 """
 
 import os
@@ -37,24 +37,11 @@ import traceback
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-try:
-    from backend.utils.cloudinary_manager import get_cloudinary_storage
-    cloudinary_storage = get_cloudinary_storage()
-    print("✅ Cloudinary storage initialized")
-except ImportError as e:
-    print(f"⚠️ Cloudinary import error: {e}")
-    cloudinary_storage = None
-except Exception as e:
-    print(f"⚠️ Cloudinary initialization error: {e}")
-    cloudinary_storage = None
-
 # ==================== APP SETUP ====================
 app = Flask(__name__, 
             static_folder=str(project_root / 'frontend'),
             static_url_path='')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
-
-POSTGRES_AVAILABLE = True
 
 # Set base directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -110,7 +97,6 @@ socketio = SocketIO(app,
 # ==================== SECURITY CONFIGURATION ====================
 # Generate bcrypt hash for admin password (admin123)
 ADMIN_PASSWORD_HASH = bcrypt.hashpw(b'admin123', bcrypt.gensalt(rounds=12)).decode('utf-8')
-print(f"🔐 Generated admin bcrypt hash: {ADMIN_PASSWORD_HASH[:20]}...")
 
 ADMIN_CREDENTIALS = {
     'admin': {
@@ -123,48 +109,50 @@ ADMIN_CREDENTIALS = {
 }
 
 admin_rate_limit = {}
-guardian_rate_limit = {}
 admin_sessions = {}
 
-# ==================== PASSWORD HASHING FUNCTIONS ====================
+# ==================== PASSWORD FUNCTIONS ====================
+def clean_password(password):
+    """Remove all spaces from password"""
+    if not password:
+        return ''
+    return password.replace(' ', '')
+
 def hash_password(password):
-    """Hash password using bcrypt with automatic salt generation"""
+    """Hash password using bcrypt after removing spaces"""
     try:
-        # Convert password to bytes and hash with bcrypt
+        password = clean_password(password)
+        if not password:
+            raise ValueError("Password cannot be empty")
+        
         password_bytes = password.encode('utf-8')
-        salt = bcrypt.gensalt(rounds=12)  # Generate salt with 12 rounds
+        salt = bcrypt.gensalt(rounds=12)
         hashed = bcrypt.hashpw(password_bytes, salt)
-        return hashed.decode('utf-8')  # Convert to string for storage
+        return hashed.decode('utf-8')
     except Exception as e:
-        print(f"❌ Error hashing password with bcrypt: {e}")
-        traceback.print_exc()
+        print(f"❌ Error hashing password: {e}")
         raise
 
 def verify_password(password, hashed_password):
-    """Verify password against bcrypt hash"""
+    """Verify password against bcrypt hash after removing spaces"""
     try:
-        # Check if the hash is valid bcrypt format (should start with $2)
-        if not hashed_password or len(hashed_password) < 60:
-            print(f"⚠️ Invalid hash format or length: {hashed_password[:30] if hashed_password else 'None'}")
+        password = clean_password(password)
+        if not password:
             return False
         
-        if not hashed_password.startswith('$2'):
-            print(f"⚠️ Invalid bcrypt hash prefix: {hashed_password[:10]}")
+        if not hashed_password or len(hashed_password) < 60 or not hashed_password.startswith('$2'):
             return False
         
-        # Convert both to bytes
         password_bytes = password.encode('utf-8')
         hashed_bytes = hashed_password.encode('utf-8')
         
-        # Use bcrypt to check password
         return bcrypt.checkpw(password_bytes, hashed_bytes)
     except Exception as e:
-        print(f"❌ Error verifying password with bcrypt: {e}")
-        traceback.print_exc()
+        print(f"❌ Error verifying password: {e}")
         return False
 
 def verify_admin_credentials(username, password):
-    """Verify admin login credentials using bcrypt"""
+    """Verify admin login credentials"""
     if username not in ADMIN_CREDENTIALS:
         return None
     
@@ -238,13 +226,6 @@ def require_admin_auth(f):
                 'error': 'Invalid or expired admin session'
             }), 401
         
-        ip = request.remote_addr
-        if rate_limit_exceeded(ip, 'admin'):
-            return jsonify({
-                'success': False,
-                'error': 'Too many requests'
-            }), 429
-        
         return f(*args, **kwargs)
     
     decorated_function.__name__ = f.__name__
@@ -266,7 +247,7 @@ def rate_limit_exceeded(ip, endpoint_type='general', limit=100):
     admin_rate_limit[key].append(current_time)
     return False
 
-# ==================== DATABASE CONNECTION MANAGEMENT ====================
+# ==================== DATABASE CONNECTION ====================
 @contextmanager
 def get_db_connection():
     """Context manager for database connections"""
@@ -274,19 +255,14 @@ def get_db_connection():
     try:
         database_url = os.environ.get('DATABASE_URL')
         if not database_url:
-            raise Exception("DATABASE_URL not set in environment variables")
+            raise Exception("DATABASE_URL not set")
         
-        # Fix URL format
         if database_url.startswith('postgres://'):
             database_url = database_url.replace('postgres://', 'postgresql://', 1)
         
-        # Parse URL
         url = urllib.parse.urlparse(database_url)
-        
-        # Ensure port is set
         port = url.port or 5432
         
-        # Connect with timeout
         conn = psycopg2.connect(
             database=url.path[1:] if url.path.startswith('/') else url.path,
             user=url.username,
@@ -297,9 +273,6 @@ def get_db_connection():
             connect_timeout=5
         )
         yield conn
-    except psycopg2.OperationalError as e:
-        print(f"❌ PostgreSQL operational error: {e}")
-        raise Exception(f"Database connection failed: {str(e)}")
     except Exception as e:
         print(f"❌ Database connection error: {e}")
         raise
@@ -315,19 +288,14 @@ def get_db_cursor():
     try:
         database_url = os.environ.get('DATABASE_URL')
         if not database_url:
-            raise Exception("DATABASE_URL not set in environment variables")
+            raise Exception("DATABASE_URL not set")
         
-        # Fix URL format
         if database_url.startswith('postgres://'):
             database_url = database_url.replace('postgres://', 'postgresql://', 1)
         
-        # Parse URL
         url = urllib.parse.urlparse(database_url)
-        
-        # Ensure port is set
         port = url.port or 5432
         
-        # Connect with timeout
         conn = psycopg2.connect(
             database=url.path[1:] if url.path.startswith('/') else url.path,
             user=url.username,
@@ -339,11 +307,6 @@ def get_db_cursor():
         
         yield cursor
         conn.commit()
-    except psycopg2.OperationalError as e:
-        if conn:
-            conn.rollback()
-        print(f"❌ PostgreSQL operational error: {e}")
-        raise Exception(f"Database connection failed: {str(e)}")
     except Exception as e:
         if conn:
             conn.rollback()
@@ -358,7 +321,6 @@ def get_db_cursor():
 # Store connected clients and active sessions
 connected_clients = {}
 active_sessions = {}
-db_write_lock = threading.Lock()
 
 # ==================== DATABASE INITIALIZATION ====================
 def init_db():
@@ -367,7 +329,6 @@ def init_db():
     
     try:
         with get_db_cursor() as cursor:
-            # PostgreSQL schema only
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS guardians (
                     guardian_id SERIAL PRIMARY KEY,
@@ -482,7 +443,7 @@ def init_db():
                 )
             ''')
             
-            # Create indexes for PostgreSQL
+            # Create indexes
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_drivers_guardian ON drivers(guardian_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_guardian ON alerts(guardian_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)')
@@ -492,15 +453,12 @@ def init_db():
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_driver ON drowsiness_events(driver_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_timestamp ON drowsiness_events(timestamp)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_guardians_active ON guardians(is_active)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_admin_activity_timestamp ON admin_activity_log(timestamp)')
         
         print("✅ Database initialized successfully")
         return True
         
     except Exception as e:
         print(f"❌ Database initialization failed: {e}")
-        traceback.print_exc()
         return False
 
 # ==================== SESSION MANAGEMENT ====================
@@ -516,19 +474,13 @@ def create_session(guardian_id, ip_address=None, user_agent=None):
     try:
         with get_db_cursor() as cursor:
             # Invalidate any existing sessions for this guardian
-            try:
-                cursor.execute('UPDATE session_tokens SET is_valid = FALSE WHERE guardian_id = %s AND is_valid = TRUE', (guardian_id,))
-            except Exception as e:
-                print(f"⚠️ Error invalidating existing sessions: {e}")
+            cursor.execute('UPDATE session_tokens SET is_valid = FALSE WHERE guardian_id = %s AND is_valid = TRUE', (guardian_id,))
             
             # Create new session
-            try:
-                cursor.execute('''
-                    INSERT INTO session_tokens (guardian_id, token, expires_at, ip_address, user_agent)
-                    VALUES (%s, %s, %s, %s, %s)
-                ''', (guardian_id, token, expires_at, ip_address, user_agent))
-            except Exception as e:
-                print(f"❌ Error creating session: {e}")
+            cursor.execute('''
+                INSERT INTO session_tokens (guardian_id, token, expires_at, ip_address, user_agent)
+                VALUES (%s, %s, %s, %s, %s)
+            ''', (guardian_id, token, expires_at, ip_address, user_agent))
         
         # Store in memory for quick access
         active_sessions[guardian_id] = {
@@ -559,14 +511,10 @@ def validate_session(guardian_id, token):
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            try:
-                cursor.execute('''
-                    SELECT COUNT(*) FROM session_tokens 
-                    WHERE guardian_id = %s AND token = %s AND is_valid = TRUE AND expires_at > %s
-                ''', (guardian_id, token, datetime.now()))
-            except Exception as e:
-                print(f"❌ Error validating session query: {e}")
-                return False
+            cursor.execute('''
+                SELECT COUNT(*) FROM session_tokens 
+                WHERE guardian_id = %s AND token = %s AND is_valid = TRUE AND expires_at > %s
+            ''', (guardian_id, token, datetime.now()))
             
             result = cursor.fetchone()
             count = result[0] if result else 0
@@ -589,15 +537,9 @@ def invalidate_session(guardian_id, token=None):
     try:
         with get_db_cursor() as cursor:
             if token:
-                try:
-                    cursor.execute('UPDATE session_tokens SET is_valid = FALSE WHERE guardian_id = %s AND token = %s', (guardian_id, token))
-                except Exception as e:
-                    print(f"⚠️ Error invalidating specific session: {e}")
+                cursor.execute('UPDATE session_tokens SET is_valid = FALSE WHERE guardian_id = %s AND token = %s', (guardian_id, token))
             else:
-                try:
-                    cursor.execute('UPDATE session_tokens SET is_valid = FALSE WHERE guardian_id = %s', (guardian_id,))
-                except Exception as e:
-                    print(f"⚠️ Error invalidating all sessions: {e}")
+                cursor.execute('UPDATE session_tokens SET is_valid = FALSE WHERE guardian_id = %s', (guardian_id,))
         
         # Remove from memory cache
         if guardian_id in active_sessions:
@@ -620,53 +562,32 @@ def invalidate_session(guardian_id, token=None):
 
 # ==================== AUTHENTICATION FUNCTIONS ====================
 def verify_guardian_credentials(phone, password):
-    """Verify guardian login credentials using bcrypt - SIMPLIFIED FIXED VERSION"""
+    """Verify guardian login credentials using bcrypt"""
     try:
-        print(f"\n🔍 [LOGIN VERIFY] Starting verification")
-        print(f"   Phone received: '{phone}'")
-        print(f"   Password received: '{password[:3]}...' (length: {len(password)})")
+        # Clean and normalize phone number
+        phone_clean = re.sub(r'[\s\-\(\)\+]', '', str(phone).strip())
         
-        # Clean the phone number
-        phone_clean = str(phone).strip()
-        phone_clean = re.sub(r'[\s\-\(\)\+]', '', phone_clean)
-        print(f"   Cleaned phone: '{phone_clean}'")
-        
-        # Check if it's all digits
-        if not phone_clean.isdigit():
-            print(f"❌ [LOGIN VERIFY] Phone contains non-digits")
+        # Convert to 09XXXXXXXXX format
+        if len(phone_clean) == 12 and phone_clean.startswith('639'):
+            lookup_phone = '09' + phone_clean[3:]
+        elif len(phone_clean) == 11 and phone_clean.startswith('63'):
+            lookup_phone = '09' + phone_clean[2:]
+        elif len(phone_clean) == 10 and phone_clean.startswith('9'):
+            lookup_phone = '0' + phone_clean
+        elif len(phone_clean) >= 10:
+            lookup_phone = '09' + phone_clean[-10:]
+        else:
             return None
-        
-        # Convert to 09 format (same logic as registration)
-        lookup_phone = phone_clean
-        
-        if len(lookup_phone) == 12 and lookup_phone.startswith('639'):
-            # 639XXXXXXXXX -> 09XXXXXXXXX
-            lookup_phone = '09' + lookup_phone[3:]
-        elif len(lookup_phone) == 11 and lookup_phone.startswith('63'):
-            # 63XXXXXXXXX -> 09XXXXXXXXX
-            lookup_phone = '09' + lookup_phone[2:]
-        elif len(lookup_phone) == 10 and lookup_phone.startswith('9'):
-            # 9XXXXXXXXX -> 09XXXXXXXXX
-            lookup_phone = '0' + lookup_phone
-        elif len(lookup_phone) >= 10:
-            # Take last 10 digits and prepend 09
-            last_10_digits = lookup_phone[-10:]
-            lookup_phone = '09' + last_10_digits
         
         # Final validation
         if not lookup_phone.startswith('09') or len(lookup_phone) != 11:
-            print(f"❌ [LOGIN VERIFY] Invalid final format: '{lookup_phone}'")
             return None
-        
-        print(f"   Looking up in DB as: '{lookup_phone}'")
         
         # Check database
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            
-            # SIMPLE query - just get the user
             cursor.execute('''
-                SELECT guardian_id, full_name, password_hash
+                SELECT guardian_id, full_name, password_hash, is_active
                 FROM guardians 
                 WHERE phone = %s
             ''', (lookup_phone,))
@@ -674,79 +595,45 @@ def verify_guardian_credentials(phone, password):
             result = cursor.fetchone()
             
             if not result:
-                print(f"❌ [LOGIN VERIFY] No user found with phone: '{lookup_phone}'")
-                
-                # Debug: Show what's in the database
-                cursor.execute('SELECT phone, full_name FROM guardians LIMIT 5')
-                all_phones = cursor.fetchall()
-                print(f"   First 5 phones in DB: {[p[0] for p in all_phones]}")
-                
                 return None
             
-            # Unpack result
-            guardian_id, full_name, stored_hash = result
+            guardian_id, full_name, stored_hash, is_active = result
             
-            print(f"✅ [LOGIN VERIFY] User found: {full_name} (ID: {guardian_id})")
-            print(f"   Stored hash: {stored_hash[:30]}...")
-            print(f"   Hash length: {len(stored_hash)}")
-            print(f"   Is bcrypt format: {stored_hash.startswith('$2') if stored_hash else False}")
-            
-            # Check if we have a hash
-            if not stored_hash:
-                print(f"❌ [LOGIN VERIFY] No password hash stored for user")
+            if not is_active:
                 return None
             
-            # Verify password
-            try:
-                password_bytes = password.encode('utf-8')
-                hash_bytes = stored_hash.encode('utf-8')
-                
-                print(f"   Verifying password with bcrypt...")
-                
-                if bcrypt.checkpw(password_bytes, hash_bytes):
-                    print(f"✅ [LOGIN VERIFY] Password verified successfully!")
-                    
-                    # Update last login
-                    try:
-                        cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
-                                     (datetime.now(), guardian_id))
-                        conn.commit()
-                    except Exception as update_error:
-                        print(f"⚠️ [LOGIN VERIFY] Error updating last login: {update_error}")
-                    
-                    return {
-                        'guardian_id': guardian_id, 
-                        'full_name': full_name, 
-                        'phone': lookup_phone
-                    }
-                else:
-                    print(f"❌ [LOGIN VERIFY] Password does not match")
-                    return None
-                    
-            except Exception as hash_error:
-                print(f"❌ [LOGIN VERIFY] Hash verification error: {hash_error}")
+            # Clean password and verify
+            password = clean_password(password)
+            if not password:
                 return None
+            
+            if verify_password(password, stored_hash):
+                # Update last login
+                cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
+                             (datetime.now(), guardian_id))
+                conn.commit()
+                
+                return {
+                    'guardian_id': guardian_id, 
+                    'full_name': full_name, 
+                    'phone': lookup_phone
+                }
+            
+            return None
                 
     except Exception as e:
-        print(f"❌ [LOGIN VERIFY] Unexpected error: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    return None
+        print(f"❌ Login verification error: {e}")
+        return None
 
 def get_guardian_by_id(guardian_id):
     """Get guardian information by ID"""
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            try:
-                cursor.execute('''
-                    SELECT guardian_id, full_name, phone, email, address, registration_date, last_login
-                    FROM guardians WHERE guardian_id = %s
-                ''', (guardian_id,))
-            except Exception as e:
-                print(f"❌ Error getting guardian query: {e}")
-                return None
+            cursor.execute('''
+                SELECT guardian_id, full_name, phone, email, address, registration_date, last_login
+                FROM guardians WHERE guardian_id = %s
+            ''', (guardian_id,))
             
             result = cursor.fetchone()
             if result:
@@ -764,21 +651,15 @@ def log_activity(guardian_id=None, admin_username=None, action=None, details=Non
         
         with get_db_cursor() as cursor:
             if admin_username:
-                try:
-                    cursor.execute('''
-                        INSERT INTO admin_activity_log (admin_username, action, details, ip_address, user_agent)
-                        VALUES (%s, %s, %s, %s, %s)
-                    ''', (admin_username, action, details, ip_address, user_agent))
-                except Exception as e:
-                    print(f"⚠️ Error logging admin activity: {e}")
+                cursor.execute('''
+                    INSERT INTO admin_activity_log (admin_username, action, details, ip_address, user_agent)
+                    VALUES (%s, %s, %s, %s, %s)
+                ''', (admin_username, action, details, ip_address, user_agent))
             else:
-                try:
-                    cursor.execute('''
-                        INSERT INTO activity_log (guardian_id, action, details, ip_address, user_agent)
-                        VALUES (%s, %s, %s, %s, %s)
-                    ''', (guardian_id, action, details, ip_address, user_agent))
-                except Exception as e:
-                    print(f"⚠️ Error logging activity: {e}")
+                cursor.execute('''
+                    INSERT INTO activity_log (guardian_id, action, details, ip_address, user_agent)
+                    VALUES (%s, %s, %s, %s, %s)
+                ''', (guardian_id, action, details, ip_address, user_agent))
     except Exception as e:
         print(f"⚠️ Error logging activity: {e}")
 
@@ -786,7 +667,6 @@ def log_activity(guardian_id=None, admin_username=None, action=None, details=Non
 def is_mobile_device():
     """Detect if request is from mobile device"""
     user_agent = request.headers.get('User-Agent', '').lower()
-    
     mobile_keywords = ['mobile', 'android', 'iphone', 'ipad', 'tablet', 'windows phone']
     
     for keyword in mobile_keywords:
@@ -796,64 +676,22 @@ def is_mobile_device():
     return False
 
 # ==================== UTILITY FUNCTIONS ====================
-def save_base64_image(base64_string, driver_id, image_number):
-    """Save base64 image to Cloudinary"""
-    try:
-        print(f"💾 Saving face {image_number} for driver {driver_id}...")
-        
-        # Upload to Cloudinary
-        from utils.cloudinary_manager import get_cloudinary_storage
-        storage = get_cloudinary_storage()
-        
-        cloudinary_url = storage.upload_driver_face(
-            base64_string, driver_id, image_number
-        )
-        
-        if not cloudinary_url:
-            print(f"❌ Cloudinary upload failed for driver {driver_id}")
-            return None
-        
-        print(f"✅ Uploaded to: {cloudinary_url}")
-        
-        # Save to PostgreSQL
-        with get_db_cursor() as cursor:
-            cursor.execute('''
-                INSERT INTO face_images (driver_id, image_path, cloudinary_url, image_number)
-                VALUES (%s, %s, %s, %s)
-            ''', (driver_id, cloudinary_url, cloudinary_url, image_number))
-        
-        return cloudinary_url
-        
-    except Exception as e:
-        print(f"❌ Error saving image: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-
 def get_guardian_drivers(guardian_id):
     """Get all drivers registered by a guardian"""
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            
-            try:
-                cursor.execute('''
-                    SELECT d.*, 
-                           (SELECT COUNT(*) FROM alerts a WHERE a.driver_id = d.driver_id AND a.acknowledged = FALSE) as alert_count,
-                           (SELECT COUNT(*) FROM face_images f WHERE f.driver_id = d.driver_id) as face_count
-                    FROM drivers d
-                    WHERE d.guardian_id = %s AND d.is_active = TRUE
-                    ORDER BY d.registration_date DESC
-                ''', (guardian_id,))
-            except Exception as e:
-                print(f"❌ Error in get_guardian_drivers query: {e}")
-                return []
+            cursor.execute('''
+                SELECT d.*, 
+                       (SELECT COUNT(*) FROM alerts a WHERE a.driver_id = d.driver_id AND a.acknowledged = FALSE) as alert_count,
+                       (SELECT COUNT(*) FROM face_images f WHERE f.driver_id = d.driver_id) as face_count
+                FROM drivers d
+                WHERE d.guardian_id = %s AND d.is_active = TRUE
+                ORDER BY d.registration_date DESC
+            ''', (guardian_id,))
             
             drivers = cursor.fetchall()
-            result = []
-            for driver in drivers:
-                result.append(dict(driver))
-            return result
+            return [dict(driver) for driver in drivers]
     except Exception as e:
         print(f"❌ Error in get_guardian_drivers: {e}")
         return []
@@ -863,19 +701,14 @@ def get_recent_alerts(guardian_id, limit=10):
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            
-            try:
-                cursor.execute('''
-                    SELECT a.*, d.name as driver_name
-                    FROM alerts a
-                    JOIN drivers d ON a.driver_id = d.driver_id
-                    WHERE a.guardian_id = %s
-                    ORDER BY a.timestamp DESC
-                    LIMIT %s
-                ''', (guardian_id, limit))
-            except Exception as e:
-                print(f"❌ Error in get_recent_alerts query: {e}")
-                return []
+            cursor.execute('''
+                SELECT a.*, d.name as driver_name
+                FROM alerts a
+                JOIN drivers d ON a.driver_id = d.driver_id
+                WHERE a.guardian_id = %s
+                ORDER BY a.timestamp DESC
+                LIMIT %s
+            ''', (guardian_id, limit))
             
             alerts = cursor.fetchall()
             result = []
@@ -899,31 +732,23 @@ def get_driver_by_name_or_id(identifier):
             cursor = conn.cursor()
             
             # Try by ID first
-            try:
-                cursor.execute('''
-                    SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
-                    FROM drivers d
-                    JOIN guardians g ON d.guardian_id = g.guardian_id
-                    WHERE d.driver_id = %s AND d.is_active = TRUE
-                ''', (identifier,))
-            except Exception as e:
-                print(f"❌ Error in get_driver_by_name_or_id query (ID): {e}")
-                return None
+            cursor.execute('''
+                SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
+                FROM drivers d
+                JOIN guardians g ON d.guardian_id = g.guardian_id
+                WHERE d.driver_id = %s AND d.is_active = TRUE
+            ''', (identifier,))
             
             result = cursor.fetchone()
             
             # If not found by ID, try by name
             if not result:
-                try:
-                    cursor.execute('''
-                        SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
-                        FROM drivers d
-                        JOIN guardians g ON d.guardian_id = g.guardian_id
-                        WHERE d.name LIKE %s AND d.is_active = TRUE
-                    ''', (f'%{identifier}%',))
-                except Exception as e:
-                    print(f"❌ Error in get_driver_by_name_or_id query (name): {e}")
-                    return None
+                cursor.execute('''
+                    SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
+                    FROM drivers d
+                    JOIN guardians g ON d.guardian_id = g.guardian_id
+                    WHERE d.name LIKE %s AND d.is_active = TRUE
+                ''', (f'%{identifier}%',))
                 result = cursor.fetchone()
             
             if result:
@@ -940,7 +765,6 @@ def add_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-XSS-Protection'] = '1; mode=block'
-    
     response.headers['Content-Security-Policy'] = (
         "default-src 'self'; "
         "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
@@ -997,45 +821,10 @@ def handle_guardian_auth(data):
     emit('auth_failed', {'error': 'Authentication failed'})
     socketio.disconnect(client_id)
 
-def send_pending_alerts(guardian_id, client_id):
-    """Send pending alerts to a newly connected guardian"""
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            try:
-                cursor.execute('''
-                    SELECT a.*, d.name as driver_name
-                    FROM alerts a
-                    JOIN drivers d ON a.driver_id = d.driver_id
-                    WHERE a.guardian_id = %s AND a.acknowledged = FALSE 
-                    AND a.timestamp > NOW() - INTERVAL '1 hour'
-                    ORDER BY a.timestamp DESC
-                ''', (guardian_id,))
-            except Exception as e:
-                print(f"❌ Error in send_pending_alerts query: {e}")
-                return
-            
-            alerts = cursor.fetchall()
-            
-            for alert in alerts:
-                alert_data = dict(alert)
-                if alert_data.get('detection_details'):
-                    try:
-                        alert_data['detection_details'] = json.loads(alert_data['detection_details'])
-                    except:
-                        pass
-                
-                socketio.emit('guardian_alert', alert_data, room=client_id)
-                
-    except Exception as e:
-        print(f"❌ Error sending pending alerts: {e}")
-
 # ==================== MAIN ROUTES ====================
 @app.route('/')
 def serve_home():
-    """Main route - Redirects to admin login for desktop, mobile login for mobile"""
-    # Check for logout parameter
+    """Main route - Redirects based on device"""
     logged_out = request.args.get('logged_out')
     
     if request.args.get('force') == 'mobile':
@@ -1044,7 +833,6 @@ def serve_home():
         return send_from_directory(FRONTEND_DIR, 'admin_login.html')
     
     if is_mobile_device():
-        # If logged out, pass the parameter
         if logged_out:
             return redirect('/login.html?logged_out=true')
         return send_from_directory(FRONTEND_DIR, 'login.html')
@@ -1102,7 +890,6 @@ def serve_manifest():
         response.headers['Content-Type'] = 'application/manifest+json'
         return response
     except:
-        # Return a basic manifest if file doesn't exist
         return jsonify({
             "name": "Driver Alert System",
             "short_name": "DriverAlert",
@@ -1132,7 +919,6 @@ def serve_service_worker():
         response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
         return response
     except:
-        # Return a basic service worker if file doesn't exist
         return Response('''
             self.addEventListener('install', function(event) {
                 event.waitUntil(self.skipWaiting());
@@ -1142,123 +928,20 @@ def serve_service_worker():
             });
         ''', mimetype='application/javascript')
 
-@app.route('/icon-<int:size>.png')
-def serve_icon(size):
-    icon_filename = f'icon-{size}.png'
-    icon_path = os.path.join(FRONTEND_DIR, icon_filename)
-    
-    if os.path.exists(icon_path):
-        return send_from_directory(FRONTEND_DIR, icon_filename)
-    
-    # If icon doesn't exist, serve a default icon or 404
-    default_icon = os.path.join(FRONTEND_DIR, 'icon-192.png')
-    if os.path.exists(default_icon):
-        return send_from_directory(FRONTEND_DIR, 'icon-192.png')
-    
-    # If no icons exist, return a 404 with a helpful message
-    return jsonify({'error': 'Icon not found'}), 404
-
 # ==================== API ENDPOINTS ====================
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health check endpoint - FIXED VERSION"""
+    """Health check endpoint"""
     try:
-        # Basic health info
         health_info = {
             'status': 'running',
             'timestamp': datetime.now().isoformat(),
             'server': 'Driver Alert System',
             'version': '2.0.0',
-            'environment': 'production',
             'connected_clients': len(connected_clients),
             'active_sessions': len(active_sessions),
-            'admin_sessions': len(admin_sessions),
             'database': 'postgresql',
         }
-        
-        # Try to get database info
-        try:
-            database_url = os.environ.get('DATABASE_URL')
-            if not database_url:
-                health_info.update({
-                    'database_status': 'disconnected',
-                    'database_error': 'DATABASE_URL not set'
-                })
-            else:
-                # Parse URL to get info
-                url = urllib.parse.urlparse(database_url)
-                health_info.update({
-                    'database_host': url.hostname,
-                    'database_port': url.port or 5432,
-                    'database_name': url.path[1:] if url.path.startswith('/') else url.path
-                })
-                
-                # Use a simpler connection method for health check
-                try:
-                    # Fix URL format
-                    if database_url.startswith('postgres://'):
-                        database_url = database_url.replace('postgres://', 'postgresql://', 1)
-                    
-                    # Connect without RealDictCursor for health check
-                    conn = psycopg2.connect(
-                        database=url.path[1:] if url.path.startswith('/') else url.path,
-                        user=url.username,
-                        password=url.password,
-                        host=url.hostname,
-                        port=url.port or 5432,
-                        connect_timeout=5
-                    )
-                    
-                    cursor = conn.cursor()
-                    
-                    # Get database version
-                    cursor.execute('SELECT version()')
-                    db_version = cursor.fetchone()[0]
-                    
-                    # Get counts - handle empty tables
-                    counts = {}
-                    
-                    # Guardians count
-                    try:
-                        cursor.execute('SELECT COUNT(*) as count FROM guardians')
-                        counts['guardians'] = cursor.fetchone()[0]
-                    except:
-                        counts['guardians'] = 0
-                    
-                    # Drivers count
-                    try:
-                        cursor.execute('SELECT COUNT(*) as count FROM drivers')
-                        counts['drivers'] = cursor.fetchone()[0]
-                    except:
-                        counts['drivers'] = 0
-                    
-                    # Alerts count
-                    try:
-                        cursor.execute('SELECT COUNT(*) as count FROM alerts')
-                        counts['alerts'] = cursor.fetchone()[0]
-                    except:
-                        counts['alerts'] = 0
-                    
-                    cursor.close()
-                    conn.close()
-                    
-                    health_info.update({
-                        'database_status': 'connected',
-                        'database_version': db_version,
-                        'statistics': counts
-                    })
-                    
-                except Exception as conn_error:
-                    health_info.update({
-                        'database_status': 'disconnected',
-                        'database_error': f'Connection failed: {str(conn_error)}'
-                    })
-                    
-        except Exception as db_error:
-            health_info.update({
-                'database_status': 'disconnected',
-                'database_error': f'Setup error: {str(db_error)}'
-            })
         
         return jsonify(health_info)
         
@@ -1269,182 +952,7 @@ def health_check():
             'error': str(e)
         }), 200
 
-@app.route('/api/debug/db', methods=['GET'])
-def debug_database():
-    """Debug endpoint to check database connection details"""
-    try:
-        # Get DATABASE_URL
-        database_url = os.environ.get('DATABASE_URL')
-        
-        if not database_url:
-            return jsonify({
-                'success': False,
-                'error': 'DATABASE_URL not found in environment',
-                'environment_keys': [k for k in os.environ.keys() if 'DATABASE' in k.upper() or 'POSTGRES' in k.upper()]
-            })
-        
-        # Fix URL format
-        if database_url.startswith('postgres://'):
-            database_url = database_url.replace('postgres://', 'postgresql://', 1)
-        
-        # Parse URL
-        url = urllib.parse.urlparse(database_url)
-        
-        # Mask password for security
-        masked_url = f"{url.scheme}://{url.username}:****@{url.hostname}:{url.port or 5432}{url.path}"
-        
-        # Try connection
-        try:
-            conn = psycopg2.connect(
-                database=url.path[1:] if url.path.startswith('/') else url.path,
-                user=url.username,
-                password=url.password,
-                host=url.hostname,
-                port=url.port or 5432,
-                connect_timeout=5
-            )
-            
-            cursor = conn.cursor()
-            cursor.execute('SELECT version()')
-            version = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
-            tables = [table[0] for table in cursor.fetchall()]
-            
-            cursor.close()
-            conn.close()
-            
-            return jsonify({
-                'success': True,
-                'connection': 'successful',
-                'database_url_masked': masked_url,
-                'database_version': version,
-                'tables': tables,
-                'tables_count': len(tables),
-                'parsed_url': {
-                    'scheme': url.scheme,
-                    'username': url.username,
-                    'hostname': url.hostname,
-                    'port': url.port or 5432,
-                    'database': url.path[1:] if url.path.startswith('/') else url.path,
-                    'has_password': bool(url.password)
-                }
-            })
-            
-        except Exception as conn_error:
-            return jsonify({
-                'success': False,
-                'connection': 'failed',
-                'database_url_masked': masked_url,
-                'error': str(conn_error),
-                'parsed_url': {
-                    'scheme': url.scheme,
-                    'username': url.username,
-                    'hostname': url.hostname,
-                    'port': url.port or 5432,
-                    'database': url.path[1:] if url.path.startswith('/') else url.path,
-                    'has_password': bool(url.password)
-                }
-            })
-            
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'database_url': database_url[:50] + '...' if database_url and len(database_url) > 50 else database_url
-        })
-
-@app.route('/api/test-connection', methods=['GET'])
-def test_connection():
-    """Simple connection test"""
-    database_url = os.environ.get('DATABASE_URL')
-    
-    if not database_url:
-        return jsonify({'success': False, 'error': 'No DATABASE_URL found'})
-    
-    try:
-        # Fix URL if needed
-        if database_url.startswith('postgres://'):
-            database_url = database_url.replace('postgres://', 'postgresql://', 1)
-        
-        # Parse
-        url = urllib.parse.urlparse(database_url)
-        
-        # Connect
-        conn = psycopg2.connect(
-            dbname=url.path[1:] if url.path.startswith('/') else url.path,
-            user=url.username,
-            password=url.password,
-            host=url.hostname,
-            port=url.port or 5432,
-            connect_timeout=5
-        )
-        
-        cursor = conn.cursor()
-        cursor.execute('SELECT 1 as test_value')
-        result = cursor.fetchone()
-        
-        cursor.close()
-        conn.close()
-        
-        return jsonify({
-            'success': True,
-            'connected': True,
-            'test_query': result[0] == 1,
-            'database_info': {
-                'host': url.hostname,
-                'port': url.port or 5432,
-                'database': url.path[1:] if url.path.startswith('/') else url.path
-            }
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'database_url_preview': database_url[:50] + '...' if len(database_url) > 50 else database_url
-        })
-
-@app.route('/api/test-bcrypt', methods=['GET'])
-def test_bcrypt():
-    """Test bcrypt functionality"""
-    try:
-        # Test bcrypt
-        test_password = "test123"
-        
-        # Generate hash
-        password_hash = hash_password(test_password)
-        
-        # Verify hash
-        is_valid = verify_password(test_password, password_hash)
-        
-        # Test with wrong password
-        is_wrong = verify_password("wrong", password_hash)
-        
-        # Test admin password
-        admin_valid = verify_password("admin123", ADMIN_PASSWORD_HASH)
-        
-        return jsonify({
-            'success': True,
-            'test_password': test_password,
-            'hash_generated': password_hash[:50] + "..." if len(password_hash) > 50 else password_hash,
-            'hash_length': len(password_hash),
-            'hash_starts_with': password_hash[:10],
-            'hash_format_valid': password_hash.startswith('$2'),
-            'correct_password_matches': is_valid,
-            'wrong_password_matches': is_wrong,
-            'admin_password_valid': admin_valid,
-            'note': 'bcrypt hash should start with $2b$12$ and be ~60 chars long'
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        })
-
-# ==================== ADMIN AUTHENTICATION ENDPOINTS ====================
+# ==================== ADMIN AUTHENTICATION ====================
 @app.route('/api/admin/login', methods=['POST'])
 def admin_login():
     """Admin login endpoint"""
@@ -1475,8 +983,6 @@ def admin_login():
             log_activity(admin_username=username, action='ADMIN_LOGIN', 
                         details=f'Admin logged in from {request.remote_addr}')
             
-            print(f"👑 Admin logged in: {admin['full_name']} ({username})")
-            
             return jsonify({
                 'success': True,
                 'username': username,
@@ -1497,48 +1003,6 @@ def admin_login():
         print(f"❌ Admin login error: {e}")
         return jsonify({
             'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/admin/validate', methods=['POST'])
-def admin_validate():
-    """Validate admin session"""
-    try:
-        data = request.json
-        username = data.get('username')
-        token = data.get('token')
-        
-        if not username or not token:
-            return jsonify({
-                'success': False,
-                'valid': False,
-                'error': 'Missing authentication data'
-            }), 400
-        
-        is_valid = validate_admin_token(username, token)
-        
-        if is_valid:
-            admin_info = ADMIN_CREDENTIALS.get(username, {})
-            return jsonify({
-                'success': True,
-                'valid': True,
-                'username': username,
-                'full_name': admin_info.get('full_name', 'Admin'),
-                'role': admin_info.get('role', 'admin'),
-                'expires': admin_sessions[username]['expires'].isoformat() if username in admin_sessions else None,
-                'message': 'Admin session valid'
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'valid': False,
-                'error': 'Invalid or expired admin session'
-            }), 401
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'valid': False,
             'error': str(e)
         }), 500
 
@@ -1567,11 +1031,8 @@ def admin_logout():
         if username in admin_sessions:
             del admin_sessions[username]
         
-        # Log activity
         log_activity(admin_username=username, action='ADMIN_LOGOUT', 
                     details=f'Admin logged out')
-        
-        print(f"👑 Admin logged out: {username}")
         
         return jsonify({
             'success': True,
@@ -1584,44 +1045,7 @@ def admin_logout():
             'error': str(e)
         }), 500
 
-@app.route('/api/admin/extend-session', methods=['POST'])
-def admin_extend_session():
-    """Extend admin session"""
-    try:
-        data = request.json
-        username = data.get('username')
-        token = data.get('token')
-        
-        if not username or not token:
-            return jsonify({
-                'success': False,
-                'error': 'Missing authentication data'
-            }), 400
-        
-        if not validate_admin_token(username, token):
-            return jsonify({
-                'success': False,
-                'error': 'Invalid session'
-            }), 401
-        
-        # Extend session by 1 hour
-        if username in admin_sessions:
-            admin_sessions[username]['expires'] = datetime.now() + timedelta(hours=1)
-            admin_sessions[username]['last_activity'] = datetime.now()
-        
-        return jsonify({
-            'success': True,
-            'expires': admin_sessions[username]['expires'].isoformat(),
-            'message': 'Session extended successfully'
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-# ==================== ADMIN MANAGEMENT ENDPOINTS ====================
+# ==================== ADMIN MANAGEMENT ====================
 @app.route('/api/admin/db-drivers', methods=['GET'])
 @require_admin_auth
 def admin_get_drivers():
@@ -1629,32 +1053,19 @@ def admin_get_drivers():
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            try:
-                cursor.execute('''
-                    SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
-                    FROM drivers d
-                    LEFT JOIN guardians g ON d.guardian_id = g.guardian_id
-                    ORDER BY d.registration_date DESC
-                ''')
-            except Exception as e:
-                print(f"Query error: {e}")
-                return jsonify({'success': False, 'error': str(e)}), 500
+            cursor.execute('''
+                SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
+                FROM drivers d
+                LEFT JOIN guardians g ON d.guardian_id = g.guardian_id
+                ORDER BY d.registration_date DESC
+            ''')
             
             drivers = cursor.fetchall()
-            drivers_list = []
-            for driver in drivers:
-                drivers_list.append(dict(driver))
-            
-            try:
-                cursor.execute('SELECT COUNT(*) as count FROM drivers')
-                count = cursor.fetchone()[0]
-            except Exception as e:
-                print(f"❌ Error getting counts: {e}")
-                count = len(drivers_list)
+            drivers_list = [dict(driver) for driver in drivers]
             
         return jsonify({
             'success': True,
-            'count': count,
+            'count': len(drivers_list),
             'drivers': drivers_list
         })
         
@@ -1670,23 +1081,17 @@ def admin_get_alerts():
         
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            
-            try:
-                cursor.execute('''
-                    SELECT a.*, d.name as driver_name, g.full_name as guardian_name
-                    FROM alerts a
-                    JOIN drivers d ON a.driver_id = d.driver_id
-                    JOIN guardians g ON a.guardian_id = g.guardian_id
-                    ORDER BY a.timestamp DESC
-                    LIMIT %s
-                ''', (limit,))
-            except Exception as e:
-                print(f"❌ Error in admin_get_alerts query: {e}")
-                return jsonify({'success': False, 'error': str(e)}), 500
+            cursor.execute('''
+                SELECT a.*, d.name as driver_name, g.full_name as guardian_name
+                FROM alerts a
+                JOIN drivers d ON a.driver_id = d.driver_id
+                JOIN guardians g ON a.guardian_id = g.guardian_id
+                ORDER BY a.timestamp DESC
+                LIMIT %s
+            ''', (limit,))
             
             alerts = cursor.fetchall()
             
-            # Parse detection details
             result = []
             for alert in alerts:
                 alert_dict = dict(alert)
@@ -1697,16 +1102,9 @@ def admin_get_alerts():
                         pass
                 result.append(alert_dict)
             
-            try:
-                cursor.execute('SELECT COUNT(*) as count FROM alerts')
-                count = cursor.fetchone()[0]
-            except Exception as e:
-                print(f"❌ Error getting alert counts: {e}")
-                count = len(alerts)
-            
         return jsonify({
             'success': True,
-            'count': count,
+            'count': len(result),
             'alerts': result
         })
         
@@ -1720,68 +1118,21 @@ def admin_get_guardians():
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            try:
-                cursor.execute('''
-                    SELECT g.*, 
-                           (SELECT COUNT(*) FROM drivers d WHERE d.guardian_id = g.guardian_id) as driver_count,
-                           (SELECT COUNT(*) FROM alerts a WHERE a.guardian_id = g.guardian_id) as alert_count
-                    FROM guardians g
-                    ORDER BY g.registration_date DESC
-                ''')
-            except Exception as e:
-                print(f"❌ Error in admin_get_guardians query: {e}")
-                return jsonify({'success': False, 'error': str(e)}), 500
+            cursor.execute('''
+                SELECT g.*, 
+                       (SELECT COUNT(*) FROM drivers d WHERE d.guardian_id = g.guardian_id) as driver_count,
+                       (SELECT COUNT(*) FROM alerts a WHERE a.guardian_id = g.guardian_id) as alert_count
+                FROM guardians g
+                ORDER BY g.registration_date DESC
+            ''')
             
             guardians = cursor.fetchall()
-            guardians_list = []
-            for guardian in guardians:
-                guardians_list.append(dict(guardian))
+            guardians_list = [dict(guardian) for guardian in guardians]
             
         return jsonify({
             'success': True,
             'count': len(guardians_list),
             'guardians': guardians_list
-        })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/admin/db-tables', methods=['GET'])
-@require_admin_auth
-def admin_get_tables():
-    """Get all table names and row counts - ADMIN ONLY"""
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Get all tables
-            cursor.execute("""
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                ORDER BY table_name
-            """)
-            
-            tables = cursor.fetchall()
-            
-            result = []
-            for table in tables:
-                table_name = table[0]
-                
-                try:
-                    cursor.execute(f'SELECT COUNT(*) as count FROM {table_name}')
-                    count = cursor.fetchone()[0]
-                except:
-                    count = 0
-                
-                result.append({
-                    'table_name': table_name,
-                    'row_count': count
-                })
-            
-        return jsonify({
-            'success': True,
-            'tables': result
         })
         
     except Exception as e:
@@ -1795,25 +1146,15 @@ def admin_stats():
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Get comprehensive statistics
             stats = {}
-            try:
-                cursor.execute('SELECT COUNT(*) as total_alerts FROM alerts')
-                stats['total_alerts'] = cursor.fetchone()[0]
-            except:
-                stats['total_alerts'] = 0
+            cursor.execute('SELECT COUNT(*) as total_alerts FROM alerts')
+            stats['total_alerts'] = cursor.fetchone()[0]
             
-            try:
-                cursor.execute('SELECT COUNT(*) as total_drivers FROM drivers')
-                stats['total_drivers'] = cursor.fetchone()[0]
-            except:
-                stats['total_drivers'] = 0
+            cursor.execute('SELECT COUNT(*) as total_drivers FROM drivers')
+            stats['total_drivers'] = cursor.fetchone()[0]
             
-            try:
-                cursor.execute('SELECT COUNT(*) as total_guardians FROM guardians')
-                stats['total_guardians'] = cursor.fetchone()[0]
-            except:
-                stats['total_guardians'] = 0
+            cursor.execute('SELECT COUNT(*) as total_guardians FROM guardians')
+            stats['total_guardians'] = cursor.fetchone()[0]
             
         return jsonify({
             'success': True,
@@ -1832,43 +1173,7 @@ def admin_stats():
             'error': str(e)
         }), 500
 
-@app.route('/api/admin/clear-alerts', methods=['POST'])
-@require_admin_auth
-def admin_clear_alerts():
-    """Clear old alerts - ADMIN ONLY"""
-    try:
-        days = request.json.get('days', 30)
-        
-        with get_db_cursor() as cursor:
-            try:
-                cursor.execute('''
-                    DELETE FROM alerts 
-                    WHERE acknowledged = TRUE AND timestamp < CURRENT_DATE - INTERVAL %s days
-                ''', (days,))
-            except Exception as e:
-                print(f"❌ Error clearing alerts: {e}")
-                return jsonify({'success': False, 'error': str(e)}), 500
-            
-            deleted_count = cursor.rowcount
-            
-            # Log activity
-            username = request.headers.get('X-Admin-Username')
-            log_activity(admin_username=username, action='CLEAR_ALERTS', 
-                        details=f'Cleared {deleted_count} alerts older than {days} days')
-        
-        return jsonify({
-            'success': True,
-            'deleted_count': deleted_count,
-            'message': f'Cleared {deleted_count} alerts older than {days} days'
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-# ==================== GUARDIAN AUTHENTICATION ENDPOINTS ====================
+# ==================== GUARDIAN AUTHENTICATION ====================
 @app.route('/api/login', methods=['POST'])
 def login():
     """Guardian login with bcrypt verification"""
@@ -1884,81 +1189,25 @@ def login():
         if rate_limit_exceeded(ip, 'guardian_login', limit=10):
             return jsonify({'success': False, 'error': 'Too many login attempts'}), 429
 
-        # --- Normalize phone to 09XXXXXXXXX ---
-        phone_clean = re.sub(r'[\s\-\(\)\+]', '', phone)
-        if len(phone_clean) == 12 and phone_clean.startswith('639'):
-            lookup_phone = '09' + phone_clean[3:]
-        elif len(phone_clean) == 11 and phone_clean.startswith('63'):
-            lookup_phone = '09' + phone_clean[2:]
-        elif len(phone_clean) == 10 and phone_clean.startswith('9'):
-            lookup_phone = '0' + phone_clean
-        elif len(phone_clean) >= 10:
-            lookup_phone = '09' + phone_clean[-10:]
-        else:
-            return jsonify({'success': False, 'error': 'Invalid phone number format'}), 400
+        guardian = verify_guardian_credentials(phone, password)
+        
+        if guardian:
+            token = create_session(guardian['guardian_id'], request.remote_addr, request.headers.get('User-Agent'))
+            log_activity(guardian['guardian_id'], 'LOGIN', f'Guardian logged in from {request.remote_addr}')
+            
+            return jsonify({
+                'success': True,
+                'guardian_id': guardian['guardian_id'],
+                'full_name': guardian['full_name'],
+                'phone': guardian['phone'],
+                'session_token': token,
+                'message': 'Login successful'
+            })
 
-        # --- Fetch guardian from DB ---
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT guardian_id, full_name, password_hash, is_active
-                FROM guardians
-                WHERE phone = %s
-            ''', (lookup_phone,))
-            result = cursor.fetchone()
-
-            if not result:
-                return jsonify({'success': False, 'error': 'Invalid phone or password'}), 401
-
-            guardian_id, full_name, stored_hash, is_active = result
-
-            if not is_active:
-                return jsonify({'success': False, 'error': 'Account locked. Please contact support.'}), 423
-
-            # --- Verify password ---
-            try:
-                if not stored_hash:
-                    return jsonify({'success': False, 'error': 'Password not set for user'}), 500
-
-                if not bcrypt.checkpw(password.encode('utf-8'), stored_hash.encode('utf-8')):
-                    return jsonify({'success': False, 'error': 'Invalid phone or password'}), 401
-            except Exception as hash_error:
-                print(f"❌ Password verification error: {hash_error}")
-                traceback.print_exc()
-                return jsonify({'success': False, 'error': 'Login failed. Please try again.'}), 500
-
-            # --- Password correct, create session ---
-            token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
-
-            # --- Update last login ---
-            try:
-                cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s',
-                               (datetime.now(), guardian_id))
-                conn.commit()
-            except Exception as update_error:
-                print(f"⚠️ Error updating last login: {update_error}")
-
-            # --- Log activity ---
-            log_activity(guardian_id, 'LOGIN', f'Guardian logged in from {request.remote_addr}')
-
-            print("==== DEBUG LOGIN ====")
-            print("lookup_phone:", lookup_phone)
-            print("password:", password)
-            print("stored_hash length:", len(stored_hash))
-            print("stored_hash repr:", repr(stored_hash))
-            print("=====================")
-        return jsonify({
-            'success': True,
-            'guardian_id': guardian_id,
-            'full_name': full_name,
-            'phone': lookup_phone,
-            'session_token': token,
-            'message': 'Login successful'
-        })
+        return jsonify({'success': False, 'error': 'Invalid phone or password'}), 401
 
     except Exception as e:
         print(f"❌ Login error: {e}")
-        traceback.print_exc()
         return jsonify({'success': False, 'error': 'Login failed. Please try again.'}), 500
 
 @app.route('/api/logout', methods=['POST'])
@@ -1984,7 +1233,6 @@ def logout():
         
         # Invalidate session
         invalidate_session(guardian_id, token)
-        
         log_activity(guardian_id, 'LOGOUT', 'Guardian logged out')
         
         response = jsonify({
@@ -1994,7 +1242,6 @@ def logout():
             'redirect_url': '/?logged_out=true'
         })
         
-        # Set headers to prevent caching
         response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
         response.headers['Pragma'] = 'no-cache'
         
@@ -2041,49 +1288,37 @@ def validate_session_endpoint():
 @app.route('/api/register-guardian', methods=['POST'])
 def register_guardian():
     try:
-        print("🔍 [REGISTRATION] Endpoint called")
-        
-        # Check if request has JSON
         if not request.is_json:
-            print("❌ [REGISTRATION] No JSON data received")
             return jsonify({
                 'success': False,
                 'error': 'Invalid request format'
             }), 400
         
         data = request.json
-        print(f"🔍 [REGISTRATION] Received data: {data}")
         
         required = ['full_name', 'phone', 'password']
         for field in required:
             if field not in data or not str(data[field]).strip():
-                print(f"❌ [REGISTRATION] Missing field: {field}")
                 return jsonify({
                     'success': False,
                     'error': f'Missing required field: {field}'
                 }), 400
         
-        # Get values
         full_name = data['full_name'].strip()
         phone = data['phone'].strip()
         password = data['password']
         
-        print(f"🔍 [REGISTRATION] Processing: Name='{full_name}', Phone='{phone}'")
-        
-        # Validate password length
+        # Clean and validate password
+        password = clean_password(password)
         if len(password) < 6:
-            print(f"❌ [REGISTRATION] Password too short: {len(password)} chars")
             return jsonify({
                 'success': False,
                 'error': 'Password must be at least 6 characters long'
             }), 400
         
-        # Clean phone number
+        # Clean and format phone number
         phone_clean = re.sub(r'[\s\-\(\)\+]', '', phone)
-        print(f"🔍 [REGISTRATION] Cleaned phone (digits only): '{phone_clean}'")
-        
         if not phone_clean.isdigit():
-            print(f"❌ [REGISTRATION] Phone contains non-digits: '{phone}'")
             return jsonify({
                 'success': False,
                 'error': 'Phone number can only contain digits'
@@ -2106,24 +1341,18 @@ def register_guardian():
                 'error': 'Phone number must be 11 digits (09XXXXXXXXX)'
             }), 400
         
-        print(f"✅ [REGISTRATION] Final phone to store: '{final_phone}'")
-        
         # Database operations
         with get_db_cursor() as cursor:
             # Check if phone already exists
             cursor.execute('SELECT guardian_id FROM guardians WHERE phone = %s', (final_phone,))
-            existing = cursor.fetchone()
-            if existing:
+            if cursor.fetchone():
                 return jsonify({
                     'success': False,
                     'error': 'Phone number already registered'
                 }), 409
             
-            # 🔑 Proper bcrypt hash with salt
-            password_bytes = password.encode('utf-8')
-            password_hash_bytes = bcrypt.hashpw(password_bytes, bcrypt.gensalt())
-            password_hash = password_hash_bytes.decode('utf-8')
-            print(f"✅ [REGISTRATION] Password hash generated")
+            # Hash password
+            password_hash = hash_password(password)
             
             # Insert into database
             cursor.execute('''
@@ -2150,27 +1379,24 @@ def register_guardian():
             result = cursor.fetchone()
             guardian_id = result[0] if result else None
         
-        response_data = {
+        return jsonify({
             'success': True,
             'guardian_id': guardian_id,
             'full_name': full_name,
             'phone': final_phone,
             'email': data.get('email', ''),
             'message': 'Registration successful! You can now login.'
-        }
-        
-        print(f"✅ [REGISTRATION] Registration complete")
-        return jsonify(response_data)
+        })
     
     except Exception as e:
-        print(f"❌ [REGISTRATION] Unexpected error: {e}")
-        import traceback
+        print(f"❌ Registration error: {e}")
         traceback.print_exc()
         return jsonify({
             'success': False,
             'error': 'Registration failed. Please try again.'
         }), 500
-# ==================== GUARDIAN DASHBOARD ENDPOINTS ====================
+
+# ==================== GUARDIAN DASHBOARD ====================
 @app.route('/api/guardian/dashboard', methods=['GET'])
 def guardian_dashboard():
     """Get guardian dashboard data"""
@@ -2207,34 +1433,15 @@ def guardian_dashboard():
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Get counts
-            try:
-                cursor.execute('SELECT COUNT(*) as count FROM drivers WHERE guardian_id = %s', (guardian_id,))
-                driver_count = cursor.fetchone()[0]
-            except:
-                driver_count = 0
+            cursor.execute('SELECT COUNT(*) as count FROM drivers WHERE guardian_id = %s', (guardian_id,))
+            driver_count = cursor.fetchone()[0]
             
-            try:
-                cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s', (guardian_id,))
-                total_alerts = cursor.fetchone()[0]
-            except:
-                total_alerts = 0
+            cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s', (guardian_id,))
+            total_alerts = cursor.fetchone()[0]
             
-            try:
-                cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s AND acknowledged = FALSE', 
-                             (guardian_id,))
-                unread_alerts = cursor.fetchone()[0]
-            except:
-                unread_alerts = 0
-            
-            try:
-                cursor.execute('''
-                    SELECT COUNT(*) as count FROM alerts 
-                    WHERE guardian_id = %s AND DATE(timestamp) = CURRENT_DATE
-                ''', (guardian_id,))
-                today_alerts = cursor.fetchone()[0]
-            except:
-                today_alerts = 0
+            cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s AND acknowledged = FALSE', 
+                         (guardian_id,))
+            unread_alerts = cursor.fetchone()[0]
         
         return jsonify({
             'success': True,
@@ -2244,7 +1451,6 @@ def guardian_dashboard():
                 'driver_count': driver_count,
                 'total_alerts': total_alerts,
                 'unread_alerts': unread_alerts,
-                'today_alerts': today_alerts,
                 'recent_alerts': recent_alerts
             },
             'drivers': drivers
@@ -2252,103 +1458,6 @@ def guardian_dashboard():
         
     except Exception as e:
         print(f"❌ Error in guardian_dashboard: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'redirect': '/?logged_out=true'
-        }), 500
-
-@app.route('/api/register-driver', methods=['POST'])
-def register_driver():
-    """Register a new driver (by guardian)"""
-    try:
-        data = request.json
-        
-        required = ['driver_name', 'driver_phone', 'guardian_id', 'token']
-        for field in required:
-            if not data.get(field):
-                return jsonify({
-                    'success': False,
-                    'error': f'Missing required field: {field}'
-                }), 400
-        
-        # Validate session
-        if not validate_session(data['guardian_id'], data['token']):
-            return jsonify({
-                'success': False,
-                'error': 'Session expired or invalid',
-                'redirect': '/?logged_out=true'
-            }), 401
-        
-        face_images = data.get('face_images', [])
-        if len(face_images) < 3:
-            return jsonify({
-                'success': False,
-                'error': 'At least 3 face images are required'
-            }), 400
-        
-        driver_id = f"DRV{uuid.uuid4().hex[:8].upper()}"
-        reference_num = data.get('reference_number', 
-                                f"REF{datetime.now().strftime('%Y%m%d%H%M%S')}")
-        
-        # Database transaction for driver registration
-        with get_db_cursor() as cursor:
-            try:
-                cursor.execute('''
-                    INSERT INTO drivers (driver_id, name, phone, email, address, 
-                                        reference_number, license_number, guardian_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ''', (
-                    driver_id,
-                    data['driver_name'],
-                    data['driver_phone'],
-                    data.get('driver_email', ''),
-                    data.get('driver_address', ''),
-                    reference_num,
-                    data.get('license_number', ''),
-                    data['guardian_id']
-                ))
-            except Exception as e:
-                print(f"❌ Error inserting driver: {e}")
-                return jsonify({
-                    'success': False,
-                    'error': 'Driver registration failed'
-                }), 500
-        
-        # Save images
-        saved_images = []
-        for i, image_data in enumerate(face_images[:3]):
-            try:
-                saved_path = save_base64_image(image_data, driver_id, i+1)
-                if saved_path:
-                    saved_images.append(saved_path)
-            except Exception as e:
-                print(f"⚠️ Error saving image {i+1}: {e}")
-        
-        # Log activity
-        log_activity(data['guardian_id'], 'REGISTER_DRIVER', 
-                    f'Registered driver: {data["driver_name"]} (ID: {driver_id})')
-        
-        # Emit socket event
-        socketio.emit('driver_registered', {
-            'driver_id': driver_id,
-            'driver_name': data['driver_name'],
-            'guardian_id': data['guardian_id'],
-            'timestamp': datetime.now().isoformat()
-        })
-        
-        return jsonify({
-            'success': True,
-            'session_valid': True,
-            'driver_id': driver_id,
-            'reference_number': reference_num,
-            'driver_name': data['driver_name'],
-            'images_saved': len(saved_images),
-            'message': 'Driver registered successfully'
-        })
-        
-    except Exception as e:
-        print(f"❌ Driver registration error: {e}")
         return jsonify({
             'success': False,
             'error': str(e),
@@ -2374,105 +1483,76 @@ def send_alert():
                 'error': 'Driver ID required'
             }), 400
         
-        print(f"📥 Received alert: Driver={driver_id}, State={detection_details.get('state', 'unknown')}, Conf={confidence:.2%}")
-        
         # Try to find the driver in the database
         driver_info = get_driver_by_name_or_id(driver_id)
         
         if driver_info:
-            # Driver found in database
             driver_id = driver_info['driver_id']
             driver_name = driver_info['name']
             guardian_id = driver_info['guardian_id']
             guardian_name = driver_info['guardian_name']
             guardian_phone = driver_info['guardian_phone']
-            
-            print(f"✅ Found driver in DB: {driver_name} -> Guardian: {guardian_name}")
-            
         else:
             # Driver not found - create a temporary record
-            print(f"⚠️ Driver not found: {driver_id}. Creating temp record.")
-            
-            # Find any guardian
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                try:
-                    cursor.execute('SELECT guardian_id, full_name, phone FROM guardians LIMIT 1')
-                    guardian_result = cursor.fetchone()
+                cursor.execute('SELECT guardian_id, full_name, phone FROM guardians LIMIT 1')
+                guardian_result = cursor.fetchone()
+                
+                if guardian_result:
+                    guardian_id, guardian_name, guardian_phone = guardian_result['guardian_id'], guardian_result['full_name'], guardian_result['phone']
                     
-                    if guardian_result:
-                        guardian_id, guardian_name, guardian_phone = guardian_result['guardian_id'], guardian_result['full_name'], guardian_result['phone']
-                        
-                        # Create a temporary driver entry
-                        temp_driver_id = f"TEMP{int(time.time())}"
-                        try:
-                            cursor.execute('''
-                                INSERT INTO drivers (driver_id, name, phone, guardian_id)
-                                VALUES (%s, %s, %s, %s)
-                            ''', (temp_driver_id, driver_name, '00000000000', guardian_id))
-                            conn.commit()
-                        except Exception as e:
-                            print(f"⚠️ Error creating temp driver: {e}")
-                        
-                        driver_id = temp_driver_id
-                    else:
-                        return jsonify({
-                            'success': False,
-                            'error': 'No guardian found for this alert'
-                        }), 404
-                except Exception as e:
-                    print(f"❌ Error finding guardian: {e}")
+                    # Create a temporary driver entry
+                    temp_driver_id = f"TEMP{int(time.time())}"
+                    try:
+                        cursor.execute('''
+                            INSERT INTO drivers (driver_id, name, phone, guardian_id)
+                            VALUES (%s, %s, %s, %s)
+                        ''', (temp_driver_id, driver_name, '00000000000', guardian_id))
+                        conn.commit()
+                    except Exception as e:
+                        print(f"⚠️ Error creating temp driver: {e}")
+                    
+                    driver_id = temp_driver_id
+                else:
                     return jsonify({
                         'success': False,
-                        'error': 'System error'
-                    }), 500
+                        'error': 'No guardian found for this alert'
+                    }), 404
         
         # Convert detection_details to JSON string for storage
         detection_details_json = json.dumps(detection_details) if detection_details else None
         
         with get_db_cursor() as cursor:
             # Create alert
-            try:
-                cursor.execute('''
-                    INSERT INTO alerts (driver_id, guardian_id, severity, message, detection_details, source)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                ''', (driver_id, guardian_id, severity, message, detection_details_json, 'drowsiness_detection'))
-            except Exception as e:
-                print(f"❌ Error creating alert: {e}")
-                return jsonify({'success': False, 'error': 'Failed to create alert'}), 500
+            cursor.execute('''
+                INSERT INTO alerts (driver_id, guardian_id, severity, message, detection_details, source)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            ''', (driver_id, guardian_id, severity, message, detection_details_json, 'drowsiness_detection'))
             
-            try:
-                cursor.execute('SELECT LASTVAL()')
-                alert_id = cursor.fetchone()[0]
-            except:
-                alert_id = None
+            cursor.execute('SELECT LASTVAL()')
+            alert_id = cursor.fetchone()[0]
             
-            # Log drowsiness event with detailed metrics
-            try:
-                cursor.execute('''
-                    INSERT INTO drowsiness_events (driver_id, guardian_id, confidence, state, ear, mar, perclos)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ''', (
-                    driver_id, 
-                    guardian_id, 
-                    confidence,
-                    detection_details.get('state', 'unknown'),
-                    detection_details.get('ear', 0.0),
-                    detection_details.get('mar', 0.0),
-                    detection_details.get('perclos', 0.0)
-                ))
-            except Exception as e:
-                print(f"⚠️ Error logging drowsiness event: {e}")
+            # Log drowsiness event
+            cursor.execute('''
+                INSERT INTO drowsiness_events (driver_id, guardian_id, confidence, state, ear, mar, perclos)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ''', (
+                driver_id, 
+                guardian_id, 
+                confidence,
+                detection_details.get('state', 'unknown'),
+                detection_details.get('ear', 0.0),
+                detection_details.get('mar', 0.0),
+                detection_details.get('perclos', 0.0)
+            ))
             
             # Log activity
-            try:
-                cursor.execute('''
-                    INSERT INTO activity_log (guardian_id, action, details)
-                    VALUES (%s, %s, %s)
-                ''', (guardian_id, 'ALERT_GENERATED', 
-                    f'Alert for driver {driver_name}: {message} (Confidence: {confidence:.1%})'))
-            except Exception as e:
-                print(f"⚠️ Error logging activity: {e}")
+            cursor.execute('''
+                INSERT INTO activity_log (guardian_id, action, details)
+                VALUES (%s, %s, %s)
+            ''', (guardian_id, 'ALERT_GENERATED', 
+                f'Alert for driver {driver_name}: {message} (Confidence: {confidence:.1%})'))
             
             # Prepare alert data for WebSocket
             alert_data = {
@@ -2493,15 +1573,9 @@ def send_alert():
             socketio.emit('new_alert', alert_data)
             
             # Send to specific guardian clients
-            guardian_clients = []
             for client_id, client_info in connected_clients.items():
                 if client_info.get('guardian_id') == guardian_id and client_info.get('authenticated'):
                     socketio.emit('guardian_alert', alert_data, room=client_id)
-                    guardian_clients.append(client_id)
-            
-            print(f"🚨 Alert #{alert_id} sent for {driver_name}")
-            print(f"   → Guardian: {guardian_name} (Phone: {guardian_phone})")
-            print(f"   → Connected clients: {len(guardian_clients)}")
             
             return jsonify({
                 'success': True,
@@ -2561,15 +1635,9 @@ def get_guardian_alerts():
             base_query += ' ORDER BY a.timestamp DESC LIMIT %s'
             params.append(limit)
             
-            try:
-                cursor.execute(base_query, tuple(params))
-            except Exception as e:
-                print(f"❌ Error in get_guardian_alerts query: {e}")
-                return jsonify({'success': False, 'error': str(e)}), 500
-            
+            cursor.execute(base_query, tuple(params))
             alerts = cursor.fetchall()
             
-            # Parse detection details
             result_alerts = []
             for alert in alerts:
                 alert_dict = dict(alert)
@@ -2619,16 +1687,12 @@ def acknowledge_alert():
         
         with get_db_cursor() as cursor:
             # Check if alert belongs to this guardian
-            try:
-                cursor.execute('''
-                    SELECT a.*, d.name as driver_name 
-                    FROM alerts a
-                    JOIN drivers d ON a.driver_id = d.driver_id
-                    WHERE a.alert_id = %s AND a.guardian_id = %s
-                ''', (alert_id, guardian_id))
-            except Exception as e:
-                print(f"❌ Error checking alert ownership: {e}")
-                return jsonify({'success': False, 'error': 'Database error'}), 500
+            cursor.execute('''
+                SELECT a.*, d.name as driver_name 
+                FROM alerts a
+                JOIN drivers d ON a.driver_id = d.driver_id
+                WHERE a.alert_id = %s AND a.guardian_id = %s
+            ''', (alert_id, guardian_id))
             
             alert_result = cursor.fetchone()
             if not alert_result:
@@ -2640,24 +1704,17 @@ def acknowledge_alert():
             alert = dict(alert_result)
             
             # Acknowledge the alert
-            try:
-                cursor.execute('''
-                    UPDATE alerts SET acknowledged = TRUE 
-                    WHERE alert_id = %s AND guardian_id = %s
-                ''', (alert_id, guardian_id))
-            except Exception as e:
-                print(f"❌ Error acknowledging alert: {e}")
-                return jsonify({'success': False, 'error': 'Failed to acknowledge alert'}), 500
+            cursor.execute('''
+                UPDATE alerts SET acknowledged = TRUE 
+                WHERE alert_id = %s AND guardian_id = %s
+            ''', (alert_id, guardian_id))
             
             # Log activity
-            try:
-                cursor.execute('''
-                    INSERT INTO activity_log (guardian_id, action, details)
-                    VALUES (%s, %s, %s)
-                ''', (guardian_id, 'ALERT_ACKNOWLEDGED', 
-                    f'Acknowledged alert #{alert_id} for driver {alert["driver_name"]}'))
-            except Exception as e:
-                print(f"⚠️ Error logging activity: {e}")
+            cursor.execute('''
+                INSERT INTO activity_log (guardian_id, action, details)
+                VALUES (%s, %s, %s)
+            ''', (guardian_id, 'ALERT_ACKNOWLEDGED', 
+                f'Acknowledged alert #{alert_id} for driver {alert["driver_name"]}'))
             
             # Emit socket event for real-time update
             socketio.emit('alert_acknowledged', {
@@ -2665,8 +1722,6 @@ def acknowledge_alert():
                 'guardian_id': guardian_id,
                 'timestamp': datetime.now().isoformat()
             })
-            
-            print(f"✅ Alert #{alert_id} acknowledged by guardian {guardian_id}")
             
             return jsonify({
                 'success': True,
@@ -2681,293 +1736,6 @@ def acknowledge_alert():
             'error': str(e),
             'redirect': '/?logged_out=true'
         }), 500
-
-@app.route('/api/guardian/drowsiness-events', methods=['GET'])
-def get_drowsiness_events():
-    """Get drowsiness events for a guardian"""
-    try:
-        guardian_id = request.args.get('guardian_id')
-        token = request.args.get('token')
-        limit = request.args.get('limit', 50, type=int)
-        driver_id = request.args.get('driver_id')
-        
-        if not guardian_id or not token:
-            return jsonify({
-                'success': False,
-                'error': 'Authentication required'
-            }), 401
-        
-        # Validate session
-        if not validate_session(guardian_id, token):
-            return jsonify({
-                'success': False,
-                'error': 'Session expired or invalid',
-                'redirect': '/?logged_out=true'
-            }), 401
-        
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Build query
-            base_query = '''
-                SELECT e.*, d.name as driver_name
-                FROM drowsiness_events e
-                JOIN drivers d ON e.driver_id = d.driver_id
-                WHERE e.guardian_id = %s
-            '''
-            params = [guardian_id]
-            
-            if driver_id:
-                base_query += ' AND e.driver_id = %s'
-                params.append(driver_id)
-            
-            base_query += ' ORDER BY e.timestamp DESC LIMIT %s'
-            params.append(limit)
-            
-            try:
-                cursor.execute(base_query, tuple(params))
-            except Exception as e:
-                print(f"❌ Error in get_drowsiness_events query: {e}")
-                return jsonify({'success': False, 'error': str(e)}), 500
-            
-            events = cursor.fetchall()
-            events_list = []
-            for event in events:
-                events_list.append(dict(event))
-            
-            return jsonify({
-                'success': True,
-                'session_valid': True,
-                'count': len(events_list),
-                'events': events_list
-            })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'redirect': '/?logged_out=true'
-        }), 500
-
-@app.route('/api/test-alert', methods=['POST'])
-def test_alert():
-    """Endpoint to test alert sending (for development)"""
-    try:
-        data = request.json or {}
-        
-        # Use first guardian for testing
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            try:
-                cursor.execute('SELECT guardian_id, full_name FROM guardians LIMIT 1')
-                guardian_result = cursor.fetchone()
-                
-                if not guardian_result:
-                    return jsonify({
-                        'success': False,
-                        'error': 'No guardian found'
-                    }), 404
-                
-                guardian_id, guardian_name = guardian_result['guardian_id'], guardian_result['full_name']
-                
-            except Exception as e:
-                print(f"❌ Error finding guardian: {e}")
-                return jsonify({
-                    'success': False,
-                    'error': 'Guardian not found'
-                }), 404
-            
-            # Create test driver if needed
-            test_driver_id = data.get('driver_id', 'TEST123')
-            test_driver_name = data.get('driver_name', 'Test Driver')
-            
-            try:
-                cursor.execute('SELECT driver_id FROM drivers WHERE driver_id = %s', (test_driver_id,))
-            except Exception as e:
-                print(f"❌ Error checking test driver: {e}")
-                # Continue anyway
-            
-            if not cursor.fetchone():
-                try:
-                    cursor.execute('''
-                        INSERT INTO drivers (driver_id, name, phone, guardian_id)
-                        VALUES (%s, %s, %s, %s)
-                    ''', (test_driver_id, test_driver_name, '00000000000', guardian_id))
-                    conn.commit()
-                except Exception as e:
-                    print(f"⚠️ Error creating test driver: {e}")
-            
-            # Create test alert
-            detection_details = {
-                'state': 'Drowsy',
-                'ear': 0.15,
-                'mar': 0.3,
-                'perclos': 0.42,
-                'test': True
-            }
-            
-            test_data = {
-                'driver_id': test_driver_id,
-                'driver_name': test_driver_name,
-                'severity': 'high',
-                'message': 'Test alert from API endpoint',
-                'confidence': 0.95,
-                'detection_details': detection_details
-            }
-            
-            # Call send_alert with test data
-            with app.test_request_context():
-                request.json = test_data
-                response = send_alert()
-                return response
-        
-    except Exception as e:
-        print(f"❌ Test alert error: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-# ==================== DATABASE FIX FUNCTIONS ====================
-def fix_password_hashes():
-    """Fix password hashes for existing users (run once)"""
-    try:
-        print("🛠️  Checking password hashes...")
-        
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Get all guardians
-            cursor.execute('SELECT guardian_id, phone, password_hash FROM guardians')
-            guardians = cursor.fetchall()
-            
-            for guardian in guardians:
-                guardian_id, phone, stored_hash = guardian['guardian_id'], guardian['phone'], guardian['password_hash']
-                
-                # Check if hash is valid bcrypt format
-                if stored_hash and not stored_hash.startswith('$2'):
-                    print(f"⚠️ Found invalid hash for guardian {guardian_id} ({phone}): {stored_hash[:30]}...")
-                    print(f"   Hash starts with: {stored_hash[:10] if stored_hash else 'None'}")
-                    print(f"   Hash length: {len(stored_hash) if stored_hash else 0}")
-                    
-                    # You would need to reset password here
-                    # For now, just log it
-                    
-        print("✅ Password hash check completed")
-        
-    except Exception as e:
-        print(f"❌ Error checking password hashes: {e}")
-
-def fix_password_hash_column():
-    """Fix the password_hash column to be VARCHAR(255)"""
-    try:
-        print("🛠️ Checking password_hash column type...")
-        
-        with get_db_cursor() as cursor:
-            # Check current column type - use regular cursor (not RealDictCursor)
-            cursor.execute("""
-                SELECT column_name, data_type, character_maximum_length
-                FROM information_schema.columns 
-                WHERE table_name = 'guardians' 
-                AND column_name = 'password_hash'
-            """)
-            
-            column_info = cursor.fetchone()
-            
-            if column_info:
-                # column_info is a tuple: (column_name, data_type, character_maximum_length)
-                column_name = column_info[0]
-                data_type = column_info[1]
-                max_length = column_info[2]
-                
-                print(f"📊 Current password_hash column: Name={column_name}, Type={data_type}, MaxLength={max_length}")
-                
-                # If it's TEXT or has wrong type, change it to VARCHAR(255)
-                if data_type == 'text' or (data_type == 'character varying' and max_length != 255):
-                    print("🔄 Ensuring password_hash is VARCHAR(255)...")
-                    try:
-                        # First, check if there's data in the column
-                        cursor.execute('SELECT COUNT(*) FROM guardians WHERE password_hash IS NOT NULL')
-                        count = cursor.fetchone()[0]
-                        print(f"   Found {count} existing password hashes")
-                        
-                        if count > 0:
-                            print("⚠️  Column has data. Creating backup column...")
-                            # Create a temporary backup
-                            cursor.execute('ALTER TABLE guardians ADD COLUMN password_hash_backup TEXT')
-                            cursor.execute('UPDATE guardians SET password_hash_backup = password_hash')
-                            print("   Backup created")
-                        
-                        # Drop and recreate the column
-                        cursor.execute('ALTER TABLE guardians DROP COLUMN IF EXISTS password_hash')
-                        cursor.execute('ALTER TABLE guardians ADD COLUMN password_hash VARCHAR(255)')
-                        print("✅ Column recreated as VARCHAR(255)")
-                        
-                        if count > 0:
-                            print("🔄 Restoring data from backup...")
-                            # Restore data (will need to re-hash passwords if they're not bcrypt)
-                            cursor.execute('UPDATE guardians SET password_hash = password_hash_backup')
-                            cursor.execute('ALTER TABLE guardians DROP COLUMN password_hash_backup')
-                            print("✅ Data restored")
-                            
-                    except Exception as alter_error:
-                        print(f"⚠️ Could not alter column: {alter_error}")
-                        # Try a simpler approach
-                        try:
-                            print("   Trying simpler alter...")
-                            cursor.execute('ALTER TABLE guardians ALTER COLUMN password_hash TYPE VARCHAR(255)')
-                            print("✅ Column type altered to VARCHAR(255)")
-                        except Exception as simple_error:
-                            print(f"❌ Simple alter also failed: {simple_error}")
-                else:
-                    print(f"✅ Column is already {data_type} with max length {max_length}")
-            else:
-                print("❌ password_hash column not found in guardians table")
-                # Create it if it doesn't exist
-                try:
-                    print("🔄 Creating password_hash column...")
-                    cursor.execute('ALTER TABLE guardians ADD COLUMN password_hash VARCHAR(255) NOT NULL')
-                    print("✅ password_hash column created")
-                except Exception as create_error:
-                    print(f"❌ Could not create column: {create_error}")
-                    
-    except Exception as e:
-        print(f"❌ Error checking password_hash column: {e}")
-
-# ==================== CLEANUP FUNCTIONS ====================
-def cleanup_expired_sessions():
-    """Clean up expired sessions periodically"""
-    try:
-        with get_db_cursor() as cursor:
-            try:
-                cursor.execute('''
-                    UPDATE session_tokens 
-                    SET is_valid = FALSE 
-                    WHERE expires_at < %s AND is_valid = TRUE
-                ''', (datetime.now(),))
-            except Exception as e:
-                print(f"⚠️ Error cleaning expired sessions: {e}")
-                return 0
-            
-            expired_count = cursor.rowcount
-        
-        # Clean memory cache
-        current_time = datetime.now()
-        expired_guards = []
-        for guardian_id, session_data in active_sessions.items():
-            if session_data['expires'] < current_time:
-                expired_guards.append(guardian_id)
-        
-        for guardian_id in expired_guards:
-            del active_sessions[guardian_id]
-        
-        # Clean admin sessions
-        cleanup_admin_sessions()
-        
-        return expired_count
-    except Exception as e:
-        print(f"❌ Error cleaning up sessions: {e}")
-        return 0
 
 # ==================== STATIC FILES ====================
 @app.route('/<path:filename>')
@@ -2994,7 +1762,6 @@ def startup_tasks():
     database_url = os.environ.get('DATABASE_URL')
     
     if database_url:
-        # Show masked URL (hide password)
         if '@' in database_url:
             parts = database_url.split('@')
             user_pass = parts[0]
@@ -3002,10 +1769,8 @@ def startup_tasks():
                 user = user_pass.split(':')[0]
                 masked_url = f"{user}:****@{parts[1]}"
                 print(f"   ✅ DATABASE_URL: {masked_url}")
-        else:
-            print(f"   ✅ DATABASE_URL: {database_url[:50]}...")
         
-        # Test connection
+        # Initialize database
         print("\n🗄️  Database Initialization:")
         try:
             if init_db():
@@ -3016,47 +1781,21 @@ def startup_tasks():
             print(f"⚠️ Database initialization error: {e}")
     else:
         print("❌ DATABASE_URL not found")
-        print("   Please add DATABASE_URL to environment variables")
-    
-    # Fix password hash column
-    print("\n🛠️  Fixing database schema...")
-    fix_password_hash_column()
     
     print(f"\n🔗 API Endpoints:")
     print("  • GET  /api/health - Health check")
-    print("  • GET  /api/debug/db - Database debug")
-    print("  • GET  /api/test-connection - Simple connection test")
     print("  • POST /api/send-alert - Receive alerts from drowsiness detection")
-    print("  • POST /api/test-alert - Test alert endpoint")
-    print("  • GET  /api/test-bcrypt - Test bcrypt functionality")
     
     print(f"\n🔐 Authentication Info:")
     print("  • Admin Username: admin")
     print("  • Admin Password: admin123")
-    print("  • Password Hashing: bcrypt (12 rounds)")
-    
-    print(f"\n🛠️  Running database fixes...")
-    fix_password_hashes()
     
     print(f"{'='*70}\n")
-    
-    # Store app start time
-    global app_start_time
-    app_start_time = time.time()
 
 # ==================== MAIN ENTRY POINT ====================
 if __name__ == '__main__':
     # Run startup tasks
     startup_tasks()
-    
-    # Start cleanup thread
-    def cleanup_worker():
-        while True:
-            time.sleep(3600)  # Run every hour
-            cleanup_expired_sessions()
-    
-    cleanup_thread = threading.Thread(target=cleanup_worker, daemon=True)
-    cleanup_thread.start()
     
     # Get port from environment or use default
     port = int(os.environ.get('PORT', 5000))
@@ -3065,8 +1804,6 @@ if __name__ == '__main__':
     print(f"🚀 Starting server on {host}:{port}")
     print(f"🌐 WebSocket endpoint: ws://{host}:{port}")
     print(f"📡 Alert endpoint: http://{host}:{port}/api/send-alert")
-    print(f"🔐 Admin login: http://{host}:{port}/admin_login")
-    print(f"🔐 Test bcrypt: http://{host}:{port}/api/test-bcrypt")
     
     # Run the application
     socketio.run(app, 
