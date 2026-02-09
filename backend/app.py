@@ -1175,6 +1175,54 @@ def serve_home():
     else:
         return send_from_directory(FRONTEND_DIR, 'admin_login.html')
 
+@app.route('/api/fix-db-schema', methods=['POST'])
+def fix_db_schema():
+    """Fix database schema by adding missing columns"""
+    try:
+        with get_db_cursor() as cursor:
+            # Check current schema
+            cursor.execute('''
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'guardians'
+            ''')
+            columns = [row[0] for row in cursor.fetchall()]
+            
+            fixes = []
+            
+            # Add google_id if missing
+            if 'google_id' not in columns:
+                cursor.execute('ALTER TABLE guardians ADD COLUMN google_id TEXT UNIQUE')
+                fixes.append('Added google_id column')
+            
+            # Add auth_provider if missing
+            if 'auth_provider' not in columns:
+                cursor.execute('ALTER TABLE guardians ADD COLUMN auth_provider TEXT DEFAULT \'phone\'')
+                fixes.append('Added auth_provider column')
+            
+            # Check again
+            cursor.execute('''
+                SELECT column_name, data_type, is_nullable
+                FROM information_schema.columns 
+                WHERE table_name = 'guardians'
+                ORDER BY ordinal_position
+            ''')
+            final_schema = cursor.fetchall()
+            
+            return jsonify({
+                'success': True,
+                'fixes_applied': fixes,
+                'final_schema': [dict(zip(['column_name', 'data_type', 'is_nullable'], row)) for row in final_schema],
+                'message': 'Schema fixes applied successfully'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
 @app.route('/registration')
 def redirect_to_guardian_register():
     """Redirect old registration URL to new one"""
