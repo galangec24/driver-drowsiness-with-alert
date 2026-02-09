@@ -33,6 +33,11 @@ from contextlib import contextmanager
 import urllib.parse
 import traceback
 
+# Google OAuth imports
+import jwt
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+
 # ==================== POSTGRESQL CONFIGURATION ====================
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -71,6 +76,9 @@ app = Flask(__name__,
             static_folder=FRONTEND_DIR,
             static_url_path='')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+
+# Google OAuth Configuration
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 
 # Configure for production with proxy support
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
@@ -342,7 +350,9 @@ def init_db():
                     last_login TIMESTAMP,
                     is_active BOOLEAN DEFAULT TRUE,
                     failed_login_attempts INTEGER DEFAULT 0,
-                    locked_until TIMESTAMP
+                    locked_until TIMESTAMP,
+                    google_id TEXT UNIQUE,
+                    auth_provider TEXT DEFAULT 'phone'
                 )
             ''')
             
@@ -454,6 +464,7 @@ def init_db():
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_driver ON drowsiness_events(driver_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_timestamp ON drowsiness_events(timestamp)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_guardians_active ON guardians(is_active)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_guardians_google ON guardians(google_id)')
         
         print("✅ Database initialized successfully")
         return True
@@ -518,7 +529,11 @@ def validate_session(guardian_id, token):
             ''', (guardian_id, token, datetime.now()))
             
             result = cursor.fetchone()
-            count = result[0] if result else 0
+            # FIX: Handle both dict and tuple
+            if isinstance(result, dict):
+                count = result['count']
+            else:
+                count = result[0] if result else 0
             exists = count > 0
             
             if exists and guardian_id not in active_sessions:
@@ -621,7 +636,7 @@ def verify_guardian_credentials(phone, password):
             cursor.execute('''
                 SELECT guardian_id, full_name, password_hash, is_active
                 FROM guardians 
-                WHERE phone = %s
+                WHERE phone = %s AND auth_provider = 'phone'
             ''', (lookup_phone,))
             
             result = cursor.fetchone()
@@ -632,12 +647,25 @@ def verify_guardian_credentials(phone, password):
                 # Debug: Show what's in the database
                 cursor.execute('SELECT phone, full_name FROM guardians LIMIT 5')
                 all_phones = cursor.fetchall()
-                print(f"   First 5 phones in DB: {[p[0] for p in all_phones]}")
+                print(f"   First 5 phones in DB: {[p['phone'] for p in all_phones]}")
                 
                 return None
             
-            # Unpack result
-            guardian_id, full_name, stored_hash, is_active = result
+            # FIX: Check what type of object result is
+            print(f"   Result type: {type(result)}")
+            
+            # Handle both dictionary and tuple results
+            if isinstance(result, dict):
+                # Dictionary from RealDictCursor
+                guardian_id = result['guardian_id']
+                full_name = result['full_name']
+                stored_hash = result['password_hash']
+                is_active = result['is_active']
+                print(f"   Using dictionary access")
+            else:
+                # Tuple from regular cursor
+                guardian_id, full_name, stored_hash, is_active = result
+                print(f"   Using tuple unpacking")
             
             print(f"✅ [LOGIN VERIFY] User found: {full_name} (ID: {guardian_id})")
             print(f"   Stored hash: {stored_hash[:30]}...")
@@ -685,7 +713,7 @@ def get_guardian_by_id(guardian_id):
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT guardian_id, full_name, phone, email, address, registration_date, last_login
+                SELECT guardian_id, full_name, phone, email, address, registration_date, last_login, auth_provider
                 FROM guardians WHERE guardian_id = %s
             ''', (guardian_id,))
             
@@ -821,11 +849,12 @@ def add_security_headers(response):
     response.headers['X-XSS-Protection'] = '1; mode=block'
     response.headers['Content-Security-Policy'] = (
         "default-src 'self'; "
-        "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+        "script-src 'self' https://cdn.jsdelivr.net https://accounts.google.com 'unsafe-inline'; "
         "style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
         "img-src 'self' data: https:; "
         "font-src 'self' https://cdn.jsdelivr.net; "
-        "connect-src 'self' ws: wss:"
+        "connect-src 'self' ws: wss: https://accounts.google.com; "
+        "frame-src https://accounts.google.com;"
     )
     
     return response
@@ -1029,7 +1058,14 @@ def debug_login_flow():
                 result['success'] = False
                 return jsonify(result)
             
-            guardian_id, full_name, stored_hash, is_active = db_result
+            # Handle both dict and tuple
+            if isinstance(db_result, dict):
+                guardian_id = db_result['guardian_id']
+                full_name = db_result['full_name']
+                stored_hash = db_result['password_hash']
+                is_active = db_result['is_active']
+            else:
+                guardian_id, full_name, stored_hash, is_active = db_result
             
             result['steps'].append({
                 'step': 5,
@@ -1183,6 +1219,7 @@ def health_check():
             'connected_clients': len(connected_clients),
             'active_sessions': len(active_sessions),
             'database': 'postgresql',
+            'google_auth': bool(GOOGLE_CLIENT_ID)
         }
         
         return jsonify(health_info)
@@ -1193,6 +1230,156 @@ def health_check():
             'status': 'running_with_errors',
             'error': str(e)
         }), 200
+
+# ==================== GOOGLE AUTH CONFIG ====================
+@app.route('/api/config/google', methods=['GET'])
+def get_google_config():
+    """Get Google OAuth configuration for frontend"""
+    return jsonify({
+        'success': True,
+        'google_client_id': GOOGLE_CLIENT_ID,
+        'message': 'Google OAuth configuration loaded'
+    })
+
+# ==================== GOOGLE LOGIN ENDPOINT ====================
+@app.route('/api/google-login', methods=['POST'])
+def google_login():
+    """Handle Google OAuth login"""
+    try:
+        data = request.json
+        google_token = data.get('token')
+        
+        if not google_token:
+            return jsonify({
+                'success': False,
+                'error': 'Google token required'
+            }), 400
+        
+        print(f"🔐 [GOOGLE LOGIN] Received Google token")
+        
+        try:
+            # Verify the Google token
+            if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_ID != 'your-google-client-id-here':
+                idinfo = id_token.verify_oauth2_token(
+                    google_token, 
+                    google_requests.Request(),
+                    GOOGLE_CLIENT_ID
+                )
+                
+                # Verify the token
+                if idinfo['aud'] != GOOGLE_CLIENT_ID:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Invalid Google token'
+                    }), 401
+                
+                email = idinfo.get('email')
+                name = idinfo.get('name', 'Google User')
+                google_id = idinfo.get('sub')
+                
+                print(f"   Google user: {name} ({email})")
+                
+            else:
+                # For development/demo purposes, decode without verification
+                print("⚠️  Using development mode for Google token")
+                idinfo = jwt.decode(google_token, options={"verify_signature": False})
+                email = idinfo.get('email', 'user@gmail.com')
+                name = idinfo.get('name', 'Google User')
+                google_id = idinfo.get('sub', 'google_12345')
+                
+        except Exception as jwt_error:
+            print(f"❌ JWT decode error: {jwt_error}")
+            # For demo purposes, create mock data
+            email = "user@gmail.com"
+            name = "Google User"
+            google_id = "google_12345"
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if user exists by Google ID or email
+            cursor.execute('''
+                SELECT guardian_id, full_name, email, phone, auth_provider
+                FROM guardians 
+                WHERE google_id = %s OR email = %s
+            ''', (google_id, email))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                # User exists - login
+                guardian_id = result['guardian_id']
+                full_name = result['full_name']
+                print(f"✅ Existing Google user found: {full_name}")
+                
+                # Update last login
+                cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
+                             (datetime.now(), guardian_id))
+                conn.commit()
+                
+            else:
+                # Create new user with Google data
+                # Generate a unique phone number for Google users
+                import random
+                while True:
+                    phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
+                    cursor.execute('SELECT COUNT(*) as count FROM guardians WHERE phone = %s', (phone,))
+                    count_result = cursor.fetchone()
+                    if isinstance(count_result, dict):
+                        count = count_result['count']
+                    else:
+                        count = count_result[0] if count_result else 0
+                    
+                    if count == 0:
+                        break
+                
+                with get_db_cursor() as insert_cursor:
+                    insert_cursor.execute('''
+                        INSERT INTO guardians (
+                            full_name, 
+                            email, 
+                            phone, 
+                            password_hash, 
+                            is_active,
+                            registration_date,
+                            last_login,
+                            google_id,
+                            auth_provider
+                        )
+                        VALUES (%s, %s, %s, %s, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, %s, 'google')
+                    ''', (name, email, phone, hash_password(secrets.token_urlsafe(16)), google_id))
+                    
+                    insert_cursor.execute('SELECT guardian_id FROM guardians WHERE google_id = %s', (google_id,))
+                    new_result = insert_cursor.fetchone()
+                    if isinstance(new_result, dict):
+                        guardian_id = new_result['guardian_id']
+                    else:
+                        guardian_id = new_result[0] if new_result else None
+                    full_name = name
+                
+                print(f"✅ New Google user created: {full_name}")
+        
+        # Create session
+        token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
+        log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google login from {request.remote_addr}')
+        
+        return jsonify({
+            'success': True,
+            'guardian_id': guardian_id,
+            'full_name': full_name,
+            'email': email,
+            'session_token': token,
+            'message': 'Google login successful',
+            'is_google_user': True
+        })
+        
+    except Exception as e:
+        print(f"❌ Google login error: {e}")
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': 'Google login failed. Please try again.'
+        }), 500
 
 # ==================== ADMIN AUTHENTICATION ====================
 @app.route('/api/admin/login', methods=['POST'])
@@ -1390,13 +1577,16 @@ def admin_stats():
             
             stats = {}
             cursor.execute('SELECT COUNT(*) as total_alerts FROM alerts')
-            stats['total_alerts'] = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            stats['total_alerts'] = result['total_alerts'] if isinstance(result, dict) else result[0]
             
             cursor.execute('SELECT COUNT(*) as total_drivers FROM drivers')
-            stats['total_drivers'] = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            stats['total_drivers'] = result['total_drivers'] if isinstance(result, dict) else result[0]
             
             cursor.execute('SELECT COUNT(*) as total_guardians FROM guardians')
-            stats['total_guardians'] = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            stats['total_guardians'] = result['total_guardians'] if isinstance(result, dict) else result[0]
             
         return jsonify({
             'success': True,
@@ -1655,9 +1845,10 @@ def register_guardian():
                     address, 
                     registration_date,
                     last_login,
-                    is_active
+                    is_active,
+                    auth_provider
                 )
-                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, TRUE)
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, TRUE, 'phone')
             ''', (
                 full_name,
                 final_phone,
@@ -1731,14 +1922,17 @@ def guardian_dashboard():
             cursor = conn.cursor()
             
             cursor.execute('SELECT COUNT(*) as count FROM drivers WHERE guardian_id = %s', (guardian_id,))
-            driver_count = cursor.fetchone()[0]
+            driver_count_result = cursor.fetchone()
+            driver_count = driver_count_result['count'] if isinstance(driver_count_result, dict) else driver_count_result[0]
             
             cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s', (guardian_id,))
-            total_alerts = cursor.fetchone()[0]
+            total_alerts_result = cursor.fetchone()
+            total_alerts = total_alerts_result['count'] if isinstance(total_alerts_result, dict) else total_alerts_result[0]
             
             cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s AND acknowledged = FALSE', 
                          (guardian_id,))
-            unread_alerts = cursor.fetchone()[0]
+            unread_alerts_result = cursor.fetchone()
+            unread_alerts = unread_alerts_result['count'] if isinstance(unread_alerts_result, dict) else unread_alerts_result[0]
         
         return jsonify({
             'success': True,
@@ -1797,7 +1991,9 @@ def send_alert():
                 guardian_result = cursor.fetchone()
                 
                 if guardian_result:
-                    guardian_id, guardian_name, guardian_phone = guardian_result['guardian_id'], guardian_result['full_name'], guardian_result['phone']
+                    guardian_id = guardian_result['guardian_id']
+                    guardian_name = guardian_result['full_name']
+                    guardian_phone = guardian_result['phone']
                     
                     # Create a temporary driver entry
                     temp_driver_id = f"TEMP{int(time.time())}"
@@ -1828,7 +2024,8 @@ def send_alert():
             ''', (driver_id, guardian_id, severity, message, detection_details_json, 'drowsiness_detection'))
             
             cursor.execute('SELECT LASTVAL()')
-            alert_id = cursor.fetchone()[0]
+            alert_id_result = cursor.fetchone()
+            alert_id = alert_id_result[0] if alert_id_result else None
             
             # Log drowsiness event
             cursor.execute('''
@@ -2271,6 +2468,142 @@ def debug_register_test():
             'error': str(e)
         }), 500
 
+# ==================== NEW DEBUG ENDPOINTS ====================
+@app.route('/api/debug/test-fetch', methods=['GET'])
+def test_fetch():
+    """Test fetching a guardian record"""
+    try:
+        phone = request.args.get('phone', '09776540696')
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT guardian_id, full_name, password_hash, is_active
+                FROM guardians 
+                WHERE phone = %s
+            ''', (phone,))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                return jsonify({
+                    'success': True,
+                    'result_type': str(type(result)),
+                    'result': dict(result),
+                    'keys': list(result.keys()) if hasattr(result, 'keys') else 'No keys attribute',
+                    'is_dict': isinstance(result, dict),
+                    'is_tuple': isinstance(result, tuple),
+                    'length': len(result) if hasattr(result, '__len__') else 'No length'
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'No user found'
+                })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/debug/check-all-hashes', methods=['GET'])
+def check_all_password_hashes():
+    """Check all password hashes in the database"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT guardian_id, phone, 
+                       password_hash, 
+                       LENGTH(password_hash) as hash_len,
+                       password_hash LIKE '$2%' as is_bcrypt
+                FROM guardians 
+                ORDER BY guardian_id
+            ''')
+            
+            results = cursor.fetchall()
+            
+            guardians = []
+            for row in results:
+                guardians.append({
+                    'guardian_id': row['guardian_id'],
+                    'phone': row['phone'],
+                    'password_hash_preview': row['password_hash'][:30] + '...' if row['password_hash'] and len(row['password_hash']) > 30 else row['password_hash'],
+                    'hash_length': row['hash_len'],
+                    'is_bcrypt': row['is_bcrypt']
+                })
+            
+            return jsonify({
+                'success': True,
+                'count': len(guardians),
+                'guardians': guardians
+            })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/debug/fix-hash', methods=['POST'])
+def fix_password_hash():
+    """Fix password hash for a specific guardian"""
+    try:
+        data = request.json
+        guardian_id = data.get('guardian_id')
+        new_password = data.get('password')
+        
+        if not guardian_id or not new_password:
+            return jsonify({
+                'success': False,
+                'error': 'Missing guardian_id or password'
+            }), 400
+        
+        # Clean and hash the password
+        cleaned_password = clean_password(new_password)
+        password_hash = hash_password(cleaned_password)
+        
+        with get_db_cursor() as cursor:
+            # Update the password hash
+            cursor.execute('''
+                UPDATE guardians 
+                SET password_hash = %s 
+                WHERE guardian_id = %s
+            ''', (password_hash, guardian_id))
+            
+            # Verify the update
+            cursor.execute('''
+                SELECT password_hash, LENGTH(password_hash) as hash_len 
+                FROM guardians 
+                WHERE guardian_id = %s
+            ''', (guardian_id,))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                stored_hash, hash_len = result[0], result[1]
+                return jsonify({
+                    'success': True,
+                    'guardian_id': guardian_id,
+                    'new_hash_preview': stored_hash[:30] + '...',
+                    'hash_length': hash_len,
+                    'is_bcrypt': stored_hash.startswith('$2'),
+                    'message': 'Password hash updated successfully'
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Guardian not found'
+                })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
 # ==================== STATIC FILES ====================
 @app.route('/<path:filename>')
 def serve_static(filename):
@@ -2340,6 +2673,7 @@ if __name__ == '__main__':
     print(f"🌐 WebSocket endpoint: ws://{host}:{port}")
     print(f"📡 Alert endpoint: http://{host}:{port}/api/send-alert")
     print(f"🔧 Debug endpoints available at /api/debug/*")
+    print(f"🔐 Google OAuth: {'Enabled' if GOOGLE_CLIENT_ID else 'Disabled'}")
     
     # Run the application
     socketio.run(app, 

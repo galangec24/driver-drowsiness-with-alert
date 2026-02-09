@@ -9,6 +9,8 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
     <!-- PWA Configuration -->
     <link rel="manifest" href="/manifest.json">
@@ -30,6 +32,12 @@
             --gradient-end: #764ba2;
         }
         
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
         body {
             background: linear-gradient(135deg, var(--gradient-start) 0%, var(--gradient-end) 100%);
             min-height: 100vh;
@@ -37,87 +45,138 @@
             align-items: center;
             justify-content: center;
             padding: 20px;
-            margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            font-family: 'Poppins', sans-serif;
         }
         
         .login-container {
-            max-width: 400px;
+            max-width: 420px;
             width: 100%;
+            animation: slideUp 0.5s ease;
+        }
+        
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
         }
         
         .login-card {
             background: white;
-            border-radius: 20px;
-            padding: 40px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            border-radius: 24px;
+            padding: 40px 35px;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.25);
             text-align: center;
-            animation: fadeIn 0.5s ease;
+            position: relative;
+            overflow: hidden;
         }
         
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
+        .login-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 5px;
+            background: linear-gradient(90deg, var(--primary-color) 0%, var(--primary-light) 100%);
         }
         
         .app-logo {
-            width: 100px;
-            height: 100px;
+            width: 110px;
+            height: 110px;
             background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin: 0 auto 20px;
+            margin: 0 auto 25px;
             color: white;
-            font-size: 40px;
-            box-shadow: 0 8px 20px rgba(26, 35, 126, 0.3);
+            font-size: 48px;
+            box-shadow: 0 10px 25px rgba(26, 35, 126, 0.3);
+            border: 5px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .app-logo i {
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
         }
         
         .app-title {
             color: var(--primary-color);
-            font-weight: bold;
-            margin-bottom: 10px;
-            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            font-size: 32px;
+            letter-spacing: -0.5px;
         }
         
         .app-subtitle {
             color: var(--secondary-color);
-            margin-bottom: 30px;
-            font-size: 16px;
+            margin-bottom: 35px;
+            font-size: 15px;
+            font-weight: 400;
+            line-height: 1.5;
+        }
+        
+        .form-group {
+            margin-bottom: 22px;
+            position: relative;
         }
         
         .form-control {
-            padding: 15px;
-            border-radius: 10px;
-            border: 2px solid #e1e5e9;
-            margin-bottom: 20px;
+            padding: 16px 20px;
+            border-radius: 12px;
+            border: 2px solid #eef2f7;
+            font-size: 15px;
             transition: all 0.3s;
-            font-size: 16px;
+            background: #f9fafc;
+            color: #333;
+            font-weight: 500;
         }
         
         .form-control:focus {
             border-color: var(--primary-color);
-            box-shadow: 0 0 0 3px rgba(26, 35, 126, 0.1);
+            box-shadow: 0 0 0 4px rgba(26, 35, 126, 0.08);
+            background: white;
+            outline: none;
+        }
+        
+        .form-control::placeholder {
+            color: #9ca3af;
+            font-weight: 400;
+        }
+        
+        .input-icon {
+            position: absolute;
+            right: 18px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #9ca3af;
+            font-size: 18px;
+            cursor: pointer;
         }
         
         .btn-login {
             background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%);
             color: white;
-            padding: 15px;
-            border-radius: 10px;
+            padding: 17px;
+            border-radius: 12px;
             border: none;
             font-weight: 600;
             width: 100%;
             transition: all 0.3s;
-            margin-top: 10px;
+            margin-top: 5px;
             font-size: 16px;
             cursor: pointer;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            position: relative;
+            overflow: hidden;
         }
         
         .btn-login:hover {
             transform: translateY(-3px);
-            box-shadow: 0 10px 20px rgba(26, 35, 126, 0.3);
+            box-shadow: 0 12px 25px rgba(26, 35, 126, 0.25);
+        }
+        
+        .btn-login:active {
+            transform: translateY(-1px);
         }
         
         .btn-login:disabled {
@@ -127,57 +186,145 @@
             box-shadow: none;
         }
         
+        .btn-login::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 5px;
+            height: 5px;
+            background: rgba(255, 255, 255, 0.5);
+            opacity: 0;
+            border-radius: 100%;
+            transform: scale(1, 1) translate(-50%);
+            transform-origin: 50% 50%;
+        }
+        
+        .btn-login:focus:not(:active)::after {
+            animation: ripple 1s ease-out;
+        }
+        
+        @keyframes ripple {
+            0% {
+                transform: scale(0, 0);
+                opacity: 0.5;
+            }
+            100% {
+                transform: scale(30, 30);
+                opacity: 0;
+            }
+        }
+        
         .error-message {
             color: var(--danger-color);
             font-size: 14px;
-            margin-top: 10px;
-            display: none;
-            padding: 10px;
-            background: rgba(231, 74, 59, 0.1);
-            border-radius: 8px;
+            margin: 15px 0 0;
+            padding: 14px 18px;
+            background: rgba(231, 74, 59, 0.08);
+            border-radius: 10px;
             border-left: 4px solid var(--danger-color);
+            text-align: left;
+            display: none;
+            animation: shake 0.5s ease;
+            position: relative;
+            font-weight: 500;
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+            20%, 40%, 60%, 80% { transform: translateX(5px); }
         }
         
         .success-message {
             color: var(--success-color);
             font-size: 14px;
-            margin-top: 10px;
-            padding: 10px;
-            background: rgba(28, 200, 138, 0.1);
-            border-radius: 8px;
+            margin: 15px 0 0;
+            padding: 14px 18px;
+            background: rgba(28, 200, 138, 0.08);
+            border-radius: 10px;
             border-left: 4px solid var(--success-color);
+            text-align: left;
+            display: none;
+            font-weight: 500;
+        }
+        
+        .message-icon {
+            margin-right: 10px;
+            font-size: 16px;
         }
         
         .divider {
             display: flex;
             align-items: center;
-            margin: 30px 0;
+            margin: 28px 0;
             color: var(--secondary-color);
+            font-size: 14px;
+            font-weight: 500;
         }
         
         .divider::before, .divider::after {
             content: '';
             flex: 1;
-            border-bottom: 1px solid #e1e5e9;
+            border-bottom: 1px solid #eef2f7;
         }
         
         .divider span {
             padding: 0 15px;
         }
         
-        .guest-login {
-            background: #f8f9fa;
-            color: var(--secondary-color);
-            border: 2px solid #e1e5e9;
+        .btn-google {
+            width: 100%;
+            padding: 16px;
+            border-radius: 12px;
+            border: 2px solid #eef2f7;
+            background: white;
+            color: #333;
+            font-weight: 600;
+            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 25px;
         }
         
-        .guest-login:hover {
-            background: #e9ecef;
+        .btn-google:hover {
             border-color: #d1d5db;
+            background: #f9fafc;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.05);
+        }
+        
+        .btn-google i {
+            color: #db4437;
+            font-size: 20px;
+        }
+        
+        .register-link {
+            color: var(--secondary-color);
+            font-size: 14px;
+            margin-top: 20px;
+        }
+        
+        .register-link a {
+            color: var(--primary-color);
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .register-link a:hover {
+            color: var(--primary-light);
+            text-decoration: underline;
         }
         
         .loading-dots {
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
         }
         
         .loading-dots span {
@@ -186,7 +333,7 @@
             height: 8px;
             border-radius: 50%;
             background: white;
-            margin: 0 2px;
+            margin: 0 3px;
             animation: loading 1.4s infinite ease-in-out both;
         }
         
@@ -194,52 +341,108 @@
         .loading-dots span:nth-child(2) { animation-delay: -0.16s; }
         
         @keyframes loading {
-            0%, 80%, 100% { transform: scale(0); }
-            40% { transform: scale(1.0); }
+            0%, 80%, 100% { transform: scale(0); opacity: 0.5; }
+            40% { transform: scale(1); opacity: 1; }
+        }
+        
+        .form-feedback {
+            position: absolute;
+            bottom: -20px;
+            left: 0;
+            font-size: 13px;
+            color: var(--danger-color);
+            display: none;
+        }
+        
+        .input-error {
+            border-color: var(--danger-color) !important;
+            background: rgba(231, 74, 59, 0.05) !important;
+        }
+        
+        .input-error:focus {
+            box-shadow: 0 0 0 4px rgba(231, 74, 59, 0.1) !important;
+        }
+        
+        .input-success {
+            border-color: var(--success-color) !important;
+            background: rgba(28, 200, 138, 0.05) !important;
         }
         
         @media (max-width: 480px) {
             .login-card {
-                padding: 25px;
+                padding: 30px 25px;
             }
+            
             .app-logo {
-                width: 80px;
-                height: 80px;
-                font-size: 32px;
+                width: 90px;
+                height: 90px;
+                font-size: 40px;
             }
+            
             .app-title {
-                font-size: 24px;
+                font-size: 26px;
+            }
+            
+            .form-control {
+                padding: 14px 18px;
+            }
+            
+            .btn-login, .btn-google {
+                padding: 15px;
+            }
+        }
+        
+        /* Dark mode support */
+        @media (prefers-color-scheme: dark) {
+            .login-card {
+                background: #1a1a1a;
+            }
+            
+            .form-control {
+                background: #2d2d2d;
+                border-color: #404040;
+                color: #e5e5e5;
+            }
+            
+            .form-control:focus {
+                background: #333;
+                border-color: var(--primary-color);
+            }
+            
+            .app-subtitle {
+                color: #a0a0a0;
+            }
+            
+            .btn-google {
+                background: #2d2d2d;
+                border-color: #404040;
+                color: #e5e5e5;
+            }
+            
+            .btn-google:hover {
+                background: #333;
+                border-color: #4a4a4a;
             }
         }
     </style>
+    
+    <!-- Google Identity Services -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
-<script>
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', function() {
-        navigator.serviceWorker.register('/service-worker.js')
-            .then(function(registration) {
-                console.log('Service Worker registered with scope:', registration.scope);
-            })
-            .catch(function(error) {
-                console.log('Service Worker registration failed:', error);
-            });
-    });
-}
-</script>
 <body>
     <div class="login-container">
         <div class="login-card">
             <!-- App Logo -->
             <div class="app-logo">
-                <i class="fas fa-car"></i>
+                <i class="fas fa-shield-alt"></i>
             </div>
             
             <h1 class="app-title">Driver Alert</h1>
-            <p class="app-subtitle">Guardian Login Portal</p>
+            <p class="app-subtitle">Secure Guardian Login Portal<br>Monitor your drivers in real-time</p>
             
             <!-- Login Form -->
             <form id="loginForm">
-                <div class="mb-3">
+                <div class="form-group">
                     <input type="tel" 
                            class="form-control" 
                            id="phoneNumber" 
@@ -248,90 +451,235 @@ if ('serviceWorker' in navigator) {
                            pattern="[0-9]{10,11}"
                            maxlength="11"
                            value="">
+                    <span class="input-icon">
+                        <i class="fas fa-phone"></i>
+                    </span>
+                    <div class="form-feedback" id="phoneError"></div>
                 </div>
                 
-                <div class="mb-3">
+                <div class="form-group">
                     <input type="password" 
                            class="form-control" 
                            id="password" 
                            placeholder="Password"
                            required
-                           minlength="4"
+                           minlength="6"
                            value="">
+                    <span class="input-icon toggle-password">
+                        <i class="fas fa-eye"></i>
+                    </span>
+                    <div class="form-feedback" id="passwordError"></div>
                 </div>
                 
                 <button type="submit" class="btn btn-login" id="loginButton">
-                    <i class="fas fa-sign-in-alt me-2"></i> <span id="loginText">Login</span>
+                    <i class="fas fa-sign-in-alt me-2"></i> <span id="loginText">Login to Dashboard</span>
                 </button>
                 
                 <div class="error-message" id="errorMessage">
-                    <i class="fas fa-exclamation-circle me-2"></i>
+                    <i class="fas fa-exclamation-circle message-icon"></i>
                     <span id="errorText">Invalid credentials</span>
                 </div>
                 
-                <div class="success-message" id="successMessage" style="display: none;">
-                    <i class="fas fa-check-circle me-2"></i>
+                <div class="success-message" id="successMessage">
+                    <i class="fas fa-check-circle message-icon"></i>
                     <span id="successText">Login successful! Redirecting...</span>
                 </div>
             </form>
             
             <div class="divider">
-                <span>OR</span>
+                <span>OR CONTINUE WITH</span>
             </div>
             
-            <button class="btn btn-login guest-login" onclick="guestAccess()">
-                <i class="fas fa-user-clock me-2"></i> Quick Access
+            <button class="btn-google" onclick="handleGoogleLogin()">
+                <i class="fab fa-google"></i>
+                <span>Sign in with Google</span>
             </button>
             
-            <p class="mt-3 text-muted" style="font-size: 14px;">
-                Register a new account? 
-                <a href="/guardian-register" class="text-primary" style="text-decoration: none; font-weight: 600;">
-                    <i class="fas fa-user-plus me-1"></i> Register
+            <p class="register-link">
+                Don't have an account? 
+                <a href="/guardian-register">
+                    <i class="fas fa-user-plus me-1"></i> Register Now
                 </a>
             </p>
         </div>
+    </div>
+
+    <!-- Google Sign-In Configuration -->
+    <div id="g_id_onload"
+         data-client_id="YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com"
+         data-context="signin"
+         data-ux_mode="popup"
+         data-callback="handleGoogleCredentialResponse"
+         data-auto_prompt="false">
+    </div>
+
+    <div class="g_id_signin"
+         data-type="standard"
+         data-shape="rectangular"
+         data-theme="outline"
+         data-text="signin_with"
+         data-size="large"
+         data-logo_alignment="left"
+         data-width="300"
+         style="display: none;">
     </div>
     
     <script>
     // Initialize when DOM is loaded
     document.addEventListener('DOMContentLoaded', function() {
-        console.log('🚀 Login page loading...');
+        console.log('🚀 Driver Alert Login Portal Loading...');
         
         // Clear any existing session if coming from logout
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('logged_out')) {
             console.log('🔒 Clearing previous session data');
             localStorage.clear();
+            showSuccess('You have been logged out successfully');
         }
         
-        // Set up form
-        document.getElementById('loginForm').addEventListener('submit', handleLogin);
+        if (urlParams.get('registered')) {
+            showSuccess('Registration successful! Please login with your credentials');
+        }
         
-        console.log('✅ Login page ready');
+        // Set up form validation
+        setupFormValidation();
+        
+        // Auto-focus on phone input
+        document.getElementById('phoneNumber').focus();
+        
+        console.log('✅ Login portal ready');
     });
+    
+    // ==================== FORM VALIDATION ====================
+    function setupFormValidation() {
+        const phoneInput = document.getElementById('phoneNumber');
+        const passwordInput = document.getElementById('password');
+        const form = document.getElementById('loginForm');
+        
+        // Phone validation
+        phoneInput.addEventListener('blur', function() {
+            const phone = this.value.trim();
+            if (!phone) {
+                showFieldError('phone', 'Phone number is required');
+                return;
+            }
+            
+            const phoneRegex = /^[0-9]{10,11}$/;
+            if (!phoneRegex.test(phone)) {
+                showFieldError('phone', 'Please enter a valid 10-11 digit phone number');
+                return;
+            }
+            
+            clearFieldError('phone');
+        });
+        
+        // Password validation
+        passwordInput.addEventListener('blur', function() {
+            const password = this.value;
+            if (!password) {
+                showFieldError('password', 'Password is required');
+                return;
+            }
+            
+            if (password.length < 6) {
+                showFieldError('password', 'Password must be at least 6 characters');
+                return;
+            }
+            
+            clearFieldError('password');
+        });
+        
+        // Real-time phone formatting
+        phoneInput.addEventListener('input', function() {
+            let phone = this.value.replace(/\D/g, '');
+            if (phone.length > 11) phone = phone.substring(0, 11);
+            
+            // Format as 09XX-XXX-XXXX
+            if (phone.length > 6) {
+                phone = phone.substring(0, 4) + '-' + phone.substring(4, 7) + '-' + phone.substring(7);
+            } else if (phone.length > 4) {
+                phone = phone.substring(0, 4) + '-' + phone.substring(4);
+            }
+            
+            this.value = phone;
+        });
+        
+        // Show password toggle
+        const passwordIcon = document.querySelector('.toggle-password i');
+        passwordIcon.addEventListener('click', function() {
+            const passwordField = document.getElementById('password');
+            if (passwordField.type === 'password') {
+                passwordField.type = 'text';
+                this.className = 'fas fa-eye-slash';
+            } else {
+                passwordField.type = 'password';
+                this.className = 'fas fa-eye';
+            }
+        });
+        
+        // Form submission
+        form.addEventListener('submit', handleLogin);
+    }
+    
+    function showFieldError(field, message) {
+        const input = document.getElementById(field === 'phone' ? 'phoneNumber' : 'password');
+        const errorDiv = document.getElementById(field + 'Error');
+        
+        input.classList.add('input-error');
+        input.classList.remove('input-success');
+        errorDiv.textContent = message;
+        errorDiv.style.display = 'block';
+    }
+    
+    function clearFieldError(field) {
+        const input = document.getElementById(field === 'phone' ? 'phoneNumber' : 'password');
+        const errorDiv = document.getElementById(field + 'Error');
+        
+        input.classList.remove('input-error');
+        input.classList.add('input-success');
+        errorDiv.style.display = 'none';
+    }
     
     // ==================== LOGIN FUNCTION ====================
     async function handleLogin(e) {
         e.preventDefault();
         
-        const phone = document.getElementById('phoneNumber').value.trim();
-        const password = document.getElementById('password').value;
+        const phoneInput = document.getElementById('phoneNumber');
+        const passwordInput = document.getElementById('password');
+        
+        const phone = phoneInput.value.replace(/\D/g, '');
+        const password = passwordInput.value;
         
         // Hide previous messages
         document.getElementById('errorMessage').style.display = 'none';
         document.getElementById('successMessage').style.display = 'none';
         
         // Validation
-        if (!phone || !password) {
-            showError('Please fill all fields');
+        let isValid = true;
+        
+        if (!phone) {
+            showFieldError('phone', 'Phone number is required');
+            isValid = false;
+        } else if (!/^[0-9]{10,11}$/.test(phone)) {
+            showFieldError('phone', 'Please enter a valid 10-11 digit phone number');
+            isValid = false;
+        }
+        
+        if (!password) {
+            showFieldError('password', 'Password is required');
+            isValid = false;
+        } else if (password.length < 6) {
+            showFieldError('password', 'Password must be at least 6 characters');
+            isValid = false;
+        }
+        
+        if (!isValid) {
             return;
         }
         
-        const phoneRegex = /^[0-9]{10,11}$/;
-        if (!phoneRegex.test(phone)) {
-            showError('Please enter a valid 10-11 digit phone number');
-            return;
-        }
+        // Clear field errors
+        clearFieldError('phone');
+        clearFieldError('password');
         
         // Show loading
         const loginBtn = document.getElementById('loginButton');
@@ -365,7 +713,7 @@ if ('serviceWorker' in navigator) {
                 localStorage.setItem('guardianId', data.guardian_id);
                 localStorage.setItem('guardianName', data.full_name);
                 localStorage.setItem('guardianPhone', phone);
-                localStorage.setItem('guardianToken', data.session_token); // CRITICAL: Save the token!
+                localStorage.setItem('guardianToken', data.session_token);
                 
                 console.log('✅ Login successful!');
                 console.log('📝 Saved to localStorage:', {
@@ -374,30 +722,88 @@ if ('serviceWorker' in navigator) {
                     guardianToken: data.session_token.substring(0, 20) + '...'
                 });
                 
-                showSuccess('✅ Login successful! Redirecting...');
+                showSuccess('✅ Login successful! Redirecting to dashboard...');
                 
-                // Redirect to dashboard WITH authentication parameters
+                // Add slight delay for visual feedback
                 setTimeout(() => {
                     console.log('🔄 Redirecting to dashboard...');
                     window.location.href = `/guardian-dashboard?guardian_id=${data.guardian_id}&token=${data.session_token}`;
-                }, 1000);
+                }, 1500);
                 
             } else {
                 console.log('❌ Login failed:', data.error);
                 showError(data.error || 'Invalid phone or password');
+                
+                // Shake animation for error
+                document.getElementById('loginForm').style.animation = 'shake 0.5s ease';
+                setTimeout(() => {
+                    document.getElementById('loginForm').style.animation = '';
+                }, 500);
             }
             
         } catch (error) {
             console.error('❌ Login error:', error);
-            showError('Connection error. Please check if server is running');
+            showError('Connection error. Please check your internet connection');
         } finally {
             loginText.innerHTML = originalText;
             loginBtn.disabled = false;
         }
     }
     
-    function guestAccess() {
-        showError('Please register and login to use the system');
+    // ==================== GOOGLE LOGIN HANDLERS ====================
+    function handleGoogleLogin() {
+        // Trigger Google Sign-In
+        google.accounts.id.prompt();
+    }
+    
+    // Handle the Google credential response
+    function handleGoogleCredentialResponse(response) {
+        console.log('🔐 Google credential response received');
+        
+        if (response.credential) {
+            processGoogleLogin(response.credential);
+        } else {
+            showError('Google login cancelled');
+        }
+    }
+    
+    async function processGoogleLogin(credential) {
+        try {
+            showInfo('Processing Google login...');
+            
+            // Send the credential to your backend for verification
+            const response = await fetch('/api/google-login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    token: credential
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                // Store session data
+                localStorage.setItem('guardianId', data.guardian_id);
+                localStorage.setItem('guardianName', data.full_name);
+                localStorage.setItem('guardianToken', data.session_token);
+                localStorage.setItem('isGoogleUser', 'true');
+                
+                showSuccess('✅ Google login successful! Redirecting...');
+                
+                setTimeout(() => {
+                    window.location.href = `/guardian-dashboard?guardian_id=${data.guardian_id}&token=${data.session_token}`;
+                }, 1500);
+            } else {
+                showError(data.error || 'Google login failed');
+            }
+            
+        } catch (error) {
+            console.error('Google login error:', error);
+            showError('Google login failed. Please try phone login.');
+        }
     }
     
     // ==================== UTILITY FUNCTIONS ====================
@@ -407,7 +813,9 @@ if ('serviceWorker' in navigator) {
         
         errorText.textContent = message;
         errorDiv.style.display = 'block';
+        document.getElementById('successMessage').style.display = 'none';
         
+        // Auto-hide after 5 seconds
         setTimeout(() => {
             errorDiv.style.display = 'none';
         }, 5000);
@@ -420,6 +828,60 @@ if ('serviceWorker' in navigator) {
         successText.textContent = message;
         successDiv.style.display = 'block';
         document.getElementById('errorMessage').style.display = 'none';
+    }
+    
+    function showInfo(message) {
+        // Create a temporary info message
+        const infoDiv = document.createElement('div');
+        infoDiv.className = 'info-message';
+        infoDiv.innerHTML = `
+            <i class="fas fa-info-circle message-icon"></i>
+            <span>${message}</span>
+        `;
+        
+        // Style the info message
+        Object.assign(infoDiv.style, {
+            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            color: '#3b82f6',
+            padding: '14px 18px',
+            borderRadius: '10px',
+            marginTop: '15px',
+            textAlign: 'left',
+            borderLeft: '4px solid #3b82f6',
+            animation: 'fadeIn 0.3s ease'
+        });
+        
+        // Insert after the form
+        const form = document.getElementById('loginForm');
+        const existingInfo = document.querySelector('.info-message');
+        if (existingInfo) existingInfo.remove();
+        
+        form.parentNode.insertBefore(infoDiv, form.nextSibling);
+        
+        // Auto-remove after 4 seconds
+        setTimeout(() => {
+            if (infoDiv.parentNode) {
+                infoDiv.style.opacity = '0';
+                infoDiv.style.transform = 'translateY(-10px)';
+                infoDiv.style.transition = 'all 0.3s ease';
+                setTimeout(() => {
+                    if (infoDiv.parentNode) infoDiv.parentNode.removeChild(infoDiv);
+                }, 300);
+            }
+        }, 4000);
+    }
+    
+    // ==================== PWA SERVICE WORKER ====================
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+            navigator.serviceWorker.register('/service-worker.js')
+                .then(function(registration) {
+                    console.log('Service Worker registered with scope:', registration.scope);
+                })
+                .catch(function(error) {
+                    console.log('Service Worker registration failed:', error);
+                });
+        });
     }
     </script>
 </body>

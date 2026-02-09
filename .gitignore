@@ -1,97 +1,205 @@
-venv/
+# ============================
+# PYTHON
+# ============================
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
-env/
-.env
-.venv
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-*.log
-instance/
-.webassets-cache
-.DS_Store
-*.db
-*.sqlite3
-.ipynb_checkpoints
-*.h5
-*.pth
-*.pkl
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Cloudinary cache
-.cloudinary/
-
-# Service account keys (Google Cloud)
-*.json
-*.key
-*.pem
-credentials/
-keys/
-secrets/
-
-test_cloudinary.py
-test_*.py
-
-
-# Python virtual environment
+# ============================
+# VIRTUAL ENVIRONMENTS
+# ============================
 venv/
 env/
 .venv/
 ENV/
 
-# Jupyter Notebook
-.ipynb_checkpoints/
-*.ipynb
+# ============================
+# ENVIRONMENT VARIABLES & SECRETS
+# ============================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+secrets/
+keys/
+credentials/
+*.json
+*.key
+*.pem
+*.p12
+*.crt
 
-# IDE
+# ============================
+# IDE & EDITOR
+# ============================
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.project
+.classpath
+.settings/
 
-# OS
+# ============================
+# OPERATING SYSTEM
+# ============================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 desktop.ini
+$RECYCLE.BIN/
+*.lnk
 
-# Temporary files
-temp_downloads/
-tmp/
-*.tmp
-*.temp
-
-# Logs
-logs/
+# ============================
+# LOGS
+# ============================
 *.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
 
-# Database
+# ============================
+# DATABASE
+# ============================
 *.db
-*.sqlite3
 *.sqlite
+*.sqlite3
+instance/
 
-# Media
-*.mp4
-*.avi
-*.mov
-*.wav
-*.mp3
+# ============================
+# TESTING & COVERAGE
+# ============================
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+test_*.py
 
-# Model checkpoints
+# ============================
+# JUPYTER NOTEBOOK
+# ============================
+.ipynb_checkpoints/
+
+# ============================
+# MACHINE LEARNING MODELS
+# ============================
+*.h5
+*.pth
+*.pkl
+*.pickle
+*.model
+*.hdf5
 checkpoints/
 weights/
 runs/
+*.onnx
+*.pt
+*.joblib
 
-# Local configuration
-config/local.py
-config/development.py
+# ============================
+# MEDIA FILES
+# ============================
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wav
+*.mp3
+*.flac
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
 
-#Cloudinary Configuration
+# ============================
+# TEMPORARY FILES
+# ============================
+tmp/
+temp/
+*.tmp
+*.temp
+.cache/
+.webassets-cache
+
+# ============================
+# DEPLOYMENT & BUILD
+# ============================
+.dockerignore
+Dockerfile
+docker-compose.yml
+docker-compose.*.yml
+render.yaml
+build/
+dist/
+
+# ============================
+# CLOUDINARY
+# ============================
+.cloudinary/
 config/cloudinary_config.py
 config/cloudinary_config_local.py
-config/local_settings.py
+
+# ============================
+# PROJECT SPECIFIC
+# ============================
+# Remove specific files you don't want to commit
+test_cloudinary.py
+config/local.py
 config/development.py
-config/production.py
+config/local_settings.py
+
+# ============================
+# FRONTEND (if you have any)
+# ============================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.next/
+out/
+.nuxt/
+dist/
+
+# ============================
+# OTHER
+# ============================
+.history
+*.sass-cache
+*.css.map
+*.js.map
