@@ -1543,18 +1543,11 @@ def google_login():
                     }), 401
                 
                 email = idinfo.get('email')
-                name = idinfo.get('name', '')  # Get actual name, empty string as fallback
+                name = idinfo.get('name', '')  # Get actual name
                 google_id = idinfo.get('sub')
                 
-                # If name is empty, try to use email or set a proper name
-                if not name:
-                    if email:
-                        # Use email username part as name
-                        name = email.split('@')[0].replace('.', ' ').title()
-                    else:
-                        name = "Google User"  # Fallback only if everything fails
-                
-                print(f"   Google user: {name} ({email})")
+                # Debug logging
+                print(f"   Google user info: name='{name}', email='{email}'")
                 
             else:
                 # For development/demo purposes, decode without verification
@@ -1564,12 +1557,7 @@ def google_login():
                 name = idinfo.get('name', '')  # Get actual name
                 google_id = idinfo.get('sub', 'google_12345')
                 
-                # Handle name fallback for development
-                if not name:
-                    if email:
-                        name = email.split('@')[0].replace('.', ' ').title()
-                    else:
-                        name = "Google User"
+                print(f"   Development mode user: name='{name}', email='{email}'")
         
         except Exception as jwt_error:
             print(f"❌ JWT decode error: {jwt_error}")
@@ -1577,6 +1565,23 @@ def google_login():
             email = "user@gmail.com"
             name = "Google User"
             google_id = "google_12345"
+        
+        # ===== FIX: Use actual email and name =====
+        # IMPORTANT: Never use placeholder email for Google users
+        if email == "user@gmail.com":
+            print("⚠️  WARNING: Using placeholder email! This should not happen in production.")
+        
+        # If name is empty or "Google User", try to extract from email
+        if not name or name == "Google User":
+            if email and '@' in email:
+                # Extract username from email and format it properly
+                username = email.split('@')[0]
+                name = username.replace('.', ' ').title()
+                print(f"   Generated name from email: {name}")
+            else:
+                name = "Google User"  # Fallback
+        
+        print(f"✅ Final values: name='{name}', email='{email}'")
         
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -1594,7 +1599,8 @@ def google_login():
                 # User exists - login
                 guardian_id = result['guardian_id']
                 full_name = result['full_name']
-                print(f"✅ Existing Google user found: {full_name}")
+                stored_email = result['email']
+                print(f"✅ Existing Google user found: {full_name} ({stored_email})")
                 
                 # Update last login
                 cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
@@ -1617,6 +1623,7 @@ def google_login():
                     if count == 0:
                         break
                 
+                # ===== FIX: Use actual email and name from Google =====
                 with get_db_cursor() as insert_cursor:
                     insert_cursor.execute('''
                         INSERT INTO guardians (
@@ -1641,7 +1648,7 @@ def google_login():
                         guardian_id = new_result[0] if new_result else None
                     full_name = name
                 
-                print(f"✅ New Google user created: {full_name}")
+                print(f"✅ New Google user created: {full_name} ({email})")
         
         # Create session
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
@@ -1651,7 +1658,7 @@ def google_login():
             'success': True,
             'guardian_id': guardian_id,
             'full_name': full_name,
-            'email': email,
+            'email': email,  # Use actual email
             'session_token': token,
             'message': 'Google login successful',
             'is_google_user': True
@@ -1663,6 +1670,37 @@ def google_login():
         return jsonify({
             'success': False,
             'error': 'Google login failed. Please try again.'
+        }), 500
+
+@app.route('/api/debug/google-users', methods=['GET'])
+def debug_google_users():
+    """Debug endpoint to check Google users in database"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT guardian_id, full_name, email, phone, auth_provider, google_id
+                FROM guardians 
+                WHERE auth_provider = 'google'
+                ORDER BY guardian_id
+            ''')
+            
+            google_users = cursor.fetchall()
+            
+            result = []
+            for user in google_users:
+                result.append(dict(user))
+            
+            return jsonify({
+                'success': True,
+                'count': len(result),
+                'google_users': result
+            })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
         }), 500
 
 # ==================== ADMIN AUTHENTICATION ====================
