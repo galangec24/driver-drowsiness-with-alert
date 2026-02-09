@@ -914,7 +914,6 @@
         </div>
     </div>
 
-    <!-- Service Worker Registration -->
     <script>
     // Initialize when DOM is loaded
     document.addEventListener('DOMContentLoaded', function() {
@@ -928,7 +927,6 @@
         if (urlParams.get('logged_out')) {
             console.log('🔒 Clearing previous session data');
             localStorage.clear();
-            showSuccess('You have been logged out successfully');
         }
         
         if (urlParams.get('registered')) {

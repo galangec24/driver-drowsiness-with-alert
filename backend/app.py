@@ -1,10 +1,4 @@
-﻿"""
-CAPSTONE PROJECT - DRIVER ALERT SYSTEM
-PostgreSQL-only Version for Render.com Deployment
-FINAL FIXED VERSION - Complete with all Google OAuth fixes
-"""
-
-import os
+﻿import os
 from pathlib import Path
 import sys
 
