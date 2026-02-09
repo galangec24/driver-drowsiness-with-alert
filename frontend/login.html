@@ -20,6 +20,31 @@
     <meta name="apple-mobile-web-app-title" content="Driver Alert">
     <link rel="apple-touch-icon" href="/icon-192.png">
     
+    <!-- PWA Install Prompt -->
+    <script>
+    // PWA Install Prompt
+    let deferredPrompt;
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        console.log('📲 PWA install available');
+    });
+    
+    function installPWA() {
+        if (deferredPrompt) {
+            deferredPrompt.prompt();
+            deferredPrompt.userChoice.then((choiceResult) => {
+                if (choiceResult.outcome === 'accepted') {
+                    console.log('✅ User accepted PWA install');
+                } else {
+                    console.log('❌ User dismissed PWA install');
+                }
+                deferredPrompt = null;
+            });
+        }
+    }
+    </script>
+    
     <style>
         :root {
             --primary-color: #1a237e;
@@ -249,6 +274,25 @@
             font-weight: 500;
         }
         
+        .info-message {
+            color: #3b82f6;
+            font-size: 14px;
+            margin: 15px 0 0;
+            padding: 14px 18px;
+            background: rgba(59, 130, 246, 0.08);
+            border-radius: 10px;
+            border-left: 4px solid #3b82f6;
+            text-align: left;
+            display: none;
+            font-weight: 500;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
         .message-icon {
             margin-right: 10px;
             font-size: 16px;
@@ -301,6 +345,13 @@
         .btn-google i {
             color: #db4437;
             font-size: 20px;
+        }
+        
+        .btn-google:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
         }
         
         .register-link {
@@ -368,6 +419,76 @@
             background: rgba(28, 200, 138, 0.05) !important;
         }
         
+        /* PWA Install Banner */
+        .pwa-banner {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            background: white;
+            border-radius: 12px;
+            padding: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            z-index: 1000;
+            animation: slideUp 0.5s ease;
+        }
+        
+        .pwa-banner-content {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex: 1;
+        }
+        
+        .pwa-banner-icon {
+            font-size: 24px;
+            color: var(--primary-color);
+        }
+        
+        .pwa-banner-text {
+            flex: 1;
+        }
+        
+        .pwa-banner-text h4 {
+            margin: 0 0 5px 0;
+            font-size: 14px;
+            color: var(--primary-color);
+        }
+        
+        .pwa-banner-text p {
+            margin: 0;
+            font-size: 12px;
+            color: var(--secondary-color);
+        }
+        
+        .pwa-banner-actions {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .btn-pwa {
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.3s;
+        }
+        
+        .btn-pwa-install {
+            background: var(--primary-color);
+            color: white;
+        }
+        
+        .btn-pwa-dismiss {
+            background: #f3f4f6;
+            color: var(--secondary-color);
+        }
+        
         @media (max-width: 480px) {
             .login-card {
                 padding: 30px 25px;
@@ -389,6 +510,28 @@
             
             .btn-login, .btn-google {
                 padding: 15px;
+            }
+            
+            .pwa-banner {
+                left: 10px;
+                right: 10px;
+                bottom: 10px;
+                flex-direction: column;
+                gap: 10px;
+            }
+            
+            .pwa-banner-content {
+                width: 100%;
+            }
+            
+            .pwa-banner-actions {
+                width: 100%;
+                justify-content: space-between;
+            }
+            
+            .btn-pwa {
+                flex: 1;
+                text-align: center;
             }
         }
         
@@ -423,6 +566,54 @@
                 background: #333;
                 border-color: #4a4a4a;
             }
+            
+            .pwa-banner {
+                background: #2d2d2d;
+                color: #e5e5e5;
+            }
+            
+            .pwa-banner-text h4 {
+                color: #e5e5e5;
+            }
+            
+            .pwa-banner-text p {
+                color: #a0a0a0;
+            }
+            
+            .btn-pwa-dismiss {
+                background: #404040;
+                color: #e5e5e5;
+            }
+        }
+        
+        /* Accessibility */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+        
+        /* Focus styles for accessibility */
+        *:focus {
+            outline: 2px solid var(--primary-color);
+            outline-offset: 2px;
+        }
+        
+        /* High contrast mode */
+        @media (prefers-contrast: high) {
+            .login-card {
+                border: 2px solid var(--primary-color);
+            }
+            
+            .form-control {
+                border: 2px solid #000;
+            }
         }
     </style>
     
@@ -430,6 +621,21 @@
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
+    <!-- PWA Install Banner -->
+    <div class="pwa-banner" id="pwaBanner">
+        <div class="pwa-banner-content">
+            <span class="pwa-banner-icon">📱</span>
+            <div class="pwa-banner-text">
+                <h4>Install Driver Alert</h4>
+                <p>Add to home screen for quick access</p>
+            </div>
+        </div>
+        <div class="pwa-banner-actions">
+            <button class="btn-pwa btn-pwa-dismiss" onclick="dismissPWA()">Later</button>
+            <button class="btn-pwa btn-pwa-install" onclick="installPWA()">Install</button>
+        </div>
+    </div>
+
     <div class="login-container">
         <div class="login-card">
             <!-- App Logo -->
@@ -441,7 +647,7 @@
             <p class="app-subtitle">Secure Guardian Login Portal<br>Monitor your drivers in real-time</p>
             
             <!-- Login Form -->
-            <form id="loginForm">
+            <form id="loginForm" novalidate>
                 <div class="form-group">
                     <input type="tel" 
                            class="form-control" 
@@ -450,11 +656,12 @@
                            required
                            pattern="[0-9]{10,11}"
                            maxlength="11"
-                           value="">
+                           aria-label="Phone number"
+                           aria-describedby="phoneError">
                     <span class="input-icon">
                         <i class="fas fa-phone"></i>
                     </span>
-                    <div class="form-feedback" id="phoneError"></div>
+                    <div class="form-feedback" id="phoneError" role="alert"></div>
                 </div>
                 
                 <div class="form-group">
@@ -464,25 +671,31 @@
                            placeholder="Password"
                            required
                            minlength="6"
-                           value="">
-                    <span class="input-icon toggle-password">
+                           aria-label="Password"
+                           aria-describedby="passwordError">
+                    <span class="input-icon toggle-password" role="button" tabindex="0" aria-label="Toggle password visibility">
                         <i class="fas fa-eye"></i>
                     </span>
-                    <div class="form-feedback" id="passwordError"></div>
+                    <div class="form-feedback" id="passwordError" role="alert"></div>
                 </div>
                 
                 <button type="submit" class="btn btn-login" id="loginButton">
                     <i class="fas fa-sign-in-alt me-2"></i> <span id="loginText">Login to Dashboard</span>
                 </button>
                 
-                <div class="error-message" id="errorMessage">
+                <div class="error-message" id="errorMessage" role="alert">
                     <i class="fas fa-exclamation-circle message-icon"></i>
                     <span id="errorText">Invalid credentials</span>
                 </div>
                 
-                <div class="success-message" id="successMessage">
+                <div class="success-message" id="successMessage" role="status">
                     <i class="fas fa-check-circle message-icon"></i>
                     <span id="successText">Login successful! Redirecting...</span>
+                </div>
+                
+                <div class="info-message" id="infoMessage" role="status">
+                    <i class="fas fa-info-circle message-icon"></i>
+                    <span id="infoText"></span>
                 </div>
             </form>
             
@@ -490,10 +703,14 @@
                 <span>OR CONTINUE WITH</span>
             </div>
             
-            <button class="btn-google" onclick="handleGoogleLogin()">
+            <!-- Google Sign-In Button -->
+            <button class="btn-google" id="googleSignInBtn" onclick="handleGoogleLogin()" disabled>
                 <i class="fab fa-google"></i>
                 <span>Sign in with Google</span>
             </button>
+            
+            <!-- Google Sign-In Container -->
+            <div id="g_id_onload" style="display: none;"></div>
             
             <p class="register-link">
                 Don't have an account? 
@@ -501,33 +718,25 @@
                     <i class="fas fa-user-plus me-1"></i> Register Now
                 </a>
             </p>
+            
+            <!-- Debug Section (Hidden by default) -->
+            <div style="margin-top: 20px; font-size: 12px; color: #666; text-align: left; display: none;" id="debugInfo">
+                <details>
+                    <summary>Debug Info</summary>
+                    <div id="debugContent"></div>
+                </details>
+            </div>
         </div>
     </div>
 
-    <!-- Google Sign-In Configuration -->
-    <div id="g_id_onload"
-         data-client_id="YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com"
-         data-context="signin"
-         data-ux_mode="popup"
-         data-callback="handleGoogleCredentialResponse"
-         data-auto_prompt="false">
-    </div>
-
-    <div class="g_id_signin"
-         data-type="standard"
-         data-shape="rectangular"
-         data-theme="outline"
-         data-text="signin_with"
-         data-size="large"
-         data-logo_alignment="left"
-         data-width="300"
-         style="display: none;">
-    </div>
-    
+    <!-- Service Worker Registration -->
     <script>
     // Initialize when DOM is loaded
     document.addEventListener('DOMContentLoaded', function() {
         console.log('🚀 Driver Alert Login Portal Loading...');
+        
+        // Initialize Google Sign-In
+        initializeGoogleSignIn();
         
         // Clear any existing session if coming from logout
         const urlParams = new URLSearchParams(window.location.search);
@@ -541,14 +750,198 @@
             showSuccess('Registration successful! Please login with your credentials');
         }
         
+        // Check for prefilled phone number
+        const prefilledPhone = urlParams.get('prefilled_phone');
+        if (prefilledPhone) {
+            document.getElementById('phoneNumber').value = formatPhoneNumber(prefilledPhone);
+            document.getElementById('password').focus();
+        }
+        
         // Set up form validation
         setupFormValidation();
         
-        // Auto-focus on phone input
-        document.getElementById('phoneNumber').focus();
+        // Auto-focus on phone input if no prefilled phone
+        if (!prefilledPhone) {
+            document.getElementById('phoneNumber').focus();
+        }
+        
+        // Check PWA installation status
+        checkPWAStatus();
+        
+        // Check service worker status
+        checkServiceWorker();
         
         console.log('✅ Login portal ready');
+        
+        // Show debug info in development
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            document.getElementById('debugInfo').style.display = 'block';
+        }
     });
+    
+    // ==================== GOOGLE SIGN-IN INITIALIZATION ====================
+    function initializeGoogleSignIn() {
+        console.log('🔐 Initializing Google Sign-In...');
+        
+        // Get Google Client ID from backend
+        fetch('/api/config/google')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.google_client_id) {
+                    console.log('✅ Google Client ID loaded:', data.google_client_id.substring(0, 20) + '...');
+                    
+                    // Configure Google Sign-In
+                    if (typeof google !== 'undefined') {
+                        google.accounts.id.initialize({
+                            client_id: data.google_client_id,
+                            callback: handleGoogleCredentialResponse,
+                            auto_select: false,
+                            cancel_on_tap_outside: true,
+                            context: 'signin',
+                            ux_mode: 'popup',
+                            login_uri: window.location.origin + '/api/google-login'
+                        });
+                        
+                        // Enable Google Sign-In button
+                        document.getElementById('googleSignInBtn').disabled = false;
+                        console.log('✅ Google Sign-In initialized');
+                    } else {
+                        console.error('❌ Google Identity Services library not loaded');
+                        showError('Google Sign-In unavailable. Please try phone login.');
+                        document.getElementById('googleSignInBtn').style.display = 'none';
+                    }
+                } else {
+                    console.warn('⚠️ Google Client ID not configured');
+                    document.getElementById('googleSignInBtn').style.display = 'none';
+                }
+            })
+            .catch(error => {
+                console.error('❌ Error loading Google config:', error);
+                document.getElementById('googleSignInBtn').style.display = 'none';
+            });
+    }
+    
+    // ==================== GOOGLE LOGIN HANDLERS ====================
+    function handleGoogleLogin() {
+        console.log('🔐 Triggering Google Sign-In...');
+        
+        if (typeof google === 'undefined') {
+            showError('Google Sign-In not loaded. Please refresh the page.');
+            return;
+        }
+        
+        // Disable button during login
+        const googleBtn = document.getElementById('googleSignInBtn');
+        const originalText = googleBtn.querySelector('span').textContent;
+        googleBtn.disabled = true;
+        googleBtn.querySelector('span').textContent = 'Loading...';
+        
+        // Show loading state
+        showInfo('Opening Google Sign-In...');
+        
+        // Trigger Google Sign-In
+        google.accounts.id.prompt(notification => {
+            if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+                console.log('Google Sign-In not displayed, showing manual popup');
+                // Fallback: Create a popup window
+                const width = 500;
+                const height = 600;
+                const left = (screen.width - width) / 2;
+                const top = (screen.height - height) / 2;
+                
+                const popup = window.open(
+                    'https://accounts.google.com/o/oauth2/auth?' +
+                    'client_id=' + google.accounts.id._clientId +
+                    '&redirect_uri=' + encodeURIComponent(window.location.origin + '/api/google-login') +
+                    '&response_type=token' +
+                    '&scope=email profile' +
+                    '&state=' + btoa(Date.now().toString()),
+                    'GoogleSignIn',
+                    `width=${width},height=${height},top=${top},left=${left}`
+                );
+                
+                if (!popup) {
+                    showError('Popup blocked. Please allow popups for Google Sign-In.');
+                    googleBtn.disabled = false;
+                    googleBtn.querySelector('span').textContent = originalText;
+                    hideInfo();
+                }
+            }
+        });
+        
+        // Re-enable button after 3 seconds if nothing happens
+        setTimeout(() => {
+            googleBtn.disabled = false;
+            googleBtn.querySelector('span').textContent = originalText;
+            hideInfo();
+        }, 3000);
+    }
+    
+    // Handle the Google credential response
+    function handleGoogleCredentialResponse(response) {
+        console.log('🔐 Google credential response received');
+        
+        if (response.credential) {
+            processGoogleLogin(response.credential);
+        } else {
+            console.warn('Google login cancelled');
+            showError('Google login was cancelled');
+        }
+    }
+    
+    async function processGoogleLogin(credential) {
+        try {
+            showInfo('Processing Google login...');
+            
+            // Disable Google button during login
+            const googleBtn = document.getElementById('googleSignInBtn');
+            googleBtn.disabled = true;
+            
+            // Send the credential to your backend for verification
+            const response = await fetch('/api/google-login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    token: credential
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                // Store session data
+                localStorage.setItem('guardianId', data.guardian_id);
+                localStorage.setItem('guardianName', data.full_name);
+                localStorage.setItem('guardianToken', data.session_token);
+                localStorage.setItem('isGoogleUser', 'true');
+                localStorage.setItem('guardianEmail', data.email || '');
+                
+                console.log('✅ Google login successful:', {
+                    guardianId: data.guardian_id,
+                    guardianName: data.full_name,
+                    email: data.email
+                });
+                
+                showSuccess('✅ Google login successful! Redirecting...');
+                
+                setTimeout(() => {
+                    window.location.href = `/guardian-dashboard?guardian_id=${data.guardian_id}&token=${data.session_token}`;
+                }, 1500);
+            } else {
+                showError(data.error || 'Google login failed');
+                googleBtn.disabled = false;
+            }
+            
+        } catch (error) {
+            console.error('Google login error:', error);
+            showError('Google login failed. Please try phone login.');
+            document.getElementById('googleSignInBtn').disabled = false;
+        } finally {
+            hideInfo();
+        }
+    }
     
     // ==================== FORM VALIDATION ====================
     function setupFormValidation() {
@@ -558,67 +951,113 @@
         
         // Phone validation
         phoneInput.addEventListener('blur', function() {
-            const phone = this.value.trim();
-            if (!phone) {
-                showFieldError('phone', 'Phone number is required');
-                return;
-            }
-            
-            const phoneRegex = /^[0-9]{10,11}$/;
-            if (!phoneRegex.test(phone)) {
-                showFieldError('phone', 'Please enter a valid 10-11 digit phone number');
-                return;
-            }
-            
+            validatePhoneField(this.value);
+        });
+        
+        phoneInput.addEventListener('input', function() {
+            this.value = formatPhoneNumber(this.value);
             clearFieldError('phone');
         });
         
         // Password validation
         passwordInput.addEventListener('blur', function() {
-            const password = this.value;
-            if (!password) {
-                showFieldError('password', 'Password is required');
-                return;
-            }
-            
-            if (password.length < 6) {
-                showFieldError('password', 'Password must be at least 6 characters');
-                return;
-            }
-            
-            clearFieldError('password');
+            validatePasswordField(this.value);
         });
         
-        // Real-time phone formatting
-        phoneInput.addEventListener('input', function() {
-            let phone = this.value.replace(/\D/g, '');
-            if (phone.length > 11) phone = phone.substring(0, 11);
-            
-            // Format as 09XX-XXX-XXXX
-            if (phone.length > 6) {
-                phone = phone.substring(0, 4) + '-' + phone.substring(4, 7) + '-' + phone.substring(7);
-            } else if (phone.length > 4) {
-                phone = phone.substring(0, 4) + '-' + phone.substring(4);
-            }
-            
-            this.value = phone;
+        passwordInput.addEventListener('input', function() {
+            clearFieldError('password');
         });
         
         // Show password toggle
         const passwordIcon = document.querySelector('.toggle-password i');
-        passwordIcon.addEventListener('click', function() {
-            const passwordField = document.getElementById('password');
-            if (passwordField.type === 'password') {
-                passwordField.type = 'text';
-                this.className = 'fas fa-eye-slash';
-            } else {
-                passwordField.type = 'password';
-                this.className = 'fas fa-eye';
+        const passwordToggle = document.querySelector('.toggle-password');
+        
+        passwordToggle.addEventListener('click', togglePasswordVisibility);
+        passwordToggle.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                togglePasswordVisibility();
+                e.preventDefault();
             }
         });
         
         // Form submission
         form.addEventListener('submit', handleLogin);
+        
+        // Real-time validation on form submission attempt
+        form.addEventListener('invalid', function(e) {
+            e.preventDefault();
+            const target = e.target;
+            
+            if (target.id === 'phoneNumber') {
+                validatePhoneField(target.value);
+            } else if (target.id === 'password') {
+                validatePasswordField(target.value);
+            }
+        }, true);
+    }
+    
+    function validatePhoneField(phone) {
+        const cleanedPhone = phone.replace(/\D/g, '');
+        
+        if (!cleanedPhone) {
+            showFieldError('phone', 'Phone number is required');
+            return false;
+        }
+        
+        if (!/^[0-9]{10,11}$/.test(cleanedPhone)) {
+            showFieldError('phone', 'Please enter a valid 10-11 digit phone number');
+            return false;
+        }
+        
+        clearFieldError('phone');
+        return true;
+    }
+    
+    function validatePasswordField(password) {
+        if (!password) {
+            showFieldError('password', 'Password is required');
+            return false;
+        }
+        
+        if (password.length < 6) {
+            showFieldError('password', 'Password must be at least 6 characters');
+            return false;
+        }
+        
+        clearFieldError('password');
+        return true;
+    }
+    
+    function formatPhoneNumber(phone) {
+        let cleaned = phone.replace(/\D/g, '');
+        if (cleaned.length > 11) cleaned = cleaned.substring(0, 11);
+        
+        // Format as 09XX-XXX-XXXX
+        if (cleaned.length > 6) {
+            cleaned = cleaned.substring(0, 4) + '-' + cleaned.substring(4, 7) + '-' + cleaned.substring(7);
+        } else if (cleaned.length > 4) {
+            cleaned = cleaned.substring(0, 4) + '-' + cleaned.substring(4);
+        }
+        
+        return cleaned;
+    }
+    
+    function togglePasswordVisibility() {
+        const passwordField = document.getElementById('password');
+        const passwordIcon = document.querySelector('.toggle-password i');
+        
+        if (passwordField.type === 'password') {
+            passwordField.type = 'text';
+            passwordIcon.className = 'fas fa-eye-slash';
+            passwordIcon.parentElement.setAttribute('aria-label', 'Hide password');
+        } else {
+            passwordField.type = 'password';
+            passwordIcon.className = 'fas fa-eye';
+            passwordIcon.parentElement.setAttribute('aria-label', 'Show password');
+        }
+        
+        // Focus back on password field
+        passwordField.focus();
     }
     
     function showFieldError(field, message) {
@@ -629,6 +1068,7 @@
         input.classList.remove('input-success');
         errorDiv.textContent = message;
         errorDiv.style.display = 'block';
+        input.setAttribute('aria-invalid', 'true');
     }
     
     function clearFieldError(field) {
@@ -636,8 +1076,15 @@
         const errorDiv = document.getElementById(field + 'Error');
         
         input.classList.remove('input-error');
-        input.classList.add('input-success');
         errorDiv.style.display = 'none';
+        input.setAttribute('aria-invalid', 'false');
+        
+        // Only add success class if there's valid input
+        if (input.value.trim()) {
+            input.classList.add('input-success');
+        } else {
+            input.classList.remove('input-success');
+        }
     }
     
     // ==================== LOGIN FUNCTION ====================
@@ -651,35 +1098,21 @@
         const password = passwordInput.value;
         
         // Hide previous messages
-        document.getElementById('errorMessage').style.display = 'none';
-        document.getElementById('successMessage').style.display = 'none';
+        hideAllMessages();
         
         // Validation
-        let isValid = true;
+        const isPhoneValid = validatePhoneField(phone);
+        const isPasswordValid = validatePasswordField(password);
         
-        if (!phone) {
-            showFieldError('phone', 'Phone number is required');
-            isValid = false;
-        } else if (!/^[0-9]{10,11}$/.test(phone)) {
-            showFieldError('phone', 'Please enter a valid 10-11 digit phone number');
-            isValid = false;
-        }
-        
-        if (!password) {
-            showFieldError('password', 'Password is required');
-            isValid = false;
-        } else if (password.length < 6) {
-            showFieldError('password', 'Password must be at least 6 characters');
-            isValid = false;
-        }
-        
-        if (!isValid) {
+        if (!isPhoneValid || !isPasswordValid) {
+            // Focus on first invalid field
+            if (!isPhoneValid) {
+                phoneInput.focus();
+            } else if (!isPasswordValid) {
+                passwordInput.focus();
+            }
             return;
         }
-        
-        // Clear field errors
-        clearFieldError('phone');
-        clearFieldError('password');
         
         // Show loading
         const loginBtn = document.getElementById('loginButton');
@@ -714,12 +1147,21 @@
                 localStorage.setItem('guardianName', data.full_name);
                 localStorage.setItem('guardianPhone', phone);
                 localStorage.setItem('guardianToken', data.session_token);
+                localStorage.setItem('isGoogleUser', 'false');
                 
                 console.log('✅ Login successful!');
                 console.log('📝 Saved to localStorage:', {
                     guardianId: data.guardian_id,
                     guardianName: data.full_name,
                     guardianToken: data.session_token.substring(0, 20) + '...'
+                });
+                
+                // Update debug info
+                updateDebugInfo({
+                    status: 'success',
+                    guardianId: data.guardian_id,
+                    sessionToken: data.session_token.substring(0, 20) + '...',
+                    timestamp: new Date().toISOString()
                 });
                 
                 showSuccess('✅ Login successful! Redirecting to dashboard...');
@@ -732,6 +1174,14 @@
                 
             } else {
                 console.log('❌ Login failed:', data.error);
+                
+                // Update debug info
+                updateDebugInfo({
+                    status: 'failed',
+                    error: data.error,
+                    timestamp: new Date().toISOString()
+                });
+                
                 showError(data.error || 'Invalid phone or password');
                 
                 // Shake animation for error
@@ -739,10 +1189,22 @@
                 setTimeout(() => {
                     document.getElementById('loginForm').style.animation = '';
                 }, 500);
+                
+                // Focus on password field for retry
+                passwordInput.focus();
+                passwordInput.select();
             }
             
         } catch (error) {
             console.error('❌ Login error:', error);
+            
+            // Update debug info
+            updateDebugInfo({
+                status: 'error',
+                error: error.message,
+                timestamp: new Date().toISOString()
+            });
+            
             showError('Connection error. Please check your internet connection');
         } finally {
             loginText.innerHTML = originalText;
@@ -750,70 +1212,19 @@
         }
     }
     
-    // ==================== GOOGLE LOGIN HANDLERS ====================
-    function handleGoogleLogin() {
-        // Trigger Google Sign-In
-        google.accounts.id.prompt();
+    // ==================== MESSAGE UTILITIES ====================
+    function hideAllMessages() {
+        document.getElementById('errorMessage').style.display = 'none';
+        document.getElementById('successMessage').style.display = 'none';
+        document.getElementById('infoMessage').style.display = 'none';
     }
     
-    // Handle the Google credential response
-    function handleGoogleCredentialResponse(response) {
-        console.log('🔐 Google credential response received');
-        
-        if (response.credential) {
-            processGoogleLogin(response.credential);
-        } else {
-            showError('Google login cancelled');
-        }
-    }
-    
-    async function processGoogleLogin(credential) {
-        try {
-            showInfo('Processing Google login...');
-            
-            // Send the credential to your backend for verification
-            const response = await fetch('/api/google-login', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    token: credential
-                })
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                // Store session data
-                localStorage.setItem('guardianId', data.guardian_id);
-                localStorage.setItem('guardianName', data.full_name);
-                localStorage.setItem('guardianToken', data.session_token);
-                localStorage.setItem('isGoogleUser', 'true');
-                
-                showSuccess('✅ Google login successful! Redirecting...');
-                
-                setTimeout(() => {
-                    window.location.href = `/guardian-dashboard?guardian_id=${data.guardian_id}&token=${data.session_token}`;
-                }, 1500);
-            } else {
-                showError(data.error || 'Google login failed');
-            }
-            
-        } catch (error) {
-            console.error('Google login error:', error);
-            showError('Google login failed. Please try phone login.');
-        }
-    }
-    
-    // ==================== UTILITY FUNCTIONS ====================
     function showError(message) {
         const errorDiv = document.getElementById('errorMessage');
         const errorText = document.getElementById('errorText');
         
         errorText.textContent = message;
         errorDiv.style.display = 'block';
-        document.getElementById('successMessage').style.display = 'none';
         
         // Auto-hide after 5 seconds
         setTimeout(() => {
@@ -827,62 +1238,295 @@
         
         successText.textContent = message;
         successDiv.style.display = 'block';
-        document.getElementById('errorMessage').style.display = 'none';
     }
     
     function showInfo(message) {
-        // Create a temporary info message
-        const infoDiv = document.createElement('div');
-        infoDiv.className = 'info-message';
-        infoDiv.innerHTML = `
-            <i class="fas fa-info-circle message-icon"></i>
-            <span>${message}</span>
-        `;
+        const infoDiv = document.getElementById('infoMessage');
+        const infoText = document.getElementById('infoText');
         
-        // Style the info message
-        Object.assign(infoDiv.style, {
-            backgroundColor: 'rgba(59, 130, 246, 0.1)',
-            color: '#3b82f6',
-            padding: '14px 18px',
-            borderRadius: '10px',
-            marginTop: '15px',
-            textAlign: 'left',
-            borderLeft: '4px solid #3b82f6',
-            animation: 'fadeIn 0.3s ease'
-        });
-        
-        // Insert after the form
-        const form = document.getElementById('loginForm');
-        const existingInfo = document.querySelector('.info-message');
-        if (existingInfo) existingInfo.remove();
-        
-        form.parentNode.insertBefore(infoDiv, form.nextSibling);
-        
-        // Auto-remove after 4 seconds
-        setTimeout(() => {
-            if (infoDiv.parentNode) {
-                infoDiv.style.opacity = '0';
-                infoDiv.style.transform = 'translateY(-10px)';
-                infoDiv.style.transition = 'all 0.3s ease';
-                setTimeout(() => {
-                    if (infoDiv.parentNode) infoDiv.parentNode.removeChild(infoDiv);
-                }, 300);
-            }
-        }, 4000);
+        infoText.textContent = message;
+        infoDiv.style.display = 'block';
     }
     
-    // ==================== PWA SERVICE WORKER ====================
-    if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function() {
+    function hideInfo() {
+        document.getElementById('infoMessage').style.display = 'none';
+    }
+    
+    // ==================== PWA FUNCTIONS ====================
+    function checkPWAStatus() {
+        // Check if app is running in standalone mode
+        if (window.matchMedia('(display-mode: standalone)').matches) {
+            console.log('📱 Running as PWA');
+            return;
+        }
+        
+        // Check if we can prompt for installation
+        window.addEventListener('beforeinstallprompt', (e) => {
+            console.log('📲 PWA install available');
+            
+            // Show install banner after 5 seconds
+            setTimeout(() => {
+                if (!localStorage.getItem('pwaDismissed')) {
+                    showPWABanner();
+                }
+            }, 5000);
+        });
+        
+        // Check if already installed
+        if (window.navigator.standalone === true) {
+            console.log('📱 Already installed as PWA');
+        }
+    }
+    
+    function showPWABanner() {
+        const banner = document.getElementById('pwaBanner');
+        banner.style.display = 'flex';
+        
+        // Auto-dismiss after 30 seconds
+        setTimeout(() => {
+            if (banner.style.display !== 'none') {
+                dismissPWA();
+            }
+        }, 30000);
+    }
+    
+    function dismissPWA() {
+        const banner = document.getElementById('pwaBanner');
+        banner.style.display = 'none';
+        localStorage.setItem('pwaDismissed', 'true');
+    }
+    
+    // ==================== SERVICE WORKER FUNCTIONS ====================
+    function checkServiceWorker() {
+        if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/service-worker.js')
                 .then(function(registration) {
-                    console.log('Service Worker registered with scope:', registration.scope);
+                    console.log('✅ Service Worker registered with scope:', registration.scope);
+                    
+                    // Check for updates
+                    registration.addEventListener('updatefound', () => {
+                        const newWorker = registration.installing;
+                        console.log('🔄 Service Worker update found');
+                        
+                        newWorker.addEventListener('statechange', () => {
+                            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                console.log('🔄 New Service Worker ready');
+                                showInfo('New version available. Refresh to update.');
+                            }
+                        });
+                    });
+                    
+                    // Listen for messages from service worker
+                    navigator.serviceWorker.addEventListener('message', event => {
+                        console.log('📨 Message from Service Worker:', event.data);
+                        
+                        if (event.data.type === 'SW_READY') {
+                            console.log('✅ Service Worker is ready');
+                        } else if (event.data.type === 'SW_ACTIVATED') {
+                            console.log('✅ Service Worker activated:', event.data.version);
+                        }
+                    });
                 })
                 .catch(function(error) {
-                    console.log('Service Worker registration failed:', error);
+                    console.log('❌ Service Worker registration failed:', error);
                 });
-        });
+            
+            // Check if page is controlled by a service worker
+            if (navigator.serviceWorker.controller) {
+                console.log('✅ Page controlled by Service Worker');
+            }
+        }
     }
+    
+    // ==================== DEBUG FUNCTIONS ====================
+    function updateDebugInfo(info) {
+        const debugContent = document.getElementById('debugContent');
+        if (debugContent) {
+            debugContent.innerHTML = `
+                <pre>${JSON.stringify(info, null, 2)}</pre>
+                <hr>
+                <p><strong>LocalStorage:</strong></p>
+                <pre>${JSON.stringify({
+                    guardianId: localStorage.getItem('guardianId'),
+                    guardianName: localStorage.getItem('guardianName'),
+                    hasToken: !!localStorage.getItem('guardianToken'),
+                    isGoogleUser: localStorage.getItem('isGoogleUser'),
+                    pwaDismissed: localStorage.getItem('pwaDismissed')
+                }, null, 2)}</pre>
+                <hr>
+                <p><strong>Network:</strong> ${navigator.onLine ? 'Online' : 'Offline'}</p>
+                <p><strong>User Agent:</strong> ${navigator.userAgent}</p>
+                <button onclick="clearLocalStorage()" class="btn btn-sm btn-danger">Clear Storage</button>
+                <button onclick="reloadServiceWorker()" class="btn btn-sm btn-warning">Reload SW</button>
+            `;
+        }
+    }
+    
+    function clearLocalStorage() {
+        localStorage.clear();
+        console.log('🧹 LocalStorage cleared');
+        alert('LocalStorage cleared. Page will reload.');
+        location.reload();
+    }
+    
+    function reloadServiceWorker() {
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistration().then(registration => {
+                if (registration) {
+                    registration.unregister().then(() => {
+                        console.log('🔄 Service Worker unregistered');
+                        caches.keys().then(cacheNames => {
+                            Promise.all(cacheNames.map(cacheName => caches.delete(cacheName)))
+                                .then(() => {
+                                    console.log('🗑️ All caches cleared');
+                                    alert('Service Worker reloaded. Page will refresh.');
+                                    location.reload();
+                                });
+                        });
+                    });
+                }
+            });
+        }
+    }
+    
+    // ==================== OFFLINE DETECTION ====================
+    window.addEventListener('online', () => {
+        console.log('🌐 App is online');
+        showInfo('Back online!');
+        setTimeout(hideInfo, 3000);
+    });
+    
+    window.addEventListener('offline', () => {
+        console.log('📴 App is offline');
+        showError('You are offline. Some features may not work.');
+    });
+    
+    // Check initial online status
+    if (!navigator.onLine) {
+        showError('You are offline. Some features may not work.');
+    }
+    
+    // ==================== KEYBOARD SHORTCUTS ====================
+    document.addEventListener('keydown', (e) => {
+        // Ctrl+Enter to submit form
+        if (e.ctrlKey && e.key === 'Enter') {
+            e.preventDefault();
+            document.getElementById('loginForm').dispatchEvent(new Event('submit'));
+        }
+        
+        // Escape to clear form
+        if (e.key === 'Escape') {
+            document.getElementById('phoneNumber').value = '';
+            document.getElementById('password').value = '';
+            hideAllMessages();
+        }
+    });
+    
+    // ==================== VISUAL FEEDBACK ====================
+    // Add ripple effect to buttons
+    document.addEventListener('click', function(e) {
+        if (e.target.matches('.btn-login, .btn-google, .btn-pwa')) {
+            const button = e.target;
+            const ripple = document.createElement('span');
+            const rect = button.getBoundingClientRect();
+            const size = Math.max(rect.width, rect.height);
+            const x = e.clientX - rect.left - size / 2;
+            const y = e.clientY - rect.top - size / 2;
+            
+            ripple.style.cssText = `
+                position: absolute;
+                border-radius: 50%;
+                background: rgba(255, 255, 255, 0.7);
+                transform: scale(0);
+                animation: ripple-animation 0.6s linear;
+                width: ${size}px;
+                height: ${size}px;
+                left: ${x}px;
+                top: ${y}px;
+            `;
+            
+            button.appendChild(ripple);
+            
+            setTimeout(() => {
+                ripple.remove();
+            }, 600);
+        }
+    });
+    
+    // Add ripple animation
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes ripple-animation {
+            to {
+                transform: scale(4);
+                opacity: 0;
+            }
+        }
+    `;
+    document.head.appendChild(style);
+    
+    // ==================== FORM PERSISTENCE ====================
+    // Save form data on input (with debounce)
+    let saveTimeout;
+    document.getElementById('phoneNumber').addEventListener('input', function() {
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(() => {
+            localStorage.setItem('login_phone', this.value);
+        }, 1000);
+    });
+    
+    // Load saved form data
+    const savedPhone = localStorage.getItem('login_phone');
+    if (savedPhone) {
+        document.getElementById('phoneNumber').value = savedPhone;
+    }
+    
+    // Clear saved data on successful login
+    window.addEventListener('beforeunload', () => {
+        if (localStorage.getItem('guardianToken')) {
+            localStorage.removeItem('login_phone');
+        }
+    });
+    
+    // ==================== ACCESSIBILITY ====================
+    // Make icons focusable
+    document.querySelectorAll('.input-icon').forEach(icon => {
+        icon.setAttribute('tabindex', '0');
+        icon.setAttribute('role', 'button');
+    });
+    
+    // Improve form accessibility
+    document.getElementById('loginForm').setAttribute('aria-label', 'Login form');
+    document.getElementById('phoneNumber').setAttribute('aria-label', 'Phone number');
+    document.getElementById('password').setAttribute('aria-label', 'Password');
+    
+    // Announce page title for screen readers
+    setTimeout(() => {
+        const title = document.querySelector('.app-title');
+        if (title) {
+            title.setAttribute('role', 'heading');
+            title.setAttribute('aria-level', '1');
+        }
+    }, 100);
     </script>
+    
+    <!-- Fallback for older browsers -->
+    <noscript>
+        <style>
+            .login-card {
+                animation: none;
+            }
+            .error-message {
+                display: block;
+                background: #fee;
+                color: #c00;
+                padding: 10px;
+                margin: 10px 0;
+            }
+        </style>
+        <div class="error-message">
+            <strong>JavaScript Required:</strong> This application requires JavaScript to function properly. Please enable JavaScript in your browser settings.
+        </div>
+    </noscript>
 </body>
 </html>

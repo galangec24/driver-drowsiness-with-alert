@@ -473,6 +473,55 @@ def init_db():
         print(f"❌ Database initialization failed: {e}")
         return False
 
+def update_db_schema():
+    """Update existing database schema to add missing columns"""
+    print("🔧 Updating database schema...")
+    
+    try:
+        with get_db_cursor() as cursor:
+            # Check if google_id column exists in guardians table
+            cursor.execute('''
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'guardians' AND column_name = 'google_id'
+            ''')
+            
+            result = cursor.fetchone()
+            if not result:
+                print("   Adding google_id column to guardians table...")
+                cursor.execute('''
+                    ALTER TABLE guardians 
+                    ADD COLUMN google_id TEXT UNIQUE
+                ''')
+                print("   ✅ google_id column added")
+            else:
+                print("   ✅ google_id column already exists")
+            
+            # Check for other missing columns
+            cursor.execute('''
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'guardians' AND column_name = 'auth_provider'
+            ''')
+            
+            result = cursor.fetchone()
+            if not result:
+                print("   Adding auth_provider column to guardians table...")
+                cursor.execute('''
+                    ALTER TABLE guardians 
+                    ADD COLUMN auth_provider TEXT DEFAULT 'phone'
+                ''')
+                print("   ✅ auth_provider column added")
+            else:
+                print("   ✅ auth_provider column already exists")
+        
+        print("✅ Database schema updated successfully")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Database schema update failed: {e}")
+        return False
+
 # ==================== SESSION MANAGEMENT ====================
 def generate_session_token():
     """Generate a secure session token"""
@@ -904,13 +953,128 @@ def handle_guardian_auth(data):
     emit('auth_failed', {'error': 'Authentication failed'})
     socketio.disconnect(client_id)
 
+# ==================== STATIC FILE ROUTES ====================
+@app.route('/favicon.ico')
+def favicon():
+    """Serve favicon"""
+    try:
+        return send_from_directory(FRONTEND_DIR, 'icon-192.png')
+    except:
+        return Response('', mimetype='image/x-icon')
+
+@app.route('/icon-<size>.png')
+def serve_icon(size):
+    """Serve PWA icons"""
+    valid_sizes = ['72', '96', '128', '144', '152', '192', '384', '512']
+    
+    # Default to 192 if invalid
+    if size not in valid_sizes:
+        size = '192'
+    
+    filename = f'icon-{size}.png'
+    
+    # Check if file exists
+    if os.path.exists(os.path.join(FRONTEND_DIR, filename)):
+        return send_from_directory(FRONTEND_DIR, filename)
+    else:
+        # Fallback to 192
+        return send_from_directory(FRONTEND_DIR, 'icon-192.png')
+
+@app.route('/offline.html')
+def serve_offline():
+    """Offline fallback page"""
+    try:
+        return send_from_directory(FRONTEND_DIR, 'offline.html')
+    except:
+        # Generate offline page
+        offline_html = '''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Offline - Driver Alert System</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    height: 100vh;
+                    margin: 0;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    text-align: center;
+                    color: white;
+                    padding: 20px;
+                }
+                .container {
+                    background: rgba(255, 255, 255, 0.1);
+                    backdrop-filter: blur(10px);
+                    padding: 40px 30px;
+                    border-radius: 20px;
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+                    max-width: 400px;
+                    width: 100%;
+                }
+                .icon {
+                    font-size: 60px;
+                    margin-bottom: 20px;
+                    animation: pulse 2s infinite;
+                }
+                @keyframes pulse {
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: 0.7; }
+                }
+                h1 {
+                    margin-bottom: 10px;
+                    font-weight: 600;
+                    font-size: 28px;
+                }
+                p {
+                    margin-bottom: 25px;
+                    opacity: 0.9;
+                    line-height: 1.5;
+                }
+                button {
+                    background: white;
+                    color: #667eea;
+                    border: none;
+                    padding: 14px 35px;
+                    border-radius: 50px;
+                    font-size: 16px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: all 0.3s;
+                    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+                }
+                button:hover {
+                    transform: translateY(-3px);
+                    box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="icon">📶</div>
+                <h1>You're Offline</h1>
+                <p>Please check your internet connection and try again.</p>
+                <button onclick="location.reload()">Retry Connection</button>
+            </div>
+        </body>
+        </html>
+        '''
+        return Response(offline_html, mimetype='text/html')
+
 # ==================== MAIN ROUTES ====================
 @app.route('/')
 def serve_home():
     """Main route - Redirects based on device"""
     logged_out = request.args.get('logged_out')
+    prefilled_phone = request.args.get('prefilled_phone', '')
     
     if request.args.get('force') == 'mobile':
+        if prefilled_phone:
+            return redirect(f'/login.html?prefilled_phone={prefilled_phone}')
         return send_from_directory(FRONTEND_DIR, 'login.html')
     if request.args.get('force') == 'desktop':
         return send_from_directory(FRONTEND_DIR, 'admin_login.html')
@@ -918,6 +1082,8 @@ def serve_home():
     if is_mobile_device():
         if logged_out:
             return redirect('/login.html?logged_out=true')
+        if prefilled_phone:
+            return redirect(f'/login.html?prefilled_phone={prefilled_phone}')
         return send_from_directory(FRONTEND_DIR, 'login.html')
     else:
         return send_from_directory(FRONTEND_DIR, 'admin_login.html')
@@ -1199,10 +1365,21 @@ def serve_service_worker():
     except:
         return Response('''
             self.addEventListener('install', function(event) {
+                console.log('Service Worker: Installing...');
                 event.waitUntil(self.skipWaiting());
             });
+            
             self.addEventListener('activate', function(event) {
+                console.log('Service Worker: Activated');
                 event.waitUntil(self.clients.claim());
+            });
+            
+            self.addEventListener('fetch', function(event) {
+                event.respondWith(
+                    fetch(event.request).catch(function() {
+                        return new Response('You are offline. Please check your connection.');
+                    })
+                );
             });
         ''', mimetype='application/javascript')
 
@@ -2644,6 +2821,10 @@ def startup_tasks():
                 print("✅ Database initialized successfully")
             else:
                 print("⚠️ Database initialization had issues")
+            
+            # Update schema for google_id column
+            print("\n🔧 Schema Updates:")
+            update_db_schema()
         except Exception as e:
             print(f"⚠️ Database initialization error: {e}")
     else:
