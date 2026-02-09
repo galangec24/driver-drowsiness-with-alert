@@ -68,10 +68,17 @@
       "icons": [{ "src": "/icon-96.png", "sizes": "96x96" }]
     },
     {
-      "name": "Register Driver",
+      "name": "Register Guardian",
       "short_name": "Register",
-      "description": "Register new driver",
-      "url": "/registration",
+      "description": "Register as guardian",
+      "url": "/guardian-register",
+      "icons": [{ "src": "/icon-96.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "Guardian dashboard",
+      "url": "/guardian-dashboard",
       "icons": [{ "src": "/icon-96.png", "sizes": "96x96" }]
     }
   ]

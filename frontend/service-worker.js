@@ -10,6 +10,11 @@ const CORE_ASSETS = [
   '/login.html',
   '/manifest.json',
   '/icon-192.png',
+  '/icon-512.png',
+  '/icon-144.png',
+  '/icon-128.png',
+   '/icon-96.png',
+  '/icon-72.png',
   '/offline.html'
 ];
 

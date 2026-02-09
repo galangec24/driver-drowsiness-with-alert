@@ -50,13 +50,41 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
 # Set base directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_DIR = os.path.join(BASE_DIR, '../frontend')
 
-# Try alternative paths for Render
-if not os.path.exists(FRONTEND_DIR):
-    FRONTEND_DIR = os.path.join(BASE_DIR, '../../frontend')
-if not os.path.exists(FRONTEND_DIR):
-    FRONTEND_DIR = os.path.join(BASE_DIR, 'frontend')
+# Try multiple paths for different environments
+possible_frontend_paths = [
+    os.path.join(BASE_DIR, '../frontend'),  # Local development
+    os.path.join(BASE_DIR, '../../frontend'),  # Render/Cloud
+    os.path.join(BASE_DIR, 'frontend'),  # If frontend is in backend folder
+    os.path.join(os.path.dirname(BASE_DIR), 'frontend'),  # Parent directory
+    '/opt/render/project/src/frontend',  # Render specific path
+    '/var/www/frontend',  # Common server path
+    os.path.join(os.getcwd(), 'frontend'),  # Current working directory
+    os.path.join(os.getcwd(), '../frontend'),  # Parent of current working directory
+]
+
+FRONTEND_DIR = None
+for path in possible_frontend_paths:
+    if os.path.exists(path):
+        FRONTEND_DIR = path
+        print(f"✅ Found frontend directory: {FRONTEND_DIR}")
+        # Check if icons exist
+        icon_path = os.path.join(path, 'icon-192.png')
+        if os.path.exists(icon_path):
+            print(f"✅ Found icon-192.png at: {icon_path}")
+        else:
+            print(f"⚠️  icon-192.png not found at: {icon_path}")
+            # List files in directory
+            try:
+                files = os.listdir(path)
+                print(f"   Available files: {[f for f in files if 'icon' in f or '.png' in f or '.html' in f]}")
+            except:
+                pass
+        break
+
+if not FRONTEND_DIR:
+    FRONTEND_DIR = BASE_DIR  # Fallback to current directory
+    print(f"⚠️  Using fallback frontend directory: {FRONTEND_DIR}")
 
 FACE_IMAGES_DIR = os.path.join(BASE_DIR, 'face_images')
 SESSION_TOKENS_DIR = os.path.join(BASE_DIR, 'session_tokens')
@@ -958,8 +986,27 @@ def handle_guardian_auth(data):
 def favicon():
     """Serve favicon"""
     try:
+        # Try multiple favicon locations
+        possible_favicon_paths = [
+            os.path.join(FRONTEND_DIR, 'icon-192.png'),
+            os.path.join(FRONTEND_DIR, 'favicon.ico'),
+            os.path.join(BASE_DIR, 'icon-192.png'),
+            os.path.join(os.path.dirname(BASE_DIR), 'frontend', 'icon-192.png'),
+        ]
+        
+        for favicon_path in possible_favicon_paths:
+            if os.path.exists(favicon_path):
+                filename = os.path.basename(favicon_path)
+                directory = os.path.dirname(favicon_path)
+                print(f"✅ Serving favicon from: {favicon_path}")
+                response = send_from_directory(directory, filename)
+                response.headers['Cache-Control'] = 'public, max-age=86400'
+                return response
+        
+        # Fallback to 192
         return send_from_directory(FRONTEND_DIR, 'icon-192.png')
     except:
+        # Return empty favicon
         return Response('', mimetype='image/x-icon')
 
 @app.route('/icon-<size>.png')
@@ -967,18 +1014,58 @@ def serve_icon(size):
     """Serve PWA icons"""
     valid_sizes = ['72', '96', '128', '144', '152', '192', '384', '512']
     
-    # Default to 192 if invalid
     if size not in valid_sizes:
-        size = '192'
+        size = '192'  # Default to 192x192
     
     filename = f'icon-{size}.png'
     
-    # Check if file exists
-    if os.path.exists(os.path.join(FRONTEND_DIR, filename)):
-        return send_from_directory(FRONTEND_DIR, filename)
-    else:
-        # Fallback to 192
-        return send_from_directory(FRONTEND_DIR, 'icon-192.png')
+    # Try multiple paths for the icon
+    possible_icon_paths = [
+        os.path.join(FRONTEND_DIR, filename),
+        os.path.join(BASE_DIR, filename),
+        os.path.join(os.path.dirname(BASE_DIR), 'frontend', filename),
+        os.path.join(os.getcwd(), 'frontend', filename),
+        os.path.join(os.getcwd(), filename),
+    ]
+    
+    for icon_path in possible_icon_paths:
+        if os.path.exists(icon_path):
+            try:
+                print(f"✅ Serving icon from: {icon_path}")
+                return send_from_directory(os.path.dirname(icon_path), filename)
+            except Exception as e:
+                print(f"⚠️ Error serving icon {filename} from {icon_path}: {e}")
+                continue
+    
+    # If no icon found, serve a generated one
+    print(f"⚠️ Icon not found: {filename}, generating fallback")
+    try:
+        from PIL import Image, ImageDraw
+        import io
+        
+        # Create a simple icon
+        img_size = int(size) if size.isdigit() else 192
+        img = Image.new('RGB', (img_size, img_size), color='#1a237e')
+        draw = ImageDraw.Draw(img)
+        
+        # Draw a simple car/alert icon
+        draw.ellipse([img_size//4, img_size//4, 3*img_size//4, 3*img_size//4], 
+                     outline='white', width=img_size//20)
+        draw.line([img_size//2, img_size//3, img_size//2, 2*img_size//3], 
+                  fill='white', width=img_size//20)
+        
+        img_io = io.BytesIO()
+        img.save(img_io, 'PNG')
+        img_io.seek(0)
+        
+        response = Response(img_io.getvalue(), mimetype='image/png')
+        response.headers['Cache-Control'] = 'public, max-age=86400'
+        return response
+    except Exception as e:
+        print(f"⚠️ Could not generate icon: {e}")
+        # Return a simple 1x1 pixel
+        return Response(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='), 
+                       mimetype='image/png')
 
 @app.route('/offline.html')
 def serve_offline():
@@ -1087,6 +1174,11 @@ def serve_home():
         return send_from_directory(FRONTEND_DIR, 'login.html')
     else:
         return send_from_directory(FRONTEND_DIR, 'admin_login.html')
+
+@app.route('/registration')
+def redirect_to_guardian_register():
+    """Redirect old registration URL to new one"""
+    return redirect('/guardian-register')
 
 @app.route('/admin_login')
 def serve_admin_login():
@@ -1451,8 +1543,16 @@ def google_login():
                     }), 401
                 
                 email = idinfo.get('email')
-                name = idinfo.get('name', 'Google User')
+                name = idinfo.get('name', '')  # Get actual name, empty string as fallback
                 google_id = idinfo.get('sub')
+                
+                # If name is empty, try to use email or set a proper name
+                if not name:
+                    if email:
+                        # Use email username part as name
+                        name = email.split('@')[0].replace('.', ' ').title()
+                    else:
+                        name = "Google User"  # Fallback only if everything fails
                 
                 print(f"   Google user: {name} ({email})")
                 
@@ -1461,9 +1561,16 @@ def google_login():
                 print("⚠️  Using development mode for Google token")
                 idinfo = jwt.decode(google_token, options={"verify_signature": False})
                 email = idinfo.get('email', 'user@gmail.com')
-                name = idinfo.get('name', 'Google User')
+                name = idinfo.get('name', '')  # Get actual name
                 google_id = idinfo.get('sub', 'google_12345')
                 
+                # Handle name fallback for development
+                if not name:
+                    if email:
+                        name = email.split('@')[0].replace('.', ' ').title()
+                    else:
+                        name = "Google User"
+        
         except Exception as jwt_error:
             print(f"❌ JWT decode error: {jwt_error}")
             # For demo purposes, create mock data
@@ -2781,6 +2888,44 @@ def fix_password_hash():
             'traceback': traceback.format_exc()
         }), 500
 
+# ==================== DEBUG FILES ENDPOINT ====================
+@app.route('/api/debug/files', methods=['GET'])
+def debug_files():
+    """Debug endpoint to check file paths"""
+    try:
+        debug_info = {
+            'base_dir': BASE_DIR,
+            'frontend_dir': FRONTEND_DIR,
+            'current_working_dir': os.getcwd(),
+            'environment': {k: v for k, v in os.environ.items() if 'KEY' not in k and 'PASS' not in k},
+            'frontend_exists': os.path.exists(FRONTEND_DIR) if FRONTEND_DIR else False,
+            'frontend_contents': [],
+            'icon_files': [],
+            'html_files': []
+        }
+        
+        if FRONTEND_DIR and os.path.exists(FRONTEND_DIR):
+            try:
+                files = os.listdir(FRONTEND_DIR)
+                debug_info['frontend_contents'] = files
+                debug_info['icon_files'] = [f for f in files if 'icon' in f.lower()]
+                debug_info['html_files'] = [f for f in files if f.endswith('.html')]
+                
+                # Check specific icon files
+                for icon_size in ['72', '96', '128', '144', '152', '192', '384', '512']:
+                    icon_file = f'icon-{icon_size}.png'
+                    icon_path = os.path.join(FRONTEND_DIR, icon_file)
+                    debug_info[f'icon_{icon_size}_exists'] = os.path.exists(icon_path)
+                    if os.path.exists(icon_path):
+                        debug_info[f'icon_{icon_size}_path'] = icon_path
+                        debug_info[f'icon_{icon_size}_size'] = os.path.getsize(icon_path)
+            except Exception as e:
+                debug_info['listdir_error'] = str(e)
+        
+        return jsonify(debug_info)
+    except Exception as e:
+        return jsonify({'error': str(e), 'traceback': traceback.format_exc()}), 500
+
 # ==================== STATIC FILES ====================
 @app.route('/<path:filename>')
 def serve_static(filename):
@@ -2801,44 +2946,167 @@ def startup_tasks():
     print("📊 Database: PostgreSQL (Persistent)")
     print("🔒 Security: bcrypt password hashing enabled")
     
-    # Check environment
+    # Check environment variables
     print("\n🔧 Environment Check:")
-    database_url = os.environ.get('DATABASE_URL')
     
+    # Get and mask database URL for security
+    database_url = os.environ.get('DATABASE_URL')
     if database_url:
-        if '@' in database_url:
-            parts = database_url.split('@')
-            user_pass = parts[0]
-            if ':' in user_pass:
-                user = user_pass.split(':')[0]
-                masked_url = f"{user}:****@{parts[1]}"
-                print(f"   ✅ DATABASE_URL: {masked_url}")
-        
-        # Initialize database
-        print("\n🗄️  Database Initialization:")
         try:
-            if init_db():
-                print("✅ Database initialized successfully")
+            # Parse URL to mask password
+            parsed_url = urllib.parse.urlparse(database_url)
+            if parsed_url.password:
+                masked_url = database_url.replace(parsed_url.password, '******')
+                print(f"   ✅ DATABASE_URL: {masked_url}")
             else:
-                print("⚠️ Database initialization had issues")
-            
-            # Update schema for google_id column
-            print("\n🔧 Schema Updates:")
-            update_db_schema()
-        except Exception as e:
-            print(f"⚠️ Database initialization error: {e}")
+                print(f"   ✅ DATABASE_URL: [configured]")
+        except:
+            print(f"   ✅ DATABASE_URL: [configured]")
     else:
         print("❌ DATABASE_URL not found")
     
-    print(f"\n🔗 API Endpoints:")
-    print("  • GET  /api/health - Health check")
-    print("  • POST /api/send-alert - Receive alerts from drowsiness detection")
-    print("  • GET  /api/test-bcrypt - Test bcrypt functionality")
+    # Check Google OAuth config
+    google_client_id = os.environ.get('GOOGLE_CLIENT_ID')
+    if google_client_id and google_client_id != 'your-google-client-id-here':
+        print(f"   ✅ GOOGLE_CLIENT_ID: [configured]")
+    else:
+        print(f"   ⚠️  GOOGLE_CLIENT_ID: not configured")
     
+    # Check secret key
+    secret_key = os.environ.get('SECRET_KEY')
+    if secret_key:
+        print(f"   ✅ SECRET_KEY: [configured]")
+    else:
+        print(f"   ⚠️  SECRET_KEY: using generated key")
+    
+    # File system paths
+    print("\n📁 File System Paths:")
+    print(f"   BASE_DIR: {BASE_DIR}")
+    print(f"   FRONTEND_DIR: {FRONTEND_DIR}")
+    print(f"   Current Working Directory: {os.getcwd()}")
+    print(f"   Python Executable: {sys.executable}")
+    
+    # Check if frontend directory exists
+    if FRONTEND_DIR and os.path.exists(FRONTEND_DIR):
+        print(f"   ✅ Frontend directory exists")
+        
+        try:
+            # List all files in frontend directory
+            files = os.listdir(FRONTEND_DIR)
+            print(f"   📁 Total files in frontend: {len(files)}")
+            
+            # List HTML files
+            html_files = [f for f in files if f.endswith('.html')]
+            print(f"   📄 HTML files ({len(html_files)}): {html_files}")
+            
+            # List icon files
+            icon_files = [f for f in files if 'icon' in f.lower() and f.endswith('.png')]
+            print(f"   🖼️  Icon files ({len(icon_files)}): {icon_files}")
+            
+            # Check specific important files
+            important_files = [
+                'icon-192.png', 'icon-512.png', 'login.html', 
+                'admin_login.html', 'guardian-register.html',
+                'manifest.json', 'service-worker.js'
+            ]
+            
+            print(f"\n🔍 Checking important files:")
+            for file in important_files:
+                file_path = os.path.join(FRONTEND_DIR, file)
+                if os.path.exists(file_path):
+                    file_size = os.path.getsize(file_path)
+                    print(f"   ✅ {file}: {file_size:,} bytes")
+                else:
+                    print(f"   ❌ {file}: NOT FOUND")
+                    
+        except Exception as e:
+            print(f"   ⚠️ Error listing frontend directory: {e}")
+    else:
+        print(f"   ❌ Frontend directory not found or doesn't exist")
+        
+        # Try to list parent directory contents
+        parent_dir = os.path.dirname(FRONTEND_DIR) if FRONTEND_DIR else BASE_DIR
+        print(f"\n🔍 Checking parent directory: {parent_dir}")
+        if os.path.exists(parent_dir):
+            try:
+                parent_files = os.listdir(parent_dir)
+                print(f"   Files in parent: {parent_files}")
+            except:
+                print(f"   Could not list parent directory")
+    
+    # Database initialization
+    print("\n🗄️  Database Initialization:")
+    try:
+        if init_db():
+            print("✅ Database initialized successfully")
+        else:
+            print("⚠️ Database initialization had issues")
+        
+        # Update schema for google_id column
+        print("\n🔧 Schema Updates:")
+        update_db_schema()
+    except Exception as e:
+        print(f"⚠️ Database initialization error: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # Security check
+    print("\n🔐 Security Status:")
+    print(f"   Admin password hash: {ADMIN_PASSWORD_HASH[:20]}...")
+    print(f"   Hash algorithm: bcrypt (12 rounds)")
+    
+    # Network and server info
+    print("\n🌐 Network Configuration:")
+    print(f"   Host: 0.0.0.0 (all interfaces)")
+    port = int(os.environ.get('PORT', 5000))
+    print(f"   Port: {port}")
+    
+    # Check if running in Render
+    render_env = os.environ.get('RENDER', '')
+    if render_env:
+        print(f"   ✅ Running on Render.com")
+        print(f"   Render Service: {os.environ.get('RENDER_SERVICE_NAME', 'unknown')}")
+    else:
+        print(f"   ⚠️  Not running on Render (local development)")
+    
+    # API endpoints summary
+    print(f"\n🔗 Available API Endpoints:")
+    endpoints = [
+        ("GET", "/api/health", "Health check"),
+        ("POST", "/api/login", "Guardian login"),
+        ("POST", "/api/google-login", "Google OAuth login"),
+        ("POST", "/api/register-guardian", "Guardian registration"),
+        ("POST", "/api/send-alert", "Send drowsiness alert"),
+        ("GET", "/api/guardian/dashboard", "Guardian dashboard"),
+        ("POST", "/api/admin/login", "Admin login"),
+        ("GET", "/api/debug/files", "Debug file paths"),
+    ]
+    
+    for method, path, desc in endpoints:
+        print(f"   • {method:6} {path:30} - {desc}")
+    
+    # Authentication info
     print(f"\n🔐 Authentication Info:")
     print("  • Admin Username: admin")
     print("  • Admin Password: admin123")
+    print("  • Guardian Registration: Open to public")
+    print("  • Google OAuth: " + ("Enabled" if google_client_id and google_client_id != 'your-google-client-id-here' else "Disabled"))
     
+    # Real-time features
+    print(f"\n⚡ Real-time Features:")
+    print(f"  • WebSocket Alerts: Enabled")
+    print(f"  • Active Clients: {len(connected_clients)}")
+    print(f"  • Active Sessions: {len(active_sessions)}")
+    
+    # Startup completion
+    print(f"\n✅ Startup Tasks Complete")
+    print(f"   Server Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   Timezone: {time.tzname[0] if time.tzname else 'UTC'}")
+    
+    print(f"\n🚀 Ready to accept connections")
+    print(f"   Web Interface: http://localhost:{port}")
+    print(f"   Health Check: http://localhost:{port}/api/health")
+    print(f"   WebSocket: ws://localhost:{port}/socket.io/")
     print(f"{'='*70}\n")
 
 # ==================== MAIN ENTRY POINT ====================

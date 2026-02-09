@@ -14,7 +14,7 @@
     
     <!-- PWA Configuration -->
     <link rel="manifest" href="/manifest.json">
-    <meta name="theme-color" content="#1a237e">
+    <meta name="theme-color" content="#4e73df">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Driver Alert">
@@ -333,25 +333,67 @@
             justify-content: center;
             gap: 10px;
             margin-bottom: 25px;
+            height: 48px;
         }
         
-        .btn-google:hover {
+        .btn-google:hover:not(:disabled) {
             border-color: #d1d5db;
             background: #f9fafc;
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(0,0,0,0.05);
         }
         
-        .btn-google i {
-            color: #db4437;
-            font-size: 20px;
+        .btn-google:disabled {
+            cursor: not-allowed;
+            opacity: 0.7;
         }
         
-        .btn-google:disabled {
-            opacity: 0.7;
-            cursor: not-allowed;
-            transform: none;
-            box-shadow: none;
+        .btn-google .google-loader {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+        }
+        
+        .btn-google .google-loader span {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #666;
+            animation: googlePulse 1.4s infinite ease-in-out both;
+        }
+        
+        .btn-google .google-loader span:nth-child(1) { animation-delay: -0.32s; }
+        .btn-google .google-loader span:nth-child(2) { animation-delay: -0.16s; }
+        
+        @keyframes googlePulse {
+            0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
+            40% { transform: scale(1.2); opacity: 1; }
+        }
+        
+        .btn-google.ready {
+            opacity: 1;
+        }
+        
+        .btn-google.ready .google-loader {
+            display: none;
+        }
+        
+        .btn-google .google-content {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        
+        .btn-google.ready .google-content {
+            display: flex;
+        }
+        
+        .btn-google .google-content i {
+            color: #db4437;
+            font-size: 20px;
         }
         
         .register-link {
@@ -562,9 +604,13 @@
                 color: #e5e5e5;
             }
             
-            .btn-google:hover {
+            .btn-google:hover:not(:disabled) {
                 background: #333;
                 border-color: #4a4a4a;
+            }
+            
+            .btn-google .google-loader span {
+                background: #999;
             }
             
             .pwa-banner {
@@ -705,8 +751,15 @@
             
             <!-- Google Sign-In Button -->
             <button class="btn-google" id="googleSignInBtn" onclick="handleGoogleLogin()" disabled>
-                <i class="fab fa-google"></i>
-                <span>Sign in with Google</span>
+                <div class="google-loader">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+                <div class="google-content">
+                    <i class="fab fa-google"></i>
+                    <span>Sign in with Google</span>
+                </div>
             </button>
             
             <!-- Google Sign-In Container -->
@@ -790,34 +843,54 @@
                 if (data.success && data.google_client_id) {
                     console.log('✅ Google Client ID loaded:', data.google_client_id.substring(0, 20) + '...');
                     
-                    // Configure Google Sign-In
-                    if (typeof google !== 'undefined') {
-                        google.accounts.id.initialize({
-                            client_id: data.google_client_id,
-                            callback: handleGoogleCredentialResponse,
-                            auto_select: false,
-                            cancel_on_tap_outside: true,
-                            context: 'signin',
-                            ux_mode: 'popup',
-                            login_uri: window.location.origin + '/api/google-login'
-                        });
-                        
-                        // Enable Google Sign-In button
-                        document.getElementById('googleSignInBtn').disabled = false;
-                        console.log('✅ Google Sign-In initialized');
-                    } else {
-                        console.error('❌ Google Identity Services library not loaded');
-                        showError('Google Sign-In unavailable. Please try phone login.');
-                        document.getElementById('googleSignInBtn').style.display = 'none';
-                    }
+                    // Check if Google library is loaded (polling)
+                    const checkGoogleLoaded = setInterval(() => {
+                        if (typeof google !== 'undefined') {
+                            clearInterval(checkGoogleLoaded);
+                            
+                            google.accounts.id.initialize({
+                                client_id: data.google_client_id,
+                                callback: handleGoogleCredentialResponse,
+                                auto_select: false,
+                                cancel_on_tap_outside: true,
+                                context: 'signin',
+                                ux_mode: 'popup',
+                                login_uri: window.location.origin + '/api/google-login'
+                            });
+                            
+                            // Update button to show Google icon and text
+                            const googleBtn = document.getElementById('googleSignInBtn');
+                            googleBtn.classList.add('ready');
+                            googleBtn.disabled = false;
+                            googleBtn.style.opacity = '1';
+                            
+                            console.log('✅ Google Sign-In initialized');
+                        }
+                    }, 100); // Check every 100ms
+                    
+                    // Timeout after 5 seconds
+                    setTimeout(() => {
+                        if (typeof google === 'undefined') {
+                            console.error('❌ Google Identity Services library not loaded');
+                            // Keep the loader, don't show any text
+                            const googleBtn = document.getElementById('googleSignInBtn');
+                            googleBtn.disabled = true;
+                            googleBtn.style.opacity = '0.5';
+                        }
+                    }, 5000);
+                    
                 } else {
                     console.warn('⚠️ Google Client ID not configured');
+                    // Hide Google button if not configured
                     document.getElementById('googleSignInBtn').style.display = 'none';
                 }
             })
             .catch(error => {
                 console.error('❌ Error loading Google config:', error);
-                document.getElementById('googleSignInBtn').style.display = 'none';
+                // Keep the loader, don't show any text
+                const googleBtn = document.getElementById('googleSignInBtn');
+                googleBtn.disabled = true;
+                googleBtn.style.opacity = '0.5';
             });
     }
     
@@ -832,9 +905,7 @@
         
         // Disable button during login
         const googleBtn = document.getElementById('googleSignInBtn');
-        const originalText = googleBtn.querySelector('span').textContent;
         googleBtn.disabled = true;
-        googleBtn.querySelector('span').textContent = 'Loading...';
         
         // Show loading state
         showInfo('Opening Google Sign-In...');
@@ -863,7 +934,6 @@
                 if (!popup) {
                     showError('Popup blocked. Please allow popups for Google Sign-In.');
                     googleBtn.disabled = false;
-                    googleBtn.querySelector('span').textContent = originalText;
                     hideInfo();
                 }
             }
@@ -872,7 +942,6 @@
         // Re-enable button after 3 seconds if nothing happens
         setTimeout(() => {
             googleBtn.disabled = false;
-            googleBtn.querySelector('span').textContent = originalText;
             hideInfo();
         }, 3000);
     }
