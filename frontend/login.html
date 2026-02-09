@@ -827,15 +827,15 @@
             <!-- Login Form -->
             <form id="loginForm" novalidate>
                 <div class="form-group">
-                    <input type="tel" 
-                           class="form-control" 
-                           id="phoneNumber" 
-                           placeholder="Phone Number"
-                           required
-                           pattern="[0-9]{10,11}"
-                           maxlength="11"
-                           aria-label="Phone number"
-                           aria-describedby="phoneError">
+                <input type="tel" 
+                    class="form-control" 
+                    id="phoneNumber" 
+                    placeholder="Phone Number"
+                    required
+                    pattern="[0-9]{10,11}"  
+                    maxlength="11"
+                    aria-label="Phone number"
+                    aria-describedby="phoneError">
                     <span class="input-icon">
                         <i class="fas fa-phone"></i>
                     </span>
@@ -1363,7 +1363,12 @@
         phoneInput.addEventListener('blur', function() {
             validatePhoneField(this.value);
         });
-        
+        phoneInput.addEventListener('keydown', function(e) {
+            if (e.key === '-' || e.key === 'Minus' || e.keyCode === 189 || e.keyCode === 109 || e.keyCode === 173) {
+                e.preventDefault();
+                return false;
+            }
+        });
         phoneInput.addEventListener('input', function() {
             this.value = formatPhoneNumber(this.value);
             clearFieldError('phone');
@@ -1438,18 +1443,14 @@
         return true;
     }
     
-    function formatPhoneNumber(phone) {
-        let cleaned = phone.replace(/\D/g, '');
-        if (cleaned.length > 11) cleaned = cleaned.substring(0, 11);
-        
-        // Format as 09XX-XXX-XXXX
-        if (cleaned.length > 6) {
-            cleaned = cleaned.substring(0, 4) + '-' + cleaned.substring(4, 7) + '-' + cleaned.substring(7);
-        } else if (cleaned.length > 4) {
-            cleaned = cleaned.substring(0, 4) + '-' + cleaned.substring(4);
-        }
-        
-        return cleaned;
+ function formatPhoneNumber(phone) {
+    // Remove all non-digit characters
+    let cleaned = phone.replace(/\D/g, '');
+    // Limit to 11 digits (or whatever max you want)
+    if (cleaned.length > 11) cleaned = cleaned.substring(0, 11);
+    
+    // Return only digits (no dashes)
+    return cleaned;
     }
     
     function togglePasswordVisibility() {
