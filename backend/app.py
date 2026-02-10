@@ -62,7 +62,7 @@ GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 # ==================== FIREBASE HOSTING INTEGRATION ====================
 # List of allowed origins (Firebase domains + localhost for development)
 ALLOWED_ORIGINS = [
-    'https://guardian-drive.web.app',
+    # 'https://guardian-drive.web.app',
     'https://guardian-drive-app.web.app',
     'https://guardian-drive-app.firebaseapp.com',
     'https://guardian-drive.firebaseapp.com',
