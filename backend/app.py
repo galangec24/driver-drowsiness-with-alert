@@ -1,4 +1,10 @@
-﻿import os
+﻿"""
+CAPSTONE PROJECT - DRIVER ALERT SYSTEM
+PostgreSQL-only Version for Render.com Deployment
+FINAL FIXED VERSION - Complete with all Google OAuth fixes
+"""
+
+import os
 from pathlib import Path
 import sys
 
@@ -26,45 +32,15 @@ import bcrypt
 from contextlib import contextmanager
 import urllib.parse
 import traceback
-import math
 
 # Google OAuth imports
 import jwt
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 
-# ==================== FACE VALIDATION IMPORTS ====================
-import numpy as np
-import cv2
-import tempfile
-from io import BytesIO
-from scipy.spatial import distance as dist
-
 # ==================== POSTGRESQL CONFIGURATION ====================
 import psycopg2
 from psycopg2.extras import RealDictCursor
-
-# ==================== FACE VALIDATION MODULES ====================
-# Try to import face detection libraries
-try:
-    # Try to import RetinaFace
-    from retinaface import RetinaFace
-    RETINAFACE_AVAILABLE = True
-    print("✅ RetinaFace is available")
-except ImportError:
-    RETINAFACE_AVAILABLE = False
-    print("⚠️ RetinaFace not available, falling back to OpenCV")
-
-# Ensure OpenCV is available for face detection
-try:
-    # Load Haar Cascade for face detection
-    face_cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-    FACE_CASCADE = cv2.CascadeClassifier(face_cascade_path)
-    OPENCV_AVAILABLE = True
-    print("✅ OpenCV face detection is available")
-except Exception as e:
-    OPENCV_AVAILABLE = False
-    print(f"⚠️ OpenCV face detection not available: {e}")
 
 # ==================== APP SETUP ====================
 app = Flask(__name__, 
@@ -153,666 +129,6 @@ socketio = SocketIO(app,
                    async_handlers=True,
                    logger=False,
                    engineio_logger=False)
-
-# ==================== FACE VALIDATION FUNCTIONS ====================
-def decode_base64_image(image_data):
-    """Decode base64 image to OpenCV format"""
-    try:
-        # Remove data URL prefix if present
-        if ',' in image_data:
-            image_data = image_data.split(',')[1]
-        
-        # Decode base64
-        image_bytes = base64.b64decode(image_data)
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        if img is None:
-            raise ValueError("Failed to decode image")
-        
-        return img
-    except Exception as e:
-        print(f"Error decoding base64 image: {e}")
-        raise
-
-def validate_image_size(image_data, max_size_mb=5):
-    """Validate image size"""
-    if ',' in image_data:
-        image_data = image_data.split(',')[1]
-    
-    # Calculate approximate size (base64 is ~33% larger than binary)
-    size_bytes = len(image_data) * 3 // 4
-    size_mb = size_bytes / (1024 * 1024)
-    
-    if size_mb > max_size_mb:
-        return False, f"Image size ({size_mb:.1f}MB) exceeds maximum allowed ({max_size_mb}MB)"
-    
-    return True, "Valid size"
-
-def detect_faces_retinaface(image):
-    """Detect faces using RetinaFace"""
-    try:
-        if not RETINAFACE_AVAILABLE:
-            return None, "RetinaFace not available"
-        
-        faces = RetinaFace.detect_faces(image)
-        
-        if not faces:
-            return [], "No faces detected"
-        
-        # Convert to list of face data
-        face_list = []
-        for face_key, face_data in faces.items():
-            facial_area = face_data['facial_area']
-            score = face_data['score']
-            landmarks = face_data.get('landmarks', {})
-            
-            face_list.append({
-                'box': [int(facial_area[0]), int(facial_area[1]), 
-                       int(facial_area[2]), int(facial_area[3])],
-                'confidence': float(score),
-                'landmarks': landmarks
-            })
-        
-        return face_list, None
-        
-    except Exception as e:
-        return None, f"RetinaFace detection error: {str(e)}"
-
-def detect_faces_opencv(image):
-    """Detect faces using OpenCV Haar Cascade"""
-    try:
-        if not OPENCV_AVAILABLE:
-            return None, "OpenCV not available"
-        
-        # Convert to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        # Detect faces
-        faces = FACE_CASCADE.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(30, 30)
-        )
-        
-        if len(faces) == 0:
-            return [], "No faces detected"
-        
-        # Convert to standard format
-        face_list = []
-        for (x, y, w, h) in faces:
-            face_list.append({
-                'box': [int(x), int(y), int(x + w), int(y + h)],
-                'confidence': 0.9,  # Default confidence for Haar Cascade
-                'landmarks': {}
-            })
-        
-        return face_list, None
-        
-    except Exception as e:
-        return None, f"OpenCV detection error: {str(e)}"
-
-def detect_faces(image):
-    """Detect faces using best available method"""
-    # Try RetinaFace first
-    if RETINAFACE_AVAILABLE:
-        faces, error = detect_faces_retinaface(image)
-        if faces is not None:
-            return faces, error, 'retinaface'
-    
-    # Fall back to OpenCV
-    if OPENCV_AVAILABLE:
-        faces, error = detect_faces_opencv(image)
-        if faces is not None:
-            return faces, error, 'opencv'
-    
-    return None, "No face detection method available", 'none'
-
-def calculate_face_similarity(face1, face2):
-    """Calculate similarity between two faces based on size and position"""
-    try:
-        box1 = face1['box']
-        box2 = face2['box']
-        
-        # Calculate box areas
-        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
-        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
-        
-        # Calculate area similarity
-        min_area = min(area1, area2)
-        max_area = max(area1, area2)
-        area_similarity = min_area / max_area if max_area > 0 else 0
-        
-        # Calculate position similarity (center distance)
-        center1 = [(box1[0] + box1[2]) / 2, (box1[1] + box1[3]) / 2]
-        center2 = [(box2[0] + box2[2]) / 2, (box2[1] + box2[3]) / 2]
-        
-        max_dim = max(max(box1[2] - box1[0], box1[3] - box1[1]),
-                      max(box2[2] - box2[0], box2[3] - box2[1]))
-        
-        distance = np.sqrt((center1[0] - center2[0])**2 + (center1[1] - center2[1])**2)
-        position_similarity = 1 - min(distance / max_dim, 1) if max_dim > 0 else 0
-        
-        # Combined similarity
-        similarity = (area_similarity * 0.3) + (position_similarity * 0.7)
-        
-        return similarity
-        
-    except Exception as e:
-        print(f"Error calculating similarity: {e}")
-        return 0
-
-def get_eye_aspect_ratio(eye_landmarks):
-    """Calculate Eye Aspect Ratio for blink detection"""
-    try:
-        if not eye_landmarks or len(eye_landmarks) < 6:
-            return None
-        
-        # Convert to numpy array if needed
-        points = np.array(eye_landmarks)
-        
-        # Compute the Euclidean distances between the two sets of vertical eye landmarks
-        A = dist.euclidean(points[1], points[5])
-        B = dist.euclidean(points[2], points[4])
-        
-        # Compute the Euclidean distance between the horizontal eye landmarks
-        C = dist.euclidean(points[0], points[3])
-        
-        # Compute the eye aspect ratio
-        ear = (A + B) / (2.0 * C)
-        
-        return ear
-    except Exception as e:
-        print(f"Error calculating EAR: {e}")
-        return None
-
-def detect_blink(face_landmarks):
-    """Detect if eyes are blinking using Eye Aspect Ratio"""
-    try:
-        if not face_landmarks:
-            return False
-        
-        left_eye = face_landmarks.get('left_eye')
-        right_eye = face_landmarks.get('right_eye')
-        
-        if not left_eye or not right_eye:
-            return False
-        
-        # Calculate EAR for both eyes
-        left_ear = get_eye_aspect_ratio(left_eye) if isinstance(left_eye, list) else None
-        right_ear = get_eye_aspect_ratio(right_eye) if isinstance(right_eye, list) else None
-        
-        if left_ear is None or right_ear is None:
-            return False
-        
-        # Average the eye aspect ratio together for both eyes
-        ear = (left_ear + right_ear) / 2.0
-        
-        # Blink threshold (adjust as needed)
-        BLINK_THRESHOLD = 0.25
-        
-        return ear < BLINK_THRESHOLD
-    except Exception as e:
-        print(f"Error in blink detection: {e}")
-        return False
-
-def calculate_face_landmark_similarity(face1, face2):
-    """Calculate similarity based on facial landmarks (more accurate)"""
-    try:
-        landmarks1 = face1.get('landmarks', {})
-        landmarks2 = face2.get('landmarks', {})
-        
-        # If we don't have landmarks, fall back to box similarity
-        if not landmarks1 or not landmarks2:
-            return calculate_face_similarity(face1, face2)
-        
-        # Calculate similarity based on key facial points
-        similarity_scores = []
-        
-        # Compare eye positions
-        if 'left_eye' in landmarks1 and 'left_eye' in landmarks2:
-            le1 = np.array(landmarks1['left_eye'])
-            le2 = np.array(landmarks2['left_eye'])
-            eye_dist = np.linalg.norm(le1 - le2)
-            similarity_scores.append(max(0, 1 - eye_dist / 50))
-        
-        # Compare nose position
-        if 'nose' in landmarks1 and 'nose' in landmarks2:
-            n1 = np.array(landmarks1['nose'])
-            n2 = np.array(landmarks2['nose'])
-            nose_dist = np.linalg.norm(n1 - n2)
-            similarity_scores.append(max(0, 1 - nose_dist / 50))
-        
-        # Compare mouth position
-        if 'mouth_right' in landmarks1 and 'mouth_right' in landmarks2:
-            mr1 = np.array(landmarks1['mouth_right'])
-            mr2 = np.array(landmarks2['mouth_right'])
-            mouth_dist = np.linalg.norm(mr1 - mr2)
-            similarity_scores.append(max(0, 1 - mouth_dist / 50))
-        
-        if similarity_scores:
-            return np.mean(similarity_scores)
-        else:
-            return calculate_face_similarity(face1, face2)
-        
-    except Exception as e:
-        print(f"Error in landmark similarity: {e}")
-        return calculate_face_similarity(face1, face2)
-
-def estimate_head_angle(face):
-    """Estimate head rotation angle (simplified)"""
-    try:
-        box = face['box']
-        landmarks = face.get('landmarks', {})
-        
-        if landmarks:
-            # Use eye landmarks if available
-            if 'left_eye' in landmarks and 'right_eye' in landmarks:
-                left_eye = landmarks['left_eye']
-                right_eye = landmarks['right_eye']
-                
-                # Calculate angle based on eye positions
-                dx = right_eye[0] - left_eye[0]
-                dy = right_eye[1] - left_eye[1]
-                
-                if dx != 0:
-                    angle = np.degrees(np.arctan2(dy, dx))
-                    return angle
-        
-        # Fallback: use face box width/height ratio
-        width = box[2] - box[0]
-        height = box[3] - box[1]
-        
-        if height > 0:
-            aspect_ratio = width / height
-            # Map aspect ratio to approximate angle (-45 to 45 degrees)
-            angle = (aspect_ratio - 0.7) * 150  # Rough approximation
-            return angle
-        
-        return 0
-        
-    except Exception as e:
-        print(f"Error estimating head angle: {e}")
-        return 0
-
-def estimate_head_pose(face):
-    """Better head pose estimation using facial landmarks"""
-    try:
-        landmarks = face.get('landmarks', {})
-        box = face['box']
-        
-        if not landmarks:
-            # Fallback to old method
-            return estimate_head_angle(face)
-        
-        # Calculate head pose using facial landmarks
-        if all(k in landmarks for k in ['left_eye', 'right_eye', 'nose']):
-            left_eye = np.array(landmarks['left_eye'])
-            right_eye = np.array(landmarks['right_eye'])
-            nose = np.array(landmarks['nose'])
-            
-            # Calculate eye center
-            eyes_center = (left_eye + right_eye) / 2
-            
-            # Calculate yaw (horizontal rotation)
-            eye_distance = np.linalg.norm(right_eye - left_eye)
-            nose_offset = nose[0] - eyes_center[0]
-            yaw = np.degrees(np.arcsin(nose_offset / (eye_distance / 2)))
-            
-            # Calculate pitch (vertical rotation)
-            nose_vertical_offset = nose[1] - eyes_center[1]
-            pitch = np.degrees(np.arcsin(nose_vertical_offset / (eye_distance / 2)))
-            
-            # Combine rotations (focus on yaw for horizontal head turns)
-            return yaw
-            
-        # Fallback: use box aspect ratio
-        width = box[2] - box[0]
-        height = box[3] - box[1]
-        if height > 0:
-            aspect_ratio = width / height
-            angle = (aspect_ratio - 0.7) * 150
-            return angle
-        
-        return 0
-        
-    except Exception as e:
-        print(f"Error estimating head pose: {e}")
-        return 0
-
-def detect_expression(image, face_box):
-    """Detect facial expression (simplified)"""
-    try:
-        x1, y1, x2, y2 = face_box
-        face_region = image[y1:y2, x1:x2]
-        
-        if face_region.size == 0:
-            return "neutral"
-        
-        # Convert to grayscale
-        gray = cv2.cvtColor(face_region, cv2.COLOR_BGR2GRAY)
-        
-        # Simple smile detection based on mouth region histogram
-        # This is a simplified version - in production, use a proper expression detector
-        
-        # Define mouth region (lower half of face)
-        mouth_y_start = int(face_region.shape[0] * 0.6)
-        mouth_y_end = int(face_region.shape[0] * 0.9)
-        mouth_x_start = int(face_region.shape[1] * 0.25)
-        mouth_x_end = int(face_region.shape[1] * 0.75)
-        
-        if (mouth_y_start < mouth_y_end and mouth_x_start < mouth_x_end and
-            mouth_y_start >= 0 and mouth_y_end <= gray.shape[0] and
-            mouth_x_start >= 0 and mouth_x_end <= gray.shape[1]):
-            
-            mouth_region = gray[mouth_y_start:mouth_y_end, mouth_x_start:mouth_x_end]
-            
-            if mouth_region.size > 0:
-                # Calculate intensity variation in mouth region
-                mouth_var = np.var(mouth_region)
-                
-                # Higher variance might indicate open mouth (smiling)
-                if mouth_var > 1000:
-                    return "smiling"
-        
-        return "neutral"
-        
-    except Exception as e:
-        print(f"Error detecting expression: {e}")
-        return "neutral"
-
-def is_face_centered(face, image_width, image_height):
-    """Check if face is centered in the frame for better photos"""
-    try:
-        box = face['box']
-        landmarks = face.get('landmarks', {})
-        
-        # Get face center
-        face_center_x = (box[0] + box[2]) / 2
-        face_center_y = (box[1] + box[3]) / 2
-        
-        # Get image center
-        image_center_x = image_width / 2
-        image_center_y = image_height / 2
-        
-        # Calculate distance from center (normalized)
-        x_offset = abs(face_center_x - image_center_x) / image_width
-        y_offset = abs(face_center_y - image_center_y) / image_height
-        
-        # Face is centered if within 20% of image center
-        return x_offset < 0.2 and y_offset < 0.2
-        
-    except Exception as e:
-        print(f"Error checking face centering: {e}")
-        return False
-
-def is_good_pose_for_capture(face, image_width, image_height, pose_type='straight'):
-    """Check if face is in good position for capture"""
-    try:
-        # Check if face is centered
-        if not is_face_centered(face, image_width, image_height):
-            return False, "Face not centered. Please move to the center."
-        
-        # Check face size (not too small or too large)
-        box = face['box']
-        face_width = box[2] - box[0]
-        face_height = box[3] - box[1]
-        
-        min_face_size = min(image_width, image_height) * 0.2
-        max_face_size = min(image_width, image_height) * 0.8
-        
-        if face_width < min_face_size or face_height < min_face_size:
-            return False, "Face too small. Please move closer."
-        
-        if face_width > max_face_size or face_height > max_face_size:
-            return False, "Face too large. Please move back."
-        
-        # Check head pose based on pose_type
-        head_angle = estimate_head_pose(face)
-        
-        if pose_type == 'straight':
-            # For straight pose, angle should be near 0
-            if abs(head_angle) > 15:
-                return False, "Please look straight ahead."
-        elif pose_type == 'left':
-            # For left pose, angle should be negative
-            if head_angle > -10:
-                return False, "Please turn your head slightly to the left."
-        elif pose_type == 'right':
-            # For right pose, angle should be positive
-            if head_angle < 10:
-                return False, "Please turn your head slightly to the right."
-        
-        # Check if eyes are open (for blink detection)
-        if detect_blink(face.get('landmarks', {})):
-            return False, "Please keep your eyes open."
-        
-        return True, "Good pose!"
-        
-    except Exception as e:
-        print(f"Error checking pose: {e}")
-        return False, "Error checking pose"
-
-def validate_face_images(image1_data, image2_data):
-    """
-    Main validation function for two face images
-    Returns: (success, details, error_message)
-    """
-    try:
-        print("🔄 Starting face validation...")
-        
-        # Validate image sizes
-        size_valid1, size_msg1 = validate_image_size(image1_data)
-        size_valid2, size_msg2 = validate_image_size(image2_data)
-        
-        if not size_valid1:
-            return False, None, f"First image: {size_msg1}"
-        if not size_valid2:
-            return False, None, f"Second image: {size_msg2}"
-        
-        # Decode images
-        print("📷 Decoding images...")
-        try:
-            img1 = decode_base64_image(image1_data)
-            img2 = decode_base64_image(image2_data)
-        except Exception as e:
-            return False, None, f"Failed to decode images: {str(e)}"
-        
-        # Detect faces
-        print("🔍 Detecting faces...")
-        faces1, error1, method1 = detect_faces(img1)
-        faces2, error2, method2 = detect_faces(img2)
-        
-        if faces1 is None:
-            return False, None, f"Face detection failed for first image: {error1}"
-        if faces2 is None:
-            return False, None, f"Face detection failed for second image: {error2}"
-        
-        print(f"📊 Detected {len(faces1)} face(s) in image 1, {len(faces2)} face(s) in image 2")
-        
-        # Check for exactly one face in each image
-        if len(faces1) != 1:
-            return False, None, f"Expected exactly one face in first image, found {len(faces1)}"
-        if len(faces2) != 1:
-            return False, None, f"Expected exactly one face in second image, found {len(faces2)}"
-        
-        face1 = faces1[0]
-        face2 = faces2[0]
-        
-        # Calculate similarity
-        print("📐 Calculating similarity...")
-        similarity_score = calculate_face_similarity(face1, face2)
-        
-        # Check if images are too similar (same pose/expression)
-        if similarity_score > 0.9:
-            return False, {
-                'similarity_score': similarity_score,
-                'detection_method': method1,
-                'reason': 'Images are too similar'
-            }, "Images appear to be the same pose/expression. Please provide images with different expressions or angles."
-        
-        # Check if different enough
-        if similarity_score < 0.3:
-            return False, {
-                'similarity_score': similarity_score,
-                'detection_method': method1,
-                'reason': 'Images may be of different people'
-            }, "Images may be of different people. Please ensure both images are of the same driver."
-        
-        # Analyze expressions
-        print("😊 Analyzing expressions...")
-        expression1 = detect_expression(img1, face1['box'])
-        expression2 = detect_expression(img2, face2['box'])
-        
-        # Estimate head angles
-        angle1 = estimate_head_angle(face1)
-        angle2 = estimate_head_angle(face2)
-        angle_diff = abs(angle1 - angle2)
-        
-        # Check if expressions are too similar
-        if expression1 == expression2 and angle_diff < 10:
-            return False, {
-                'similarity_score': similarity_score,
-                'expressions': [expression1, expression2],
-                'angle_difference': angle_diff,
-                'detection_method': method1,
-                'reason': 'Similar expressions and angles'
-            }, f"Images have similar expressions ({expression1}) and angles. Please provide one smiling and one neutral expression, or different angles."
-        
-        # All checks passed
-        print("✅ Face validation successful!")
-        return True, {
-            'similarity_score': similarity_score,
-            'expressions': [expression1, expression2],
-            'angle_difference': angle_diff,
-            'detection_method': method1,
-            'face_confidence_1': face1['confidence'],
-            'face_confidence_2': face2['confidence'],
-            'validation_timestamp': datetime.now().isoformat()
-        }, None
-        
-    except Exception as e:
-        print(f"❌ Face validation error: {str(e)}")
-        traceback.print_exc()
-        return False, None, f"Validation error: {str(e)}"
-
-def validate_face_images_enhanced(image1_data, image2_data):
-    """
-    Enhanced validation function with better similarity detection
-    """
-    try:
-        print("🔄 Starting enhanced face validation...")
-        
-        # Validate image sizes
-        size_valid1, size_msg1 = validate_image_size(image1_data)
-        size_valid2, size_msg2 = validate_image_size(image2_data)
-        
-        if not size_valid1:
-            return False, None, f"First image: {size_msg1}"
-        if not size_valid2:
-            return False, None, f"Second image: {size_msg2}"
-        
-        # Decode images
-        print("📷 Decoding images...")
-        try:
-            img1 = decode_base64_image(image1_data)
-            img2 = decode_base64_image(image2_data)
-        except Exception as e:
-            return False, None, f"Failed to decode images: {str(e)}"
-        
-        # Detect faces with landmarks
-        print("🔍 Detecting faces with landmarks...")
-        faces1, error1, method1 = detect_faces(img1)
-        faces2, error2, method2 = detect_faces(img2)
-        
-        if faces1 is None:
-            return False, None, f"Face detection failed for first image: {error1}"
-        if faces2 is None:
-            return False, None, f"Face detection failed for second image: {error2}"
-        
-        print(f"📊 Detected {len(faces1)} face(s) in image 1, {len(faces2)} face(s) in image 2")
-        
-        # Check for exactly one face in each image
-        if len(faces1) != 1:
-            return False, None, f"Expected exactly one face in first image, found {len(faces1)}"
-        if len(faces2) != 1:
-            return False, None, f"Expected exactly one face in second image, found {len(faces2)}"
-        
-        face1 = faces1[0]
-        face2 = faces2[0]
-        
-        # Calculate similarity using landmarks (more accurate)
-        print("📐 Calculating landmark-based similarity...")
-        similarity_score = calculate_face_landmark_similarity(face1, face2)
-        
-        print(f"   Similarity score: {similarity_score:.2f}")
-        
-        # Check if images are too similar (same person but too similar pose)
-        if similarity_score > 0.85:
-            return False, {
-                'similarity_score': similarity_score,
-                'detection_method': method1,
-                'reason': 'Images are too similar in facial features'
-            }, "Images appear to be too similar. Please provide images with more variation in expression or head angle."
-        
-        # Check if different enough (might be different people)
-        if similarity_score < 0.25:
-            return False, {
-                'similarity_score': similarity_score,
-                'detection_method': method1,
-                'reason': 'Images may be of different people'
-            }, "Images may be of different people. Please ensure both images are of the same driver."
-        
-        # Analyze expressions
-        print("😊 Analyzing expressions...")
-        expression1 = detect_expression(img1, face1['box'])
-        expression2 = detect_expression(img2, face2['box'])
-        
-        # Estimate head angles with better pose estimation
-        angle1 = estimate_head_pose(face1)
-        angle2 = estimate_head_pose(face2)
-        angle_diff = abs(angle1 - angle2)
-        
-        print(f"   Expression 1: {expression1}, Angle: {angle1:.1f}°")
-        print(f"   Expression 2: {expression2}, Angle: {angle2:.1f}°")
-        print(f"   Angle difference: {angle_diff:.1f}°")
-        
-        # Check if we have good variation
-        # Rule 1: Different expressions OR different angles
-        # Rule 2: Minimum angle difference of 15 degrees if expressions are similar
-        
-        has_expression_variation = expression1 != expression2
-        has_angle_variation = angle_diff >= 15
-        
-        if not has_expression_variation and not has_angle_variation:
-            return False, {
-                'similarity_score': similarity_score,
-                'expressions': [expression1, expression2],
-                'angles': [angle1, angle2],
-                'angle_difference': angle_diff,
-                'detection_method': method1,
-                'reason': 'Insufficient variation'
-            }, f"Insufficient variation. Please provide: 1) One smiling and one neutral expression, OR 2) Turn your head at least 15 degrees between photos."
-        
-        # All checks passed
-        print("✅ Enhanced face validation successful!")
-        return True, {
-            'similarity_score': similarity_score,
-            'expressions': [expression1, expression2],
-            'angles': [angle1, angle2],
-            'angle_difference': angle_diff,
-            'detection_method': method1,
-            'face_confidence_1': face1['confidence'],
-            'face_confidence_2': face2['confidence'],
-            'has_landmarks': 'landmarks' in face1 and 'landmarks' in face2,
-            'validation_timestamp': datetime.now().isoformat()
-        }, None
-        
-    except Exception as e:
-        print(f"❌ Enhanced face validation error: {str(e)}")
-        traceback.print_exc()
-        return False, None, f"Validation error: {str(e)}"
 
 # ==================== SECURITY CONFIGURATION ====================
 # Generate bcrypt hash for admin password (admin123)
@@ -1184,27 +500,6 @@ def init_db():
     except Exception as e:
         print(f"❌ Database initialization failed: {e}")
         return False
-
-def create_face_images_table():
-    """Create table for storing face images with enhanced schema"""
-    try:
-        with get_db_cursor() as cursor:
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS face_images (
-                    image_id SERIAL PRIMARY KEY,
-                    driver_id TEXT REFERENCES drivers(driver_id) ON DELETE CASCADE,
-                    image_data TEXT NOT NULL,
-                    image_type VARCHAR(50),
-                    expression VARCHAR(50),
-                    angle FLOAT,
-                    capture_method VARCHAR(20),
-                    validation_data JSONB,
-                    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            print("✅ Created/verified face_images table")
-    except Exception as e:
-        print(f"❌ Error creating face_images table: {e}")
 
 def update_db_schema():
     """Update existing database schema to add missing columns"""
@@ -1685,243 +980,6 @@ def handle_guardian_auth(data):
     
     emit('auth_failed', {'error': 'Authentication failed'})
     socketio.disconnect(client_id)
-
-# ==================== FACE CAPTURE GUIDANCE ENDPOINTS ====================
-@app.route('/api/capture-guidance', methods=['POST'])
-def capture_guidance():
-    """Provide real-time guidance for face capture"""
-    try:
-        data = request.json
-        image_data = data.get('image')
-        pose_type = data.get('pose_type', 'straight')  # 'straight', 'left', 'right'
-        
-        if not image_data:
-            return jsonify({'success': False, 'error': 'No image provided'}), 400
-        
-        # Decode image
-        try:
-            img = decode_base64_image(image_data)
-            height, width = img.shape[:2]
-        except Exception as e:
-            return jsonify({'success': False, 'error': f'Failed to decode image: {str(e)}'}), 400
-        
-        # Detect face
-        faces, error, method = detect_faces(img)
-        
-        if not faces or len(faces) == 0:
-            return jsonify({
-                'success': False,
-                'has_face': False,
-                'message': 'No face detected. Please position your face in the frame.'
-            })
-        
-        if len(faces) > 1:
-            return jsonify({
-                'success': False,
-                'has_face': True,
-                'multiple_faces': True,
-                'message': 'Multiple faces detected. Please ensure only one face is visible.'
-            })
-        
-        face = faces[0]
-        
-        # Check if face is in good position for capture
-        is_good_pose, message = is_good_pose_for_capture(face, width, height, pose_type)
-        
-        # Calculate face position for guidance overlay
-        box = face['box']
-        face_center_x = (box[0] + box[2]) / 2
-        face_center_y = (box[1] + box[3]) / 2
-        
-        # Calculate distance from center
-        target_x = width / 2
-        target_y = height / 2
-        
-        x_offset = face_center_x - target_x
-        y_offset = face_center_y - target_y
-        
-        # Calculate head angle
-        head_angle = estimate_head_pose(face)
-        
-        # Check for blink
-        is_blinking = detect_blink(face.get('landmarks', {}))
-        
-        return jsonify({
-            'success': True,
-            'has_face': True,
-            'is_good_pose': is_good_pose,
-            'is_blinking': is_blinking,
-            'head_angle': head_angle,
-            'face_position': {
-                'x': int(face_center_x),
-                'y': int(face_center_y),
-                'x_offset': int(x_offset),
-                'y_offset': int(y_offset)
-            },
-            'face_box': box,
-            'image_dimensions': {'width': width, 'height': height},
-            'message': message,
-            'guidance': {
-                'move_left': x_offset > 50,
-                'move_right': x_offset < -50,
-                'move_up': y_offset > 50,
-                'move_down': y_offset < -50,
-                'turn_left': head_angle > 10 and pose_type == 'straight',
-                'turn_right': head_angle < -10 and pose_type == 'straight'
-            }
-        })
-        
-    except Exception as e:
-        print(f"❌ Capture guidance error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/auto-capture', methods=['POST'])
-def auto_capture():
-    """Auto-capture when conditions are met (blink + good pose)"""
-    try:
-        data = request.json
-        image_data = data.get('image')
-        pose_type = data.get('pose_type', 'straight')
-        capture_mode = data.get('mode', 'blink')  # 'blink', 'timer', 'manual'
-        
-        if not image_data:
-            return jsonify({'success': False, 'error': 'No image provided'}), 400
-        
-        # Decode image
-        try:
-            img = decode_base64_image(image_data)
-            height, width = img.shape[:2]
-        except Exception as e:
-            return jsonify({'success': False, 'error': f'Failed to decode image: {str(e)}'}), 400
-        
-        # Detect face
-        faces, error, method = detect_faces(img)
-        
-        if not faces or len(faces) == 0:
-            return jsonify({
-                'success': False,
-                'should_capture': False,
-                'reason': 'no_face',
-                'message': 'No face detected'
-            })
-        
-        if len(faces) > 1:
-            return jsonify({
-                'success': False,
-                'should_capture': False,
-                'reason': 'multiple_faces',
-                'message': 'Multiple faces detected'
-            })
-        
-        face = faces[0]
-        
-        # Check pose
-        is_good_pose, pose_message = is_good_pose_for_capture(face, width, height, pose_type)
-        
-        if not is_good_pose:
-            return jsonify({
-                'success': False,
-                'should_capture': False,
-                'reason': 'bad_pose',
-                'message': pose_message
-            })
-        
-        # Check for blink if in blink mode
-        should_capture = False
-        reason = 'manual'
-        
-        if capture_mode == 'blink':
-            is_blinking = detect_blink(face.get('landmarks', {}))
-            if is_blinking:
-                should_capture = True
-                reason = 'blink_detected'
-        elif capture_mode == 'timer':
-            # In timer mode, we would track how long good pose is maintained
-            # For now, just capture if pose is good for 1 second
-            should_capture = True
-            reason = 'timer_complete'
-        else:  # manual
-            should_capture = data.get('trigger_capture', False)
-            reason = 'manual_trigger'
-        
-        return jsonify({
-            'success': True,
-            'should_capture': should_capture,
-            'capture_reason': reason,
-            'face_detected': True,
-            'good_pose': is_good_pose,
-            'head_angle': estimate_head_pose(face),
-            'image_quality': 'good',
-            'message': 'Ready for capture' if should_capture else pose_message
-        })
-        
-    except Exception as e:
-        print(f"❌ Auto-capture error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/face-landmarks', methods=['POST'])
-def get_face_landmarks():
-    """Extract and return facial landmarks for visualization"""
-    try:
-        data = request.json
-        image_data = data.get('image')
-        
-        if not image_data:
-            return jsonify({'success': False, 'error': 'No image provided'}), 400
-        
-        # Decode image
-        img = decode_base64_image(image_data)
-        
-        # Detect faces with RetinaFace for better landmarks
-        if RETINAFACE_AVAILABLE:
-            faces = RetinaFace.detect_faces(img)
-            if faces:
-                face_key = list(faces.keys())[0]
-                face_data = faces[face_key]
-                landmarks = face_data.get('landmarks', {})
-                
-                # Convert landmarks to list format
-                landmark_points = {}
-                for key, point in landmarks.items():
-                    landmark_points[key] = {
-                        'x': float(point[0]),
-                        'y': float(point[1])
-                    }
-                
-                return jsonify({
-                    'success': True,
-                    'landmarks': landmark_points,
-                    'detection_method': 'retinaface'
-                })
-        
-        # Fallback to basic detection
-        faces, error, method = detect_faces(img)
-        
-        if faces and len(faces) > 0:
-            face = faces[0]
-            return jsonify({
-                'success': True,
-                'landmarks': face.get('landmarks', {}),
-                'detection_method': method
-            })
-        
-        return jsonify({
-            'success': False,
-            'error': 'No face detected'
-        })
-        
-    except Exception as e:
-        print(f"❌ Face landmarks error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
 # ==================== STATIC FILE ROUTES ====================
 @app.route('/favicon.ico')
@@ -2465,324 +1523,6 @@ def serve_service_worker():
             });
         ''', mimetype='application/javascript')
 
-# ==================== FACE VALIDATION API ENDPOINTS ====================
-
-@app.route('/api/validate-faces', methods=['POST'])
-def validate_faces_endpoint():
-    """Validate two face images for diversity - ENHANCED VERSION"""
-    try:
-        print("📨 Received face validation request")
-        
-        data = request.get_json()
-        if not data:
-            return jsonify({'success': False, 'error': 'No data provided'}), 400
-        
-        # Get image data
-        image1 = data.get('image1')
-        image2 = data.get('image2')
-        source = data.get('source', 'upload')
-        
-        if not image1 or not image2:
-            return jsonify({'success': False, 'error': 'Both images are required'}), 400
-        
-        # Use enhanced validation
-        is_valid, details, error_msg = validate_face_images_enhanced(image1, image2)
-        
-        if is_valid:
-            return jsonify({
-                'success': True,
-                'message': 'Face validation successful',
-                'details': details,
-                'validation_passed': True
-            }), 200
-        else:
-            return jsonify({
-                'success': False,
-                'error': error_msg,
-                'details': details,
-                'validation_passed': False
-            }), 400
-            
-    except Exception as e:
-        print(f"❌ Validation endpoint error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': f'Server error: {str(e)}'
-        }), 500
-
-@app.route('/api/register-driver', methods=['POST'])
-def register_driver_endpoint():
-    """Register a new driver with face images"""
-    try:
-        print("📨 Received driver registration request")
-        
-        data = request.get_json()
-        if not data:
-            return jsonify({'success': False, 'error': 'No data provided'}), 400
-        
-        # Extract and validate required fields
-        required_fields = ['driver_name', 'driver_phone', 'guardian_id', 'token']
-        for field in required_fields:
-            if field not in data:
-                return jsonify({'success': False, 'error': f'Missing required field: {field}'}), 400
-        
-        # Verify session
-        guardian_id = data['guardian_id']
-        token = data['token']
-        
-        if not validate_session(guardian_id, token):
-            return jsonify({
-                'success': False,
-                'error': 'Invalid or expired session',
-                'redirect': '/?logged_out=true'
-            }), 401
-        
-        # Check if face images are provided
-        face_images = data.get('face_images', [])
-        if len(face_images) != 2:
-            return jsonify({
-                'success': False, 
-                'error': 'Exactly two face images are required'
-            }), 400
-        
-        # Optional: Validate faces on server side again
-        validation_result = data.get('validation_result', {})
-        capture_method = data.get('capture_method', 'upload')
-        
-        # Generate driver ID and reference number
-        import secrets
-        driver_id = f"DRV{datetime.now().strftime('%Y%m%d%H%M%S')}{secrets.token_hex(3).upper()}"
-        reference_number = data.get('reference_number')
-        
-        if not reference_number:
-            reference_number = f"REF{datetime.now().strftime('%Y%m%d')}{secrets.token_hex(4).upper()}"
-        
-        # Get guardian info for logging
-        guardian = get_guardian_by_id(guardian_id)
-        if not guardian:
-            return jsonify({'success': False, 'error': 'Guardian not found'}), 404
-        
-        print(f"📝 Registering driver: {data['driver_name']} for guardian: {guardian['full_name']}")
-        
-        with get_db_cursor() as cursor:
-            # Check if reference number already exists
-            cursor.execute(
-                "SELECT driver_id FROM drivers WHERE reference_number = %s",
-                (reference_number,)
-            )
-            if cursor.fetchone():
-                return jsonify({
-                    'success': False,
-                    'error': 'Reference number already exists'
-                }), 400
-            
-            # Insert driver into database
-            cursor.execute('''
-                INSERT INTO drivers (
-                    driver_id, name, address, phone, email, 
-                    reference_number, license_number, guardian_id
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            ''', (
-                driver_id,
-                data['driver_name'],
-                data.get('driver_address', ''),
-                data['driver_phone'],
-                data.get('driver_email', ''),
-                reference_number,
-                data.get('license_number', ''),
-                guardian_id
-            ))
-            
-            print(f"✅ Driver {driver_id} inserted into database")
-            
-            # Store face images
-            for i, image_data in enumerate(face_images):
-                # Extract expression from validation result if available
-                expression = "unknown"
-                if validation_result and 'details' in validation_result:
-                    expressions = validation_result['details'].get('expressions', [])
-                    if i < len(expressions):
-                        expression = expressions[i]
-                
-                # Extract angle if available
-                angle = None
-                if validation_result and 'details' in validation_result:
-                    angle_diff = validation_result['details'].get('angle_difference', 0)
-                    angle = angle_diff
-                
-                cursor.execute('''
-                    INSERT INTO face_images (
-                        driver_id, image_data, image_type, expression,
-                        angle, capture_method, validation_data
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ''', (
-                    driver_id,
-                    image_data,
-                    f'face_{i+1}',
-                    expression,
-                    angle,
-                    capture_method,
-                    json.dumps(validation_result) if validation_result else None
-                ))
-                
-                print(f"✅ Stored face image {i+1} for driver {driver_id}")
-            
-            # Log activity
-            cursor.execute('''
-                INSERT INTO activity_log (guardian_id, action, details)
-                VALUES (%s, %s, %s)
-            ''', (
-                guardian_id,
-                'DRIVER_REGISTERED',
-                f'Registered driver: {data["driver_name"]} (ID: {driver_id}) with {len(face_images)} face images'
-            ))
-        
-        # Emit socket event for real-time update
-        socketio.emit('driver_registered', {
-            'guardian_id': guardian_id,
-            'driver_id': driver_id,
-            'driver_name': data['driver_name'],
-            'timestamp': datetime.now().isoformat()
-        })
-        
-        return jsonify({
-            'success': True,
-            'driver_id': driver_id,
-            'reference_number': reference_number,
-            'message': 'Driver registered successfully with face images'
-        }), 200
-        
-    except psycopg2.Error as e:
-        print(f"❌ Database error in driver registration: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': f'Database error: {str(e)}'
-        }), 500
-        
-    except Exception as e:
-        print(f"❌ Driver registration error: {str(e)}")
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': f'Registration error: {str(e)}'
-        }), 500
-
-@app.route('/api/driver/<driver_id>/faces', methods=['GET'])
-def get_driver_faces(driver_id):
-    """Get face images for a driver"""
-    try:
-        token = request.args.get('token')
-        guardian_id = request.args.get('guardian_id')
-        
-        if not guardian_id or not token:
-            return jsonify({'success': False, 'error': 'Authentication required'}), 401
-        
-        # Validate session
-        if not validate_session(guardian_id, token):
-            return jsonify({'success': False, 'error': 'Invalid session'}), 401
-        
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Verify the driver belongs to the guardian
-            cursor.execute('''
-                SELECT d.driver_id, d.name, d.guardian_id
-                FROM drivers d
-                WHERE d.driver_id = %s AND d.guardian_id = %s
-            ''', (driver_id, guardian_id))
-            
-            driver = cursor.fetchone()
-            if not driver:
-                return jsonify({'success': False, 'error': 'Driver not found or not authorized'}), 404
-            
-            # Get face images
-            cursor.execute('''
-                SELECT image_id, image_type, expression, angle, 
-                       capture_method, uploaded_at
-                FROM face_images
-                WHERE driver_id = %s
-                ORDER BY image_type
-            ''', (driver_id,))
-            
-            faces = cursor.fetchall()
-            
-            # Convert to list of dicts
-            face_list = []
-            for face in faces:
-                face_list.append({
-                    'image_id': face[0],
-                    'image_type': face[1],
-                    'expression': face[2],
-                    'angle': float(face[3]) if face[3] else None,
-                    'capture_method': face[4],
-                    'uploaded_at': face[5].isoformat() if face[5] else None
-                })
-            
-            return jsonify({
-                'success': True,
-                'driver_id': driver_id,
-                'driver_name': driver[1],
-                'face_count': len(face_list),
-                'faces': face_list
-            })
-            
-    except Exception as e:
-        print(f"❌ Error getting driver faces: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/driver/<driver_id>/face-image/<int:image_id>', methods=['GET'])
-def get_driver_face_image(driver_id, image_id):
-    """Get specific face image data"""
-    try:
-        token = request.args.get('token')
-        guardian_id = request.args.get('guardian_id')
-        
-        if not guardian_id or not token:
-            return jsonify({'success': False, 'error': 'Authentication required'}), 401
-        
-        # Validate session
-        if not validate_session(guardian_id, token):
-            return jsonify({'success': False, 'error': 'Invalid session'}), 401
-        
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Verify the driver belongs to the guardian
-            cursor.execute('''
-                SELECT d.driver_id
-                FROM drivers d
-                WHERE d.driver_id = %s AND d.guardian_id = %s
-            ''', (driver_id, guardian_id))
-            
-            if not cursor.fetchone():
-                return jsonify({'success': False, 'error': 'Not authorized'}), 403
-            
-            # Get the face image
-            cursor.execute('''
-                SELECT image_data, image_type, expression, validation_data
-                FROM face_images
-                WHERE driver_id = %s AND image_id = %s
-            ''', (driver_id, image_id))
-            
-            face = cursor.fetchone()
-            
-            if not face:
-                return jsonify({'success': False, 'error': 'Face image not found'}), 404
-            
-            return jsonify({
-                'success': True,
-                'image_id': image_id,
-                'driver_id': driver_id,
-                'image_type': face[1],
-                'expression': face[2],
-                'image_data': face[0],  # Base64 image data
-                'validation_data': json.loads(face[3]) if face[3] else None
-            })
-            
-    except Exception as e:
-        print(f"❌ Error getting face image: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
 # ==================== API ENDPOINTS ====================
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -2796,8 +1536,7 @@ def health_check():
             'connected_clients': len(connected_clients),
             'active_sessions': len(active_sessions),
             'database': 'postgresql',
-            'google_auth': bool(GOOGLE_CLIENT_ID),
-            'face_validation': 'RetinaFace' if RETINAFACE_AVAILABLE else 'OpenCV' if OPENCV_AVAILABLE else 'Disabled'
+            'google_auth': bool(GOOGLE_CLIENT_ID)
         }
         
         return jsonify(health_info)
@@ -2819,7 +1558,7 @@ def get_google_config():
         'message': 'Google OAuth configuration loaded'
     })
 
-# ==================== GOOGLE LOGIN ENDPOINT ====================
+# ==================== GOOGLE LOGIN ENDPOINT - FIXED VERSION ====================
 @app.route('/api/google-login', methods=['POST'])
 def google_login():
     """Handle Google OAuth login with comprehensive error handling and fallbacks"""
@@ -3050,6 +1789,242 @@ def google_login():
             'alternative_methods': ['phone_login', 'simple_google_login']
         }), 500
 
+@app.route('/api/google-login-with-email', methods=['POST'])
+def google_login_with_email():
+    """Google login with manual email input for when token verification fails"""
+    try:
+        data = request.json
+        email = data.get('email')
+        name = data.get('name')
+        google_token = data.get('token')  # Optional
+        
+        if not email:
+            return jsonify({
+                'success': False,
+                'error': 'Email is required'
+            }), 400
+        
+        if not name:
+            # Extract name from email
+            name = email.split('@')[0].replace('.', ' ').title()
+        
+        # Try to get Google ID from token if provided
+        google_id = None
+        if google_token:
+            try:
+                unverified_payload = jwt.decode(
+                    google_token, 
+                    options={"verify_signature": False}
+                )
+                google_id = unverified_payload.get('sub')
+            except:
+                pass
+        
+        if not google_id:
+            google_id = f"google_{hash(email) % 1000000}"
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if user exists by email
+            cursor.execute('''
+                SELECT guardian_id, full_name, email, auth_provider
+                FROM guardians 
+                WHERE email = %s
+                LIMIT 1
+            ''', (email,))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                # User exists - login
+                if isinstance(result, dict):
+                    guardian_id = result['guardian_id']
+                    full_name = result['full_name']
+                    stored_email = result['email']
+                else:
+                    guardian_id, full_name, stored_email, auth_provider = result
+                
+                # Update auth provider if not google
+                if auth_provider != 'google':
+                    cursor.execute('UPDATE guardians SET auth_provider = %s WHERE guardian_id = %s', 
+                                 ('google', guardian_id))
+                    conn.commit()
+                
+                print(f"✅ User found: {full_name} ({stored_email})")
+                
+            else:
+                # Create new user
+                import random
+                phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
+                
+                cursor.execute('''
+                    INSERT INTO guardians (
+                        full_name, 
+                        email, 
+                        phone, 
+                        password_hash, 
+                        is_active,
+                        registration_date,
+                        last_login,
+                        google_id,
+                        auth_provider
+                    )
+                    VALUES (%s, %s, %s, %s, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, %s, 'google')
+                    RETURNING guardian_id
+                ''', (name, email, phone, hash_password(secrets.token_urlsafe(16)), google_id))
+                
+                result = cursor.fetchone()
+                guardian_id = result[0] if result else None
+                full_name = name
+                conn.commit()
+                
+                print(f"✅ New user created: {full_name} (ID: {guardian_id})")
+        
+        # Create session
+        token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
+        
+        return jsonify({
+            'success': True,
+            'guardian_id': guardian_id,
+            'full_name': full_name,
+            'email': email,
+            'session_token': token,
+            'message': 'Login successful',
+            'method': 'email_based_google_login'
+        })
+        
+    except Exception as e:
+        print(f"❌ Google login with email error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/troubleshoot-google-auth', methods=['GET'])
+def troubleshoot_google_auth():
+    """Troubleshoot Google OAuth issues"""
+    try:
+        # Test DNS resolution
+        import socket
+        dns_issues = []
+        
+        test_hosts = ['www.googleapis.com', 'accounts.google.com', 'oauth2.googleapis.com']
+        
+        for host in test_hosts:
+            try:
+                socket.gethostbyname(host)
+                dns_issues.append(f"✅ {host}: Resolves OK")
+            except socket.gaierror as e:
+                dns_issues.append(f"❌ {host}: DNS Error - {e}")
+        
+        # Check environment
+        env_status = {
+            'GOOGLE_CLIENT_ID': 'Configured' if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_ID != 'your-google-client-id-here' else 'Not Configured',
+            'DATABASE_URL': 'Configured' if os.environ.get('DATABASE_URL') else 'Not Configured',
+            'RENDER': 'Yes' if os.environ.get('RENDER') else 'No (Local)'
+        }
+        
+        # Check if we can make external requests
+        network_status = "Unknown"
+        try:
+            import urllib.request
+            response = urllib.request.urlopen('https://www.google.com', timeout=5)
+            network_status = f"✅ Can reach external internet (Status: {response.status})"
+        except Exception as e:
+            network_status = f"❌ Cannot reach external internet: {e}"
+        
+        return jsonify({
+            'success': True,
+            'timestamp': datetime.now().isoformat(),
+            'environment': env_status,
+            'dns_resolution': dns_issues,
+            'network': network_status,
+            'recommendations': [
+                'Issue: DNS resolution failing on Render.com',
+                'Solution 1: Wait for Render.com network to stabilize',
+                'Solution 2: Use phone login instead',
+                'Solution 3: Use /api/google-login-with-email endpoint',
+                'Solution 4: Contact Render.com support about network issues'
+            ]
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# ==================== SIMPLE GOOGLE LOGIN FOR TESTING ====================
+@app.route('/api/google-login-simple', methods=['POST'])
+def google_login_simple():
+    """Simplified Google login for testing"""
+    try:
+        data = request.json
+        email = data.get('email')
+        name = data.get('name')
+        
+        if not email:
+            return jsonify({'success': False, 'error': 'Email required'}), 400
+        
+        if not name:
+            name = email.split('@')[0].replace('.', ' ').title()
+        
+        google_id = f"google_{hash(email) % 1000000}"
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if user exists by email
+            cursor.execute('''
+                SELECT guardian_id, full_name, email
+                FROM guardians 
+                WHERE email = %s
+                LIMIT 1
+            ''', (email,))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                guardian_id = result['guardian_id']
+                full_name = result['full_name']
+            else:
+                # Create new user
+                import random
+                phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
+                
+                cursor.execute('''
+                    INSERT INTO guardians (
+                        full_name, email, phone, password_hash, 
+                        is_active, google_id, auth_provider
+                    )
+                    VALUES (%s, %s, %s, %s, TRUE, %s, 'google')
+                    RETURNING guardian_id
+                ''', (name, email, phone, hash_password(secrets.token_urlsafe(16)), google_id))
+                
+                result = cursor.fetchone()
+                guardian_id = result[0] if result else None
+                full_name = name
+                conn.commit()
+        
+        # Create session
+        token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
+        
+        return jsonify({
+            'success': True,
+            'guardian_id': guardian_id,
+            'full_name': full_name,
+            'email': email,
+            'session_token': token,
+            'message': 'Google login successful'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 # ==================== ADMIN AUTHENTICATION ====================
 @app.route('/api/admin/login', methods=['POST'])
 def admin_login():
@@ -3104,6 +2079,176 @@ def admin_login():
             'error': str(e)
         }), 500
 
+@app.route('/api/admin/logout', methods=['POST'])
+def admin_logout():
+    """Admin logout"""
+    try:
+        data = request.json
+        username = data.get('username')
+        token = data.get('token')
+        
+        if not username or not token:
+            return jsonify({
+                'success': False,
+                'error': 'Missing authentication data'
+            }), 400
+        
+        # Validate before logout
+        if not validate_admin_token(username, token):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid session'
+            }), 401
+        
+        # Remove session
+        if username in admin_sessions:
+            del admin_sessions[username]
+        
+        log_activity(admin_username=username, action='ADMIN_LOGOUT', 
+                    details=f'Admin logged out')
+        
+        return jsonify({
+            'success': True,
+            'message': 'Admin logged out successfully'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# ==================== ADMIN MANAGEMENT ====================
+@app.route('/api/admin/db-drivers', methods=['GET'])
+@require_admin_auth
+def admin_get_drivers():
+    """Get all drivers from database - ADMIN ONLY"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
+                FROM drivers d
+                LEFT JOIN guardians g ON d.guardian_id = g.guardian_id
+                ORDER BY d.registration_date DESC
+            ''')
+            
+            drivers = cursor.fetchall()
+            drivers_list = [dict(driver) for driver in drivers]
+            
+        return jsonify({
+            'success': True,
+            'count': len(drivers_list),
+            'drivers': drivers_list
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/db-alerts', methods=['GET'])
+@require_admin_auth
+def admin_get_alerts():
+    """Get all alerts from database - ADMIN ONLY"""
+    try:
+        limit = request.args.get('limit', 100, type=int)
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT a.*, d.name as driver_name, g.full_name as guardian_name
+                FROM alerts a
+                JOIN drivers d ON a.driver_id = d.driver_id
+                JOIN guardians g ON a.guardian_id = g.guardian_id
+                ORDER BY a.timestamp DESC
+                LIMIT %s
+            ''', (limit,))
+            
+            alerts = cursor.fetchall()
+            
+            result = []
+            for alert in alerts:
+                alert_dict = dict(alert)
+                if alert_dict.get('detection_details'):
+                    try:
+                        alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
+                    except:
+                        pass
+                result.append(alert_dict)
+            
+        return jsonify({
+            'success': True,
+            'count': len(result),
+            'alerts': result
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/db-guardians', methods=['GET'])
+@require_admin_auth
+def admin_get_guardians():
+    """Get all guardians from database - ADMIN ONLY"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT g.*, 
+                       (SELECT COUNT(*) FROM drivers d WHERE d.guardian_id = g.guardian_id) as driver_count,
+                       (SELECT COUNT(*) FROM alerts a WHERE a.guardian_id = g.guardian_id) as alert_count
+                FROM guardians g
+                ORDER BY g.registration_date DESC
+            ''')
+            
+            guardians = cursor.fetchall()
+            guardians_list = [dict(guardian) for guardian in guardians]
+            
+        return jsonify({
+            'success': True,
+            'count': len(guardians_list),
+            'guardians': guardians_list
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/admin/stats', methods=['GET'])
+@require_admin_auth
+def admin_stats():
+    """Admin statistics endpoint - ADMIN ONLY"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            stats = {}
+            cursor.execute('SELECT COUNT(*) as total_alerts FROM alerts')
+            result = cursor.fetchone()
+            stats['total_alerts'] = result['total_alerts'] if isinstance(result, dict) else result[0]
+            
+            cursor.execute('SELECT COUNT(*) as total_drivers FROM drivers')
+            result = cursor.fetchone()
+            stats['total_drivers'] = result['total_drivers'] if isinstance(result, dict) else result[0]
+            
+            cursor.execute('SELECT COUNT(*) as total_guardians FROM guardians')
+            result = cursor.fetchone()
+            stats['total_guardians'] = result['total_guardians'] if isinstance(result, dict) else result[0]
+            
+        return jsonify({
+            'success': True,
+            'statistics': stats,
+            'system_status': {
+                'database': 'postgresql',
+                'connected_clients': len(connected_clients),
+                'admin_sessions': len(admin_sessions),
+                'server_time': datetime.now().isoformat()
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 # ==================== GUARDIAN AUTHENTICATION ====================
 @app.route('/api/login', methods=['POST'])
 def login():
@@ -3145,6 +2290,81 @@ def login():
         print(f"❌ Login error: {e}")
         traceback.print_exc()
         return jsonify({'success': False, 'error': 'Login failed. Please try again.'}), 500
+
+@app.route('/api/logout', methods=['POST'])
+def logout():
+    """Logout guardian and invalidate session"""
+    try:
+        data = request.json or {}
+        guardian_id = data.get('guardian_id')
+        token = data.get('token')
+        
+        if not guardian_id or not token:
+            return jsonify({
+                'success': False,
+                'error': 'Missing authentication data'
+            }), 400
+        
+        # Validate session before logout
+        if not validate_session(guardian_id, token):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid or expired session'
+            }), 401
+        
+        # Invalidate session
+        invalidate_session(guardian_id, token)
+        log_activity(guardian_id, 'LOGOUT', 'Guardian logged out')
+        
+        response = jsonify({
+            'success': True,
+            'message': 'Logged out successfully',
+            'redirect_required': True,
+            'redirect_url': '/?logged_out=true'
+        })
+        
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        
+        return response
+        
+    except Exception as e:
+        print(f"❌ Logout error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/validate-session', methods=['POST'])
+def validate_session_endpoint():
+    """Validate a guardian session"""
+    try:
+        data = request.json or {}
+        guardian_id = data.get('guardian_id')
+        token = data.get('token')
+        
+        if not guardian_id or not token:
+            return jsonify({
+                'success': False,
+                'valid': False,
+                'error': 'Missing authentication data'
+            }), 400
+        
+        is_valid = validate_session(guardian_id, token)
+        
+        return jsonify({
+            'success': True,
+            'valid': is_valid,
+            'guardian_id': guardian_id if is_valid else None,
+            'message': 'Session valid' if is_valid else 'Session invalid'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'valid': False,
+            'error': str(e)
+        }), 500
 
 @app.route('/api/register-guardian', methods=['POST'])
 def register_guardian():
@@ -3308,6 +2528,77 @@ def register_guardian():
             'error': 'Registration failed. Please try again.'
         }), 500
 
+# ==================== GUARDIAN DASHBOARD ====================
+@app.route('/api/guardian/dashboard', methods=['GET'])
+def guardian_dashboard():
+    """Get guardian dashboard data"""
+    try:
+        guardian_id = request.args.get('guardian_id')
+        token = request.args.get('token')
+        
+        if not guardian_id or not token:
+            return jsonify({
+                'success': False,
+                'error': 'Authentication required',
+                'redirect': '/?logged_out=true'
+            }), 401
+        
+        # Validate session
+        if not validate_session(guardian_id, token):
+            return jsonify({
+                'success': False,
+                'error': 'Session expired or invalid',
+                'redirect': '/?logged_out=true'
+            }), 401
+        
+        guardian = get_guardian_by_id(guardian_id)
+        if not guardian:
+            return jsonify({
+                'success': False,
+                'error': 'Guardian not found',
+                'redirect': '/?logged_out=true'
+            }), 404
+        
+        drivers = get_guardian_drivers(guardian_id)
+        recent_alerts = get_recent_alerts(guardian_id, 5)
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT COUNT(*) as count FROM drivers WHERE guardian_id = %s', (guardian_id,))
+            driver_count_result = cursor.fetchone()
+            driver_count = driver_count_result['count'] if isinstance(driver_count_result, dict) else driver_count_result[0]
+            
+            cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s', (guardian_id,))
+            total_alerts_result = cursor.fetchone()
+            total_alerts = total_alerts_result['count'] if isinstance(total_alerts_result, dict) else total_alerts_result[0]
+            
+            cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s AND acknowledged = FALSE', 
+                         (guardian_id,))
+            unread_alerts_result = cursor.fetchone()
+            unread_alerts = unread_alerts_result['count'] if isinstance(unread_alerts_result, dict) else unread_alerts_result[0]
+        
+        return jsonify({
+            'success': True,
+            'guardian': guardian,
+            'session_valid': True,
+            'dashboard': {
+                'driver_count': driver_count,
+                'total_alerts': total_alerts,
+                'unread_alerts': unread_alerts,
+                'recent_alerts': recent_alerts
+            },
+            'drivers': drivers
+        })
+        
+    except Exception as e:
+        print(f"❌ Error in guardian_dashboard: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'redirect': '/?logged_out=true'
+        }), 500
+
 # ==================== ALERT ENDPOINTS ====================
 @app.route('/api/send-alert', methods=['POST'])
 def send_alert():
@@ -3438,6 +2729,731 @@ def send_alert():
             'error': str(e)
         }), 500
 
+@app.route('/api/guardian/alerts', methods=['GET'])
+def get_guardian_alerts():
+    """Get alerts for a guardian"""
+    try:
+        guardian_id = request.args.get('guardian_id')
+        token = request.args.get('token')
+        limit = request.args.get('limit', 20, type=int)
+        acknowledged = request.args.get('acknowledged', type=str)
+        
+        if not guardian_id or not token:
+            return jsonify({
+                'success': False,
+                'error': 'Authentication required'
+            }), 401
+        
+        # Validate session
+        if not validate_session(guardian_id, token):
+            return jsonify({
+                'success': False,
+                'error': 'Session expired or invalid',
+                'redirect': '/?logged_out=true'
+            }), 401
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Build query based on acknowledged filter
+            base_query = '''
+                SELECT a.*, d.name as driver_name
+                FROM alerts a
+                JOIN drivers d ON a.driver_id = d.driver_id
+                WHERE a.guardian_id = %s
+            '''
+            params = [guardian_id]
+            
+            if acknowledged is not None:
+                if acknowledged.lower() == 'true':
+                    base_query += ' AND a.acknowledged = TRUE'
+                elif acknowledged.lower() == 'false':
+                    base_query += ' AND a.acknowledged = FALSE'
+            
+            base_query += ' ORDER BY a.timestamp DESC LIMIT %s'
+            params.append(limit)
+            
+            cursor.execute(base_query, tuple(params))
+            alerts = cursor.fetchall()
+            
+            result_alerts = []
+            for alert in alerts:
+                alert_dict = dict(alert)
+                if alert_dict.get('detection_details'):
+                    try:
+                        alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
+                    except:
+                        pass
+                result_alerts.append(alert_dict)
+            
+            return jsonify({
+                'success': True,
+                'session_valid': True,
+                'count': len(alerts),
+                'alerts': result_alerts
+            })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'redirect': '/?logged_out=true'
+        }), 500
+
+@app.route('/api/guardian/acknowledge-alert', methods=['POST'])
+def acknowledge_alert():
+    """Acknowledge an alert"""
+    try:
+        data = request.json
+        guardian_id = data.get('guardian_id')
+        token = data.get('token')
+        alert_id = data.get('alert_id')
+        
+        if not guardian_id or not token or not alert_id:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required fields'
+            }), 400
+        
+        # Validate session
+        if not validate_session(guardian_id, token):
+            return jsonify({
+                'success': False,
+                'error': 'Session expired or invalid',
+                'redirect': '/?logged_out=true'
+            }), 401
+        
+        with get_db_cursor() as cursor:
+            # Check if alert belongs to this guardian
+            cursor.execute('''
+                SELECT a.*, d.name as driver_name 
+                FROM alerts a
+                JOIN drivers d ON a.driver_id = d.driver_id
+                WHERE a.alert_id = %s AND a.guardian_id = %s
+            ''', (alert_id, guardian_id))
+            
+            alert_result = cursor.fetchone()
+            if not alert_result:
+                return jsonify({
+                    'success': False,
+                    'error': 'Alert not found or not authorized'
+                }), 404
+            
+            alert = dict(alert_result)
+            
+            # Acknowledge the alert
+            cursor.execute('''
+                UPDATE alerts SET acknowledged = TRUE 
+                WHERE alert_id = %s AND guardian_id = %s
+            ''', (alert_id, guardian_id))
+            
+            # Log activity
+            cursor.execute('''
+                INSERT INTO activity_log (guardian_id, action, details)
+                VALUES (%s, %s, %s)
+            ''', (guardian_id, 'ALERT_ACKNOWLEDGED', 
+                f'Acknowledged alert #{alert_id} for driver {alert["driver_name"]}'))
+            
+            # Emit socket event for real-time update
+            socketio.emit('alert_acknowledged', {
+                'alert_id': alert_id,
+                'guardian_id': guardian_id,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            return jsonify({
+                'success': True,
+                'alert_id': alert_id,
+                'acknowledged': True,
+                'message': 'Alert acknowledged successfully'
+            })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'redirect': '/?logged_out=true'
+        }), 500
+
+# ==================== GOOGLE OAUTH DEBUG ENDPOINTS ====================
+@app.route('/api/oauth-config', methods=['GET'])
+def oauth_config():
+    """Check OAuth configuration"""
+    return jsonify({
+        'success': True,
+        'google_configured': bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_ID != 'your-google-client-id-here'),
+        'client_id_preview': GOOGLE_CLIENT_ID[:20] + '...' if GOOGLE_CLIENT_ID else 'Not configured',
+        'message': 'Check if Google OAuth is properly configured'
+    })
+
+@app.route('/api/debug/google-auth', methods=['POST'])
+def debug_google_auth():
+    """Debug Google authentication issues"""
+    try:
+        data = request.json
+        token = data.get('token', '')
+        
+        debug_info = {
+            'token_provided': bool(token),
+            'token_length': len(token) if token else 0,
+            'client_id_configured': bool(GOOGLE_CLIENT_ID),
+            'client_id_preview': GOOGLE_CLIENT_ID[:20] + '...' if GOOGLE_CLIENT_ID else None,
+            'server_time': datetime.now().isoformat()
+        }
+        
+        if token:
+            try:
+                # Try to decode without verification
+                decoded = jwt.decode(token, options={"verify_signature": False})
+                debug_info['token_decodable'] = True
+                debug_info['token_audience'] = decoded.get('aud')
+                debug_info['token_email'] = decoded.get('email')
+                debug_info['token_name'] = decoded.get('name')
+                debug_info['token_exp'] = decoded.get('exp')
+                debug_info['token_iat'] = decoded.get('iat')
+                
+                # Check if token is expired
+                if decoded.get('exp'):
+                    import time
+                    current_time = time.time()
+                    token_exp = decoded['exp']
+                    debug_info['token_expired'] = token_exp < current_time
+                    debug_info['seconds_until_expiry'] = token_exp - current_time if token_exp > current_time else 0
+                
+            except Exception as decode_error:
+                debug_info['token_decodable'] = False
+                debug_info['decode_error'] = str(decode_error)
+            
+            # Try verification
+            try:
+                idinfo = id_token.verify_oauth2_token(
+                    token, 
+                    google_requests.Request(),
+                    GOOGLE_CLIENT_ID
+                )
+                debug_info['token_verifiable'] = True
+                debug_info['verified_email'] = idinfo.get('email')
+                debug_info['verified_name'] = idinfo.get('name')
+            except Exception as verify_error:
+                debug_info['token_verifiable'] = False
+                debug_info['verify_error'] = str(verify_error)
+        
+        return jsonify({
+            'success': True,
+            'debug': debug_info,
+            'recommendations': [
+                'Check if token is expired',
+                'Verify Google OAuth consent screen is published',
+                'Add your email as test user in Google Cloud Console',
+                'Check authorized domains in Google Cloud Console'
+            ]
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/google-auth/reset', methods=['POST'])
+def reset_google_auth():
+    """Reset Google auth state - useful when getting stuck"""
+    try:
+        data = request.json
+        guardian_id = data.get('guardian_id')
+        
+        # Clear any active sessions
+        if guardian_id and guardian_id in active_sessions:
+            del active_sessions[guardian_id]
+        
+        return jsonify({
+            'success': True,
+            'message': 'Google auth state reset',
+            'action_required': 'Please clear browser cache and try again'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# ==================== DEBUG ENDPOINTS ====================
+@app.route('/api/test-bcrypt', methods=['GET'])
+def test_bcrypt():
+    """Test bcrypt functionality"""
+    try:
+        # Test bcrypt
+        test_password = "test123"
+        
+        # Generate hash
+        password_hash = hash_password(test_password)
+        
+        # Verify hash
+        is_valid = verify_password(test_password, password_hash)
+        
+        # Test with wrong password
+        is_wrong = verify_password("wrong", password_hash)
+        
+        # Test admin password
+        admin_valid = verify_password("admin123", ADMIN_PASSWORD_HASH)
+        
+        # Manual bcrypt test
+        password_bytes = test_password.encode('utf-8')
+        salt = bcrypt.gensalt(rounds=12)
+        manual_hash = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
+        manual_valid = bcrypt.checkpw(password_bytes, manual_hash.encode('utf-8'))
+        
+        return jsonify({
+            'success': True,
+            'test_password': test_password,
+            'hash_generated': password_hash[:50] + "..." if len(password_hash) > 50 else password_hash,
+            'hash_length': len(password_hash),
+            'hash_starts_with': password_hash[:10],
+            'hash_format_valid': password_hash.startswith('$2'),
+            'correct_password_matches': is_valid,
+            'wrong_password_matches': is_wrong,
+            'admin_password_valid': admin_valid,
+            'manual_bcrypt_hash': manual_hash[:50] + "...",
+            'manual_bcrypt_valid': manual_valid,
+            'note': 'bcrypt hash should start with $2b$12$ and be ~60 chars long'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        })
+
+@app.route('/api/debug/password', methods=['GET'])
+def debug_password():
+    """Debug password hash for a specific guardian"""
+    try:
+        guardian_id = request.args.get('guardian_id')
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT guardian_id, phone, password_hash, LENGTH(password_hash) as hash_length
+                FROM guardians 
+                WHERE guardian_id = %s
+            ''', (guardian_id,))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                guardian_data = dict(result)
+                password_hash = guardian_data['password_hash']
+                return jsonify({
+                    'success': True,
+                    'guardian': guardian_data,
+                    'hash_starts_with': password_hash[:30] if password_hash else 'None',
+                    'hash_ends_with': password_hash[-10:] if password_hash else 'None',
+                    'is_bcrypt': password_hash.startswith('$2') if password_hash else False,
+                    'hash_raw_preview': repr(password_hash)[:100] if password_hash else 'None'
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Guardian not found'
+                })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/debug/verify', methods=['POST'])
+def debug_verify():
+    """Debug password verification"""
+    try:
+        data = request.json
+        guardian_id = data.get('guardian_id')
+        password = data.get('password')
+        
+        if not guardian_id or not password:
+            return jsonify({
+                'success': False,
+                'error': 'Missing guardian_id or password'
+            }), 400
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT password_hash FROM guardians WHERE guardian_id = %s
+            ''', (guardian_id,))
+            
+            result = cursor.fetchone()
+            
+            if not result:
+                return jsonify({
+                    'success': False,
+                    'error': 'Guardian not found'
+                })
+            
+            stored_hash = result['password_hash']
+            
+            # Clean the password
+            cleaned_password = clean_password(password)
+            
+            # Manual bcrypt verification
+            try:
+                password_bytes = cleaned_password.encode('utf-8')
+                hash_bytes = stored_hash.encode('utf-8')
+                
+                is_valid = bcrypt.checkpw(password_bytes, hash_bytes)
+                
+                return jsonify({
+                    'success': True,
+                    'guardian_id': guardian_id,
+                    'password_provided': password,
+                    'password_cleaned': cleaned_password,
+                    'cleaned_length': len(cleaned_password),
+                    'stored_hash_preview': stored_hash[:50] + '...' if len(stored_hash) > 50 else stored_hash,
+                    'stored_hash_full': stored_hash,
+                    'hash_length': len(stored_hash),
+                    'is_bcrypt_format': stored_hash.startswith('$2'),
+                    'bcrypt_prefix': stored_hash[:10] if stored_hash else 'None',
+                    'verification_result': is_valid,
+                    'notes': 'This is the manual bcrypt.checkpw() result'
+                })
+            except Exception as bcrypt_error:
+                return jsonify({
+                    'success': False,
+                    'error': f'Bcrypt error: {str(bcrypt_error)}',
+                    'stored_hash_preview': stored_hash[:50] + '...' if len(stored_hash) > 50 else stored_hash,
+                    'stored_hash_full': stored_hash,
+                    'hash_length': len(stored_hash),
+                    'bcrypt_prefix': stored_hash[:10] if stored_hash else 'None'
+                })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/debug/db-hash', methods=['GET'])
+def debug_db_hash():
+    """Debug database hash storage"""
+    try:
+        phone = request.args.get('phone', '09776540694')
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT guardian_id, phone, password_hash, 
+                       LENGTH(password_hash) as hash_len,
+                       SUBSTRING(password_hash, 1, 10) as hash_start,
+                       SUBSTRING(password_hash, 50, 10) as hash_middle,
+                       SUBSTRING(password_hash, -10) as hash_end
+                FROM guardians 
+                WHERE phone LIKE %s
+                ORDER BY guardian_id DESC
+                LIMIT 5
+            ''', (f'%{phone}%',))
+            
+            results = cursor.fetchall()
+            
+            guardians = []
+            for row in results:
+                guardians.append(dict(row))
+            
+            return jsonify({
+                'success': True,
+                'phone_search': phone,
+                'guardians': guardians,
+                'count': len(guardians)
+            })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/debug/register-test', methods=['POST'])
+def debug_register_test():
+    """Debug registration and immediate verification"""
+    try:
+        data = request.json
+        phone = data.get('phone', '09776540696')
+        password = data.get('password', '12345678')
+        
+        # Clean password
+        cleaned_password = clean_password(password)
+        
+        # Hash password
+        password_hash = hash_password(cleaned_password)
+        
+        # Try to verify immediately
+        verify_result = verify_password(password, password_hash)
+        
+        # Manual bcrypt verification
+        password_bytes = cleaned_password.encode('utf-8')
+        hash_bytes = password_hash.encode('utf-8')
+        manual_result = bcrypt.checkpw(password_bytes, hash_bytes)
+        
+        return jsonify({
+            'success': True,
+            'phone': phone,
+            'password': password,
+            'cleaned_password': cleaned_password,
+            'hash_generated': password_hash[:50] + '...',
+            'hash_length': len(password_hash),
+            'is_bcrypt': password_hash.startswith('$2'),
+            'verify_password_result': verify_result,
+            'manual_bcrypt_result': manual_result,
+            'notes': 'Testing if hash/verify works in the same process'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# ==================== NEW DEBUG ENDPOINTS ====================
+@app.route('/api/debug/test-fetch', methods=['GET'])
+def test_fetch():
+    """Test fetching a guardian record"""
+    try:
+        phone = request.args.get('phone', '09776540696')
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT guardian_id, full_name, password_hash, is_active
+                FROM guardians 
+                WHERE phone = %s
+            ''', (phone,))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                return jsonify({
+                    'success': True,
+                    'result_type': str(type(result)),
+                    'result': dict(result),
+                    'keys': list(result.keys()) if hasattr(result, 'keys') else 'No keys attribute',
+                    'is_dict': isinstance(result, dict),
+                    'is_tuple': isinstance(result, tuple),
+                    'length': len(result) if hasattr(result, '__len__') else 'No length'
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'No user found'
+                })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/debug/check-all-hashes', methods=['GET'])
+def check_all_password_hashes():
+    """Check all password hashes in the database"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT guardian_id, phone, 
+                       password_hash, 
+                       LENGTH(password_hash) as hash_len,
+                       password_hash LIKE '$2%' as is_bcrypt
+                FROM guardians 
+                ORDER BY guardian_id
+            ''')
+            
+            results = cursor.fetchall()
+            
+            guardians = []
+            for row in results:
+                guardians.append({
+                    'guardian_id': row['guardian_id'],
+                    'phone': row['phone'],
+                    'password_hash_preview': row['password_hash'][:30] + '...' if row['password_hash'] and len(row['password_hash']) > 30 else row['password_hash'],
+                    'hash_length': row['hash_len'],
+                    'is_bcrypt': row['is_bcrypt']
+                })
+            
+            return jsonify({
+                'success': True,
+                'count': len(guardians),
+                'guardians': guardians
+            })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/debug/fix-hash', methods=['POST'])
+def fix_password_hash():
+    """Fix password hash for a specific guardian"""
+    try:
+        data = request.json
+        guardian_id = data.get('guardian_id')
+        new_password = data.get('password')
+        
+        if not guardian_id or not new_password:
+            return jsonify({
+                'success': False,
+                'error': 'Missing guardian_id or password'
+            }), 400
+        
+        # Clean and hash the password
+        cleaned_password = clean_password(new_password)
+        password_hash = hash_password(cleaned_password)
+        
+        with get_db_cursor() as cursor:
+            # Update the password hash
+            cursor.execute('''
+                UPDATE guardians 
+                SET password_hash = %s 
+                WHERE guardian_id = %s
+            ''', (password_hash, guardian_id))
+            
+            # Verify the update
+            cursor.execute('''
+                SELECT password_hash, LENGTH(password_hash) as hash_len 
+                FROM guardians 
+                WHERE guardian_id = %s
+            ''', (guardian_id,))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                stored_hash, hash_len = result[0], result[1]
+                return jsonify({
+                    'success': True,
+                    'guardian_id': guardian_id,
+                    'new_hash_preview': stored_hash[:30] + '...',
+                    'hash_length': hash_len,
+                    'is_bcrypt': stored_hash.startswith('$2'),
+                    'message': 'Password hash updated successfully'
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Guardian not found'
+                })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+# ==================== DEBUG FILES ENDPOINT ====================
+@app.route('/api/debug/files', methods=['GET'])
+def debug_files():
+    """Debug endpoint to check file paths"""
+    try:
+        debug_info = {
+            'base_dir': BASE_DIR,
+            'frontend_dir': FRONTEND_DIR,
+            'current_working_dir': os.getcwd(),
+            'environment': {k: v for k, v in os.environ.items() if 'KEY' not in k and 'PASS' not in k},
+            'frontend_exists': os.path.exists(FRONTEND_DIR) if FRONTEND_DIR else False,
+            'frontend_contents': [],
+            'icon_files': [],
+            'html_files': []
+        }
+        
+        if FRONTEND_DIR and os.path.exists(FRONTEND_DIR):
+            try:
+                files = os.listdir(FRONTEND_DIR)
+                debug_info['frontend_contents'] = files
+                debug_info['icon_files'] = [f for f in files if 'icon' in f.lower()]
+                debug_info['html_files'] = [f for f in files if f.endswith('.html')]
+                
+                # Check specific icon files
+                for icon_size in ['72', '96', '128', '144', '152', '192', '384', '512']:
+                    icon_file = f'icon-{icon_size}.png'
+                    icon_path = os.path.join(FRONTEND_DIR, icon_file)
+                    debug_info[f'icon_{icon_size}_exists'] = os.path.exists(icon_path)
+                    if os.path.exists(icon_path):
+                        debug_info[f'icon_{icon_size}_path'] = icon_path
+                        debug_info[f'icon_{icon_size}_size'] = os.path.getsize(icon_path)
+            except Exception as e:
+                debug_info['listdir_error'] = str(e)
+        
+        return jsonify(debug_info)
+    except Exception as e:
+        return jsonify({'error': str(e), 'traceback': traceback.format_exc()}), 500
+
+# ==================== DEBUG GOOGLE USERS ====================
+@app.route('/api/debug/google-users', methods=['GET'])
+def debug_google_users():
+    """Debug endpoint to check Google users in database"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT guardian_id, full_name, email, phone, auth_provider, google_id
+                FROM guardians 
+                WHERE auth_provider = 'google'
+                ORDER BY guardian_id
+            ''')
+            
+            google_users = cursor.fetchall()
+            
+            result = []
+            for user in google_users:
+                result.append(dict(user))
+            
+            return jsonify({
+                'success': True,
+                'count': len(result),
+                'google_users': result
+            })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/fix-google-user', methods=['POST'])
+def fix_google_user():
+    """Fix Google user email and name"""
+    try:
+        data = request.json
+        guardian_id = data.get('guardian_id')
+        new_email = data.get('email')
+        new_name = data.get('name')
+        
+        if not guardian_id or not new_email:
+            return jsonify({
+                'success': False,
+                'error': 'Missing guardian_id or email'
+            }), 400
+        
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                UPDATE guardians 
+                SET email = %s, full_name = %s
+                WHERE guardian_id = %s AND auth_provider = 'google'
+            ''', (new_email, new_name or 'Google User', guardian_id))
+            
+            return jsonify({
+                'success': True,
+                'message': f'Google user {guardian_id} updated'
+            })
+                
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 # ==================== STATIC FILES ====================
 @app.route('/<path:filename>')
 def serve_static(filename):
@@ -3449,7 +3465,7 @@ def serve_static(filename):
 
 # ==================== APPLICATION STARTUP ====================
 def startup_tasks():
-    """Run startup tasks - UPDATED VERSION"""
+    """Run startup tasks"""
     print(f"\n{'='*70}")
     print("🚗 DRIVER DROWSINESS ALERT SYSTEM - CAPSTONE PROJECT")
     print(f"{'='*70}")
@@ -3457,8 +3473,6 @@ def startup_tasks():
     print("🌐 DEPLOYMENT: Render.com Cloud")
     print("📊 Database: PostgreSQL (Persistent)")
     print("🔒 Security: bcrypt password hashing enabled")
-    print("🤖 Face Validation: " + 
-          ("RetinaFace" if RETINAFACE_AVAILABLE else "OpenCV" if OPENCV_AVAILABLE else "Disabled"))
     
     # Check environment variables
     print("\n🔧 Environment Check:")
@@ -3520,7 +3534,7 @@ def startup_tasks():
             # Check specific important files
             important_files = [
                 'icon-192.png','icon-72.png', 'icon-96.png', 'icon-128.png', 'icon-512.png', 'login.html', 
-                'admin_login.html', 'guardian-register.html', 'register-driver.html',
+                'admin_login.html', 'guardian-register.html',
                 'manifest.json', 'service-worker.js'
             ]
             
@@ -3559,10 +3573,6 @@ def startup_tasks():
         # Update schema for google_id column
         print("\n🔧 Schema Updates:")
         update_db_schema()
-        
-        # Create face images table
-        create_face_images_table()
-        
     except Exception as e:
         print(f"⚠️ Database initialization error: {e}")
         import traceback
@@ -3572,15 +3582,6 @@ def startup_tasks():
     print("\n🔐 Security Status:")
     print(f"   Admin password hash: {ADMIN_PASSWORD_HASH[:20]}...")
     print(f"   Hash algorithm: bcrypt (12 rounds)")
-    
-    # Face validation status
-    print("\n🤖 Face Validation Status:")
-    if RETINAFACE_AVAILABLE:
-        print("   ✅ RetinaFace: Available")
-    elif OPENCV_AVAILABLE:
-        print("   ✅ OpenCV: Available (fallback)")
-    else:
-        print("   ❌ Face detection: Not available")
     
     # Network and server info
     print("\n🌐 Network Configuration:")
@@ -3596,7 +3597,7 @@ def startup_tasks():
     else:
         print(f"   ⚠️  Not running on Render (local development)")
     
-    # API endpoints summary - UPDATED with new endpoints
+    # API endpoints summary
     print(f"\n🔗 Available API Endpoints:")
     endpoints = [
         ("GET", "/api/health", "Health check"),
@@ -3606,11 +3607,6 @@ def startup_tasks():
         ("POST", "/api/send-alert", "Send drowsiness alert"),
         ("GET", "/api/guardian/dashboard", "Guardian dashboard"),
         ("POST", "/api/admin/login", "Admin login"),
-        ("POST", "/api/validate-faces", "Validate face images"),
-        ("POST", "/api/capture-guidance", "Face capture guidance"),
-        ("POST", "/api/auto-capture", "Auto-capture with blink detection"),
-        ("POST", "/api/face-landmarks", "Get facial landmarks"),
-        ("POST", "/api/register-driver", "Register driver with faces"),
         ("GET", "/api/debug/files", "Debug file paths"),
     ]
     
@@ -3630,23 +3626,15 @@ def startup_tasks():
     print(f"  • Active Clients: {len(connected_clients)}")
     print(f"  • Active Sessions: {len(active_sessions)}")
     
-    # Face validation requirements
-    print(f"\n📸 Face Validation Requirements:")
-    print(f"  • Required: 2 images per driver")
-    print(f"  • Validation: Different expressions/angles")
-    print(f"  • Technology: " + ("RetinaFace" if RETINAFACE_AVAILABLE else "OpenCV Haar Cascade"))
-    
     # Startup completion
     print(f"\n✅ Startup Tasks Complete")
-    print(f"   Server Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   Server Time: {datetime.now().strftime('%Y-%m-d %H:%M:%S')}")
     print(f"   Timezone: {time.tzname[0] if time.tzname else 'UTC'}")
     
     print(f"\n🚀 Ready to accept connections")
     print(f"   Web Interface: http://localhost:{port}")
     print(f"   Health Check: http://localhost:{port}/api/health")
     print(f"   WebSocket: ws://localhost:{port}/socket.io/")
-    print(f"   Face Validation: POST http://localhost:{port}/api/validate-faces")
-    print(f"   Face Capture: POST http://localhost:{port}/api/capture-guidance")
     print(f"{'='*70}\n")
 
 # ==================== MAIN ENTRY POINT ====================
@@ -3661,13 +3649,8 @@ if __name__ == '__main__':
     print(f"🚀 Starting server on {host}:{port}")
     print(f"🌐 WebSocket endpoint: ws://{host}:{port}")
     print(f"📡 Alert endpoint: http://{host}:{port}/api/send-alert")
-    print(f"📸 Face Validation: http://{host}:{port}/api/validate-faces")
-    print(f"🎯 Face Guidance: http://{host}:{port}/api/capture-guidance")
-    print(f"👁️  Auto-Capture: http://{host}:{port}/api/auto-capture")
-    print(f"👤 Driver Registration: http://{host}:{port}/api/register-driver")
     print(f"🔧 Debug endpoints available at /api/debug/*")
     print(f"🔐 Google OAuth: {'Enabled' if GOOGLE_CLIENT_ID else 'Disabled'}")
-    print(f"🤖 Face Detection: {'RetinaFace' if RETINAFACE_AVAILABLE else 'OpenCV' if OPENCV_AVAILABLE else 'Disabled'}")
     
     # Run the application
     socketio.run(app, 
