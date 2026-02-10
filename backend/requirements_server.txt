@@ -28,3 +28,6 @@ pytest==7.4.0
 
 # CERTIFICATION
 pyopenssl==23.3.0
+
+#Image Classification 
+retina-face==0.0.14
