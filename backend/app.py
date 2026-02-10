@@ -1,7 +1,7 @@
 ﻿"""
 CAPSTONE PROJECT - DRIVER ALERT SYSTEM
 PostgreSQL-only Version for Render.com Deployment
-FINAL FIXED VERSION - Complete with all Google OAuth fixes
+FINAL FIXED VERSION - Updated for Firebase Hosting Integration
 """
 
 import os
@@ -108,21 +108,35 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 # Google OAuth Configuration
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 
+# ==================== FIREBASE HOSTING INTEGRATION ====================
+# List of allowed origins (Firebase domains + Render + localhost)
+ALLOWED_ORIGINS = [
+    'https://guardian-drive.web.app',
+    'https://guardian-drive.firebaseapp.com',
+    'https://driver-drowsiness-with-alert.onrender.com',
+    'http://localhost:5000',
+    'http://localhost:8080',
+    'http://localhost:3000',
+    'http://127.0.0.1:5000',
+    'http://127.0.0.1:8080',
+    'http://127.0.0.1:3000',
+]
+
 # Configure for production with proxy support
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
+
+# Configure CORS for Firebase Hosting
 CORS(app, 
      supports_credentials=True,
-     resources={
-         r"/*": {
-             "origins": ["*"],
-             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-             "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "X-Admin-Username", "X-Admin-Token"]
-         }
-     })
+     origins=ALLOWED_ORIGINS,
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     allow_headers=["Content-Type", "Authorization", "X-Requested-With", "X-Admin-Username", "X-Admin-Token", "Origin", "Accept"],
+     expose_headers=["Content-Type", "Authorization"],
+     max_age=600)
 
-# Initialize SocketIO for real-time alerts
+# Initialize SocketIO for real-time alerts with Firebase CORS
 socketio = SocketIO(app, 
-                   cors_allowed_origins="*",
+                   cors_allowed_origins=ALLOWED_ORIGINS,
                    async_mode='eventlet',
                    ping_timeout=60,
                    ping_interval=25,
@@ -921,18 +935,34 @@ def get_driver_by_name_or_id(identifier):
 @app.after_request
 def add_security_headers(response):
     """Add security headers to all responses"""
+    # CORS headers for Firebase Hosting
+    origin = request.headers.get('Origin')
+    if origin in ALLOWED_ORIGINS:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, X-Admin-Username, X-Admin-Token'
+    
+    # Standard security headers
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-XSS-Protection'] = '1; mode=block'
     response.headers['Content-Security-Policy'] = (
-        "default-src 'self'; "
-        "script-src 'self' https://cdn.jsdelivr.net https://accounts.google.com 'unsafe-inline'; "
+        "default-src 'self' https://guardian-drive.web.app https://driver-drowsiness-with-alert.onrender.com; "
+        "script-src 'self' https://cdn.jsdelivr.net https://accounts.google.com 'unsafe-inline' 'unsafe-eval'; "
         "style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
-        "img-src 'self' data: https:; "
+        "img-src 'self' data: https: blob:; "
         "font-src 'self' https://cdn.jsdelivr.net; "
-        "connect-src 'self' ws: wss: https://accounts.google.com; "
+        "connect-src 'self' wss://driver-drowsiness-with-alert.onrender.com https://driver-drowsiness-with-alert.onrender.com https://accounts.google.com; "
         "frame-src https://accounts.google.com;"
+        "worker-src 'self' blob:;"
     )
+    
+    # Cache control
+    if request.path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
     
     return response
 
@@ -948,6 +978,7 @@ def handle_connect():
         'guardian_id': None,
         'authenticated': False
     }
+    print(f"✅ WebSocket client connected: {client_id} from {request.remote_addr}")
     emit('connected', {'status': 'connected', 'client_id': client_id})
 
 @socketio.on('disconnect')
@@ -955,6 +986,7 @@ def handle_disconnect():
     """Handle client disconnection"""
     client_id = request.sid
     if client_id in connected_clients:
+        print(f"⚠️  WebSocket client disconnected: {client_id}")
         del connected_clients[client_id]
 
 @socketio.on('guardian_authenticate')
@@ -971,6 +1003,7 @@ def handle_guardian_auth(data):
         
         guardian = get_guardian_by_id(guardian_id)
         if guardian:
+            print(f"✅ Guardian authenticated via WebSocket: {guardian['full_name']} ({guardian_id})")
             emit('auth_confirmed', {
                 'guardian_id': guardian_id,
                 'full_name': guardian['full_name'],
@@ -978,6 +1011,7 @@ def handle_guardian_auth(data):
             })
             return
     
+    print(f"❌ WebSocket authentication failed for client: {client_id}")
     emit('auth_failed', {'error': 'Authentication failed'})
     socketio.disconnect(client_id)
 
@@ -1032,7 +1066,9 @@ def serve_icon(size):
         if os.path.exists(icon_path):
             try:
                 print(f"✅ Serving icon from: {icon_path}")
-                return send_from_directory(os.path.dirname(icon_path), filename)
+                response = send_from_directory(os.path.dirname(icon_path), filename)
+                response.headers['Cache-Control'] = 'public, max-age=31536000'
+                return response
             except Exception as e:
                 print(f"⚠️ Error serving icon {filename} from {icon_path}: {e}")
                 continue
@@ -1071,7 +1107,9 @@ def serve_icon(size):
 def serve_offline():
     """Offline fallback page"""
     try:
-        return send_from_directory(FRONTEND_DIR, 'offline.html')
+        response = send_from_directory(FRONTEND_DIR, 'offline.html')
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        return response
     except:
         # Generate offline page
         offline_html = '''
@@ -1175,6 +1213,34 @@ def serve_home():
     else:
         return send_from_directory(FRONTEND_DIR, 'admin_login.html')
 
+@app.route('/firebase-redirect')
+def firebase_redirect():
+    """Special endpoint for Firebase Hosting redirects"""
+    logged_out = request.args.get('logged_out')
+    prefilled_phone = request.args.get('prefilled_phone', '')
+    
+    # Redirect to appropriate page based on device
+    if is_mobile_device():
+        if logged_out:
+            return redirect(f'/login.html?logged_out=true')
+        if prefilled_phone:
+            return redirect(f'/login.html?prefilled_phone={prefilled_phone}')
+        return redirect('/login.html')
+    else:
+        return redirect('/admin_login.html')
+
+@app.route('/api/firebase-config', methods=['GET'])
+def get_firebase_config():
+    """Get Firebase configuration for clients"""
+    return jsonify({
+        'success': True,
+        'firebase_domain': 'guardian-drive.web.app',
+        'render_backend': 'https://driver-drowsiness-with-alert.onrender.com',
+        'websocket_url': 'wss://driver-drowsiness-with-alert.onrender.com',
+        'api_base': 'https://driver-drowsiness-with-alert.onrender.com/api',
+        'message': 'Firebase Hosting configuration'
+    })
+
 @app.route('/api/fix-db-schema', methods=['POST'])
 def fix_db_schema():
     """Fix database schema by adding missing columns"""
@@ -1231,17 +1297,21 @@ def redirect_to_guardian_register():
 @app.route('/admin_login')
 def serve_admin_login():
     """Admin login page"""
-    return send_from_directory(FRONTEND_DIR, 'admin_login.html')
+    response = send_from_directory(FRONTEND_DIR, 'admin_login.html')
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+    return response
 
 @app.route('/admin')
 def serve_admin_dashboard():
     """Admin dashboard page"""
-    return send_from_directory(FRONTEND_DIR, 'admin_login.html')
+    return redirect('/admin_login.html')
 
 @app.route('/guardian-register')
 def serve_guardian_register():
     """Guardian registration page"""
-    return send_from_directory(FRONTEND_DIR, 'guardian-register.html')
+    response = send_from_directory(FRONTEND_DIR, 'guardian-register.html')
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+    return response
 
 @app.route('/guardian-dashboard')
 def serve_guardian_dashboard():
@@ -1472,6 +1542,7 @@ def serve_manifest():
     try:
         response = send_from_directory(FRONTEND_DIR, 'manifest.json')
         response.headers['Content-Type'] = 'application/manifest+json'
+        response.headers['Cache-Control'] = 'public, max-age=3600'
         return response
     except:
         return jsonify({
@@ -1501,6 +1572,7 @@ def serve_service_worker():
         response = send_from_directory(FRONTEND_DIR, 'service-worker.js')
         response.headers['Content-Type'] = 'application/javascript'
         response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
         return response
     except:
         return Response('''
@@ -1532,11 +1604,14 @@ def health_check():
             'status': 'running',
             'timestamp': datetime.now().isoformat(),
             'server': 'Driver Alert System',
-            'version': '2.0.0',
+            'version': '2.1.0',
             'connected_clients': len(connected_clients),
             'active_sessions': len(active_sessions),
             'database': 'postgresql',
-            'google_auth': bool(GOOGLE_CLIENT_ID)
+            'google_auth': bool(GOOGLE_CLIENT_ID),
+            'firebase_integration': True,
+            'allowed_origins': ALLOWED_ORIGINS,
+            'websocket_connections': len(connected_clients)
         }
         
         return jsonify(health_info)
@@ -1555,6 +1630,7 @@ def get_google_config():
     return jsonify({
         'success': True,
         'google_client_id': GOOGLE_CLIENT_ID,
+        'firebase_domain': 'guardian-drive.web.app',
         'message': 'Google OAuth configuration loaded'
     })
 
@@ -1922,7 +1998,8 @@ def troubleshoot_google_auth():
         env_status = {
             'GOOGLE_CLIENT_ID': 'Configured' if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_ID != 'your-google-client-id-here' else 'Not Configured',
             'DATABASE_URL': 'Configured' if os.environ.get('DATABASE_URL') else 'Not Configured',
-            'RENDER': 'Yes' if os.environ.get('RENDER') else 'No (Local)'
+            'RENDER': 'Yes' if os.environ.get('RENDER') else 'No (Local)',
+            'FIREBASE_INTEGRATION': 'Enabled'
         }
         
         # Check if we can make external requests
@@ -2239,7 +2316,9 @@ def admin_stats():
                 'database': 'postgresql',
                 'connected_clients': len(connected_clients),
                 'admin_sessions': len(admin_sessions),
-                'server_time': datetime.now().isoformat()
+                'server_time': datetime.now().isoformat(),
+                'firebase_integration': True,
+                'allowed_origins': ALLOWED_ORIGINS
             }
         })
         
@@ -2883,6 +2962,7 @@ def oauth_config():
         'success': True,
         'google_configured': bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_ID != 'your-google-client-id-here'),
         'client_id_preview': GOOGLE_CLIENT_ID[:20] + '...' if GOOGLE_CLIENT_ID else 'Not configured',
+        'firebase_domain': 'guardian-drive.web.app',
         'message': 'Check if Google OAuth is properly configured'
     })
 
@@ -2898,7 +2978,8 @@ def debug_google_auth():
             'token_length': len(token) if token else 0,
             'client_id_configured': bool(GOOGLE_CLIENT_ID),
             'client_id_preview': GOOGLE_CLIENT_ID[:20] + '...' if GOOGLE_CLIENT_ID else None,
-            'server_time': datetime.now().isoformat()
+            'server_time': datetime.now().isoformat(),
+            'firebase_integration': True
         }
         
         if token:
@@ -3364,7 +3445,9 @@ def debug_files():
             'frontend_exists': os.path.exists(FRONTEND_DIR) if FRONTEND_DIR else False,
             'frontend_contents': [],
             'icon_files': [],
-            'html_files': []
+            'html_files': [],
+            'firebase_integration': True,
+            'allowed_origins': ALLOWED_ORIGINS
         }
         
         if FRONTEND_DIR and os.path.exists(FRONTEND_DIR):
@@ -3454,12 +3537,39 @@ def fix_google_user():
             'error': str(e)
         }), 500
 
+# ==================== FIREBASE SPECIFIC ENDPOINTS ====================
+@app.route('/api/firebase-test', methods=['GET'])
+def firebase_test():
+    """Test Firebase Hosting integration"""
+    return jsonify({
+        'success': True,
+        'message': 'Firebase Hosting integration is working',
+        'firebase_domain': 'guardian-drive.web.app',
+        'backend_url': 'https://driver-drowsiness-with-alert.onrender.com',
+        'timestamp': datetime.now().isoformat(),
+        'cors_enabled': True,
+        'websocket_support': True,
+        'allowed_origins': ALLOWED_ORIGINS
+    })
+
 # ==================== STATIC FILES ====================
 @app.route('/<path:filename>')
 def serve_static(filename):
     """Serve all frontend static files"""
     try:
-        return send_from_directory(FRONTEND_DIR, filename)
+        response = send_from_directory(FRONTEND_DIR, filename)
+        
+        # Set cache headers based on file type
+        if filename.endswith(('.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg')):
+            response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        elif filename.endswith(('.js', '.css')):
+            response.headers['Cache-Control'] = 'public, max-age=86400'
+        else:
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+        
+        return response
     except:
         return jsonify({'error': 'File not found'}), 404
 
@@ -3470,9 +3580,10 @@ def startup_tasks():
     print("🚗 DRIVER DROWSINESS ALERT SYSTEM - CAPSTONE PROJECT")
     print(f"{'='*70}")
     
-    print("🌐 DEPLOYMENT: Render.com Cloud")
+    print("🌐 DEPLOYMENT: Render.com Cloud with Firebase Hosting")
     print("📊 Database: PostgreSQL (Persistent)")
     print("🔒 Security: bcrypt password hashing enabled")
+    print("🔥 Firebase: Hosting integration enabled")
     
     # Check environment variables
     print("\n🔧 Environment Check:")
@@ -3506,6 +3617,10 @@ def startup_tasks():
         print(f"   ✅ SECRET_KEY: [configured]")
     else:
         print(f"   ⚠️  SECRET_KEY: using generated key")
+    
+    # Firebase integration
+    print(f"   ✅ Firebase Integration: Enabled")
+    print(f"   ✅ Allowed Origins: {len(ALLOWED_ORIGINS)} domains configured")
     
     # File system paths
     print("\n📁 File System Paths:")
@@ -3594,6 +3709,7 @@ def startup_tasks():
     if render_env:
         print(f"   ✅ Running on Render.com")
         print(f"   Render Service: {os.environ.get('RENDER_SERVICE_NAME', 'unknown')}")
+        print(f"   Firebase Frontend: https://guardian-drive.web.app")
     else:
         print(f"   ⚠️  Not running on Render (local development)")
     
@@ -3601,6 +3717,7 @@ def startup_tasks():
     print(f"\n🔗 Available API Endpoints:")
     endpoints = [
         ("GET", "/api/health", "Health check"),
+        ("GET", "/api/firebase-test", "Firebase integration test"),
         ("POST", "/api/login", "Guardian login"),
         ("POST", "/api/google-login", "Google OAuth login"),
         ("POST", "/api/register-guardian", "Guardian registration"),
@@ -3619,12 +3736,14 @@ def startup_tasks():
     print("  • Admin Password: admin123")
     print("  • Guardian Registration: Open to public")
     print("  • Google OAuth: " + ("Enabled" if google_client_id and google_client_id != 'your-google-client-id-here' else "Disabled"))
+    print("  • Firebase Domain: guardian-drive.web.app")
     
     # Real-time features
     print(f"\n⚡ Real-time Features:")
     print(f"  • WebSocket Alerts: Enabled")
     print(f"  • Active Clients: {len(connected_clients)}")
     print(f"  • Active Sessions: {len(active_sessions)}")
+    print(f"  • Firebase CORS: Configured")
     
     # Startup completion
     print(f"\n✅ Startup Tasks Complete")
@@ -3632,9 +3751,10 @@ def startup_tasks():
     print(f"   Timezone: {time.tzname[0] if time.tzname else 'UTC'}")
     
     print(f"\n🚀 Ready to accept connections")
-    print(f"   Web Interface: http://localhost:{port}")
-    print(f"   Health Check: http://localhost:{port}/api/health")
-    print(f"   WebSocket: ws://localhost:{port}/socket.io/")
+    print(f"   Render Backend: https://driver-drowsiness-with-alert.onrender.com")
+    print(f"   Firebase Frontend: https://guardian-drive.web.app")
+    print(f"   Health Check: https://driver-drowsiness-with-alert.onrender.com/api/health")
+    print(f"   WebSocket: wss://driver-drowsiness-with-alert.onrender.com/socket.io/")
     print(f"{'='*70}\n")
 
 # ==================== MAIN ENTRY POINT ====================
@@ -3651,6 +3771,7 @@ if __name__ == '__main__':
     print(f"📡 Alert endpoint: http://{host}:{port}/api/send-alert")
     print(f"🔧 Debug endpoints available at /api/debug/*")
     print(f"🔐 Google OAuth: {'Enabled' if GOOGLE_CLIENT_ID else 'Disabled'}")
+    print(f"🔥 Firebase Integration: Active (CORS configured for Firebase domains)")
     
     # Run the application
     socketio.run(app, 

@@ -203,3 +203,8 @@ dist/
 *.sass-cache
 *.css.map
 *.js.map
+
+# Firebase deployment
+firebase-deploy/
+firebase-debug.log
+.firebase/

@@ -11,10 +11,6 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- TensorFlow.js -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
-    <!-- Face-API.js -->
-    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@latest/dist/face-api.min.js"></script>
     
     <style>
         :root {
@@ -403,12 +399,6 @@
         
         #canvas {
             display: none;
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: 2;
         }
         
         .camera-placeholder {
@@ -436,7 +426,7 @@
             margin-bottom: 10px;
         }
         
-        /* Capture Guide */
+        /* NEW: Capture Guide */
         .capture-guide-container {
             background: #f8f9fa;
             border-radius: var(--border-radius);
@@ -615,85 +605,57 @@
             background: #e0a800;
         }
         
-        /* Face Detection Indicators */
-        .face-indicator {
+        /* NEW: Warning Alert */
+        .angle-warning {
+            background: rgba(255, 193, 7, 0.1);
+            border: 2px solid var(--warning-color);
+            border-radius: var(--border-radius);
+            padding: 15px;
+            margin: 15px auto;
+            max-width: 640px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .angle-warning i {
+            color: var(--warning-color);
+            font-size: 24px;
+        }
+        
+        .angle-warning-content h6 {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 3px;
+            color: var(--dark-color);
+        }
+        
+        .angle-warning-content p {
+            font-size: 13px;
+            color: var(--secondary-color);
+            margin-bottom: 0;
+        }
+        
+        /* Countdown Display */
+        .countdown-display {
             position: absolute;
             top: 20px;
-            left: 20px;
-            background: rgba(0, 0, 0, 0.7);
-            color: white;
-            padding: 10px 15px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            z-index: 10;
-            display: none;
-            border: 3px solid transparent;
-            transition: all 0.3s ease;
-        }
-
-        .face-indicator.show {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            animation: fadeIn 0.5s ease;
-        }
-
-        .face-indicator.good {
-            border-color: #28a745;
-            background: rgba(40, 167, 69, 0.2);
-            box-shadow: 0 0 15px rgba(40, 167, 69, 0.3);
-        }
-
-        .face-indicator .face-icon {
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
-            background: #6c757d;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 14px;
-            transition: all 0.3s ease;
-        }
-
-        .face-indicator.good .face-icon {
-            background: #28a745;
-            animation: pulse 1.5s infinite;
-        }
-
-        .face-text {
-            margin-left: 8px;
-        }
-
-        /* Face Detection Overlay */
-        .face-detection-overlay {
-            position: absolute;
-            top: 0;
             left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 5;
-        }
-
-        .face-box {
-            position: absolute;
-            border: 3px solid #28a745;
+            right: 0;
+            text-align: center;
+            font-size: 72px;
+            font-weight: bold;
+            color: white;
+            text-shadow: 2px 2px 8px rgba(0,0,0,0.8);
+            z-index: 10;
+            padding: 10px;
             border-radius: 10px;
-            transition: all 0.3s ease;
-            box-shadow: 0 0 20px rgba(40, 167, 69, 0.5);
+            margin: 0 auto;
+            width: 120px;
+            display: none;
+            background: rgba(0, 0, 0, 0.5);
         }
-
-        .face-landmark {
-            position: absolute;
-            width: 6px;
-            height: 6px;
-            background: #28a745;
-            border-radius: 50%;
-            transform: translate(-50%, -50%);
-        }
-
+        
         /* Flash Effect */
         .flash-overlay {
             position: absolute;
@@ -737,11 +699,6 @@
             color: var(--warning-color);
         }
         
-        .capture-status.error {
-            background: rgba(220, 53, 69, 0.1);
-            color: var(--danger-color);
-        }
-        
         /* Captured Images */
         .captured-images-container {
             margin-top: 30px;
@@ -777,8 +734,8 @@
         }
         
         .captured-image {
-            width: 200px;
-            height: 200px;
+            width: 120px;
+            height: 120px;
             border-radius: 10px;
             overflow: hidden;
             border: 3px solid #ddd;
@@ -846,14 +803,13 @@
         }
         
         .image-placeholder i {
-            font-size: 48px;
+            font-size: 36px;
             margin-bottom: 10px;
             opacity: 0.4;
         }
         
         .image-placeholder span {
-            font-size: 16px;
-            font-weight: 600;
+            font-size: 14px;
         }
         
         /* Instructions */
@@ -1042,71 +998,83 @@
             }
         }
         
-        /* Blink Detection Indicator */
-        .blink-indicator {
-            position: absolute;
-            bottom: 20px;
-            left: 0;
-            right: 0;
-            text-align: center;
-            z-index: 10;
-            display: none;
-        }
-        
-        .blink-bubble {
-            display: inline-block;
-            background: rgba(0, 0, 0, 0.7);
-            color: white;
-            padding: 10px 20px;
-            border-radius: 30px;
-            font-size: 14px;
-            font-weight: 600;
-            animation: pulse 1.5s infinite;
-        }
-        
-        .blink-bubble .blink-icon {
-            color: #ffc107;
-            margin-right: 8px;
-        }
-        
-        /* Quality Indicators */
-        .quality-indicator {
+        /* NEW: Angle Indicators */
+        .angle-indicator {
             position: absolute;
             top: 20px;
-            right: 20px;
+            left: 20px;
             background: rgba(0, 0, 0, 0.7);
             color: white;
-            padding: 8px 12px;
+            padding: 10px 15px;
             border-radius: 8px;
-            font-size: 12px;
+            font-size: 16px;
+            font-weight: 600;
             z-index: 10;
             display: none;
         }
         
-        .quality-indicator.show {
+        .angle-indicator.show {
             display: block;
+            animation: fadeIn 0.5s ease;
         }
         
-        .quality-item {
+        .angle-text {
+            margin-left: 8px;
+        }
+        
+        /* NEW: Progression Block Overlay */
+        .progression-block {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
             display: flex;
+            justify-content: center;
             align-items: center;
-            gap: 6px;
-            margin-bottom: 4px;
+            z-index: 9990;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
         }
         
-        .quality-item:last-child {
-            margin-bottom: 0;
+        .progression-block.show {
+            opacity: 1;
+            pointer-events: all;
         }
         
-        .quality-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #dc3545;
+        .block-message {
+            background: white;
+            padding: 30px;
+            border-radius: var(--border-radius);
+            max-width: 500px;
+            text-align: center;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
         }
         
-        .quality-dot.good {
-            background: #28a745;
+        .block-message i {
+            font-size: 48px;
+            color: var(--warning-color);
+            margin-bottom: 20px;
+        }
+        
+        .block-message h4 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--dark-color);
+        }
+        
+        .block-message p {
+            color: var(--secondary-color);
+            margin-bottom: 20px;
+        }
+        
+        .block-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
         }
         
         /* Animations */
@@ -1116,9 +1084,10 @@
             100% { opacity: 0; }
         }
         
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
         }
         
         /* Responsive */
@@ -1153,9 +1122,29 @@
                 justify-content: center;
             }
             
+            .camera-controls {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .camera-btn {
+                width: 100%;
+                max-width: 200px;
+            }
+            
+            .captured-images {
+                flex-direction: column;
+                align-items: center;
+            }
+            
             .captured-image {
-                width: 250px;
-                height: 250px;
+                width: 160px;
+                height: 160px;
+            }
+            
+            .countdown-display {
+                font-size: 48px;
+                width: 80px;
             }
             
             .step-navigation-buttons {
@@ -1167,14 +1156,156 @@
                 width: 100%;
                 justify-content: center;
             }
+            
+            .progression-block {
+                padding: 20px;
+            }
+            
+            .block-message {
+                width: 90%;
+                padding: 20px;
+            }
+            
+            .block-actions {
+                flex-direction: column;
+            }
+            .angle-indicator {
+                position: absolute;
+                top: 20px;
+                left: 20px;
+                background: rgba(0, 0, 0, 0.7);
+                color: white;
+                padding: 10px 15px;
+                border-radius: 8px;
+                font-size: 16px;
+                font-weight: 600;
+                z-index: 10;
+                display: none;
+                border: 3px solid transparent;
+                transition: all 0.3s ease;
+            }
+
+            .angle-indicator.show {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                animation: fadeIn 0.5s ease;
+            }
+
+            .angle-indicator.good-angle {
+                border-color: #28a745;
+                background: rgba(40, 167, 69, 0.2);
+                box-shadow: 0 0 15px rgba(40, 167, 69, 0.3);
+            }
+
+            .angle-indicator .angle-icon {
+                width: 30px;
+                height: 30px;
+                border-radius: 50%;
+                background: #6c757d;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 14px;
+                transition: all 0.3s ease;
+            }
+
+            .angle-indicator.good-angle .angle-icon {
+                background: #28a745;
+                animation: pulse 1.5s infinite;
+            }
+
+            .angle-text {
+                margin-left: 8px;
+            }
+
+            /* Face Detection Overlay */
+            .face-detection-overlay {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                pointer-events: none;
+                z-index: 5;
+            }
+
+            .face-box {
+                position: absolute;
+                border: 3px solid #ffc107;
+                border-radius: 10px;
+                transition: all 0.3s ease;
+            }
+
+            .face-box.good-angle {
+                border-color: #28a745;
+                box-shadow: 0 0 20px rgba(40, 167, 69, 0.5);
+            }
+
+            .face-landmark {
+                position: absolute;
+                width: 6px;
+                height: 6px;
+                background: #e63946;
+                border-radius: 50%;
+                transform: translate(-50%, -50%);
+            }
+
+            /* Angle Status Text */
+            .angle-status-text {
+                position: absolute;
+                top: 20px;
+                right: 20px;
+                background: rgba(0, 0, 0, 0.7);
+                color: white;
+                padding: 8px 12px;
+                border-radius: 8px;
+                font-size: 14px;
+                z-index: 10;
+                display: none;
+            }
+
+            .angle-status-text.show {
+                display: block;
+            }
         }
     </style>
 </head>
+<script>
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/service-worker.js')
+            .then(function(registration) {
+                console.log('Service Worker registered with scope:', registration.scope);
+            })
+            .catch(function(error) {
+                console.log('Service Worker registration failed:', error);
+            });
+    });
+}
+</script>
 <body>
     <!-- Loading Overlay -->
     <div id="loadingOverlay">
         <div class="loading-spinner"></div>
         <div class="loading-text">Loading Registration Page...</div>
+    </div>
+    
+    <!-- Progression Block Overlay -->
+    <div class="progression-block" id="progressionBlock">
+        <div class="block-message">
+            <i class="fas fa-exclamation-triangle"></i>
+            <h4>Complete All Face Captures Required</h4>
+            <p id="blockMessageText">You must complete all 3 face captures with different angles before proceeding. This is required for accurate driver recognition.</p>
+            <div class="block-actions">
+                <button class="camera-btn start" onclick="hideProgressionBlock()">
+                    <i class="fas fa-camera"></i> Continue Capturing
+                </button>
+                <button class="camera-btn retake" onclick="hideProgressionBlock()">
+                    <i class="fas fa-times"></i> Cancel
+                </button>
+            </div>
+        </div>
     </div>
     
     <div class="container">
@@ -1296,8 +1427,17 @@
                 <h2 class="section-title">
                     <i class="fas fa-camera"></i>
                     Face Capture
-                    <span class="images-counter" id="imagesCounter">0/1</span>
+                    <span class="images-counter" id="imagesCounter">0/3</span>
                 </h2>
+                
+                <!-- Angle Requirement Warning -->
+                <div class="angle-warning" id="angleWarning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <div class="angle-warning-content">
+                        <h6>Angle Requirement: All 3 Different Angles Required</h6>
+                        <p>You must capture faces from 3 different angles (Front, Left, Right) for accurate driver recognition. You cannot proceed until all angles are captured.</p>
+                    </div>
+                </div>
                 
                 <div class="face-capture-section">
                     <!-- Camera Selection -->
@@ -1319,54 +1459,33 @@
                     <!-- Camera Info -->
                     <div class="camera-info" id="cameraInfo">
                         <i class="fas fa-info-circle"></i>
-                        <span id="cameraInfoText">Initializing camera and face detection...</span>
+                        <span id="cameraInfoText">Select camera and click "Start Camera"</span>
                     </div>
                     
                     <!-- Camera Container -->
                     <div class="camera-container" id="cameraContainer">
-                        <!-- Face Indicators -->
-                        <div class="face-indicator" id="faceIndicator">
-                            <div class="face-icon" id="faceIcon">
+                        <div class="angle-indicator" id="angleIndicator">
+                            <div class="angle-icon" id="angleIcon">
                                 <i class="fas fa-user"></i>
                             </div>
-                            <span class="face-text" id="faceText">No face detected</span>
+                            <span class="angle-text" id="angleText">Look Straight</span>
                         </div>
-                        
-                        <!-- Quality Indicators -->
-                        <div class="quality-indicator" id="qualityIndicator">
-                            <div class="quality-item">
-                                <div class="quality-dot" id="faceDot"></div>
-                                <span id="faceStatus">Face: Not detected</span>
-                            </div>
-                            <div class="quality-item">
-                                <div class="quality-dot" id="brightnessDot"></div>
-                                <span id="brightnessStatus">Lighting: Poor</span>
-                            </div>
-                            <div class="quality-item">
-                                <div class="quality-dot" id="blurDot"></div>
-                                <span id="blurStatus">Sharpness: Blurry</span>
-                            </div>
-                        </div>
-                        
-                        <!-- Blink Detection Indicator -->
-                        <div class="blink-indicator" id="blinkIndicator">
-                            <div class="blink-bubble">
-                                <i class="fas fa-eye blink-icon"></i>
-                                Blink your eyes to capture automatically
-                            </div>
-                        </div>
-                        
-                        <!-- Face Detection Overlay -->
+
+                        <!-- Add face detection overlay -->
                         <div class="face-detection-overlay" id="faceDetectionOverlay"></div>
-                        
-                        <!-- Camera Elements -->
+
+                        <!-- Add angle status text -->
+                        <div class="angle-status-text" id="angleStatusText">
+                            Angle: <span id="currentAngleValue">0°</span>
+                        </div>
                         <div class="camera-placeholder" id="cameraPlaceholder">
                             <i class="fas fa-camera"></i>
-                            <p>Initializing Camera...</p>
-                            <small>Face detection will start automatically</small>
+                            <p>Camera Ready</p>
+                            <small>Select camera and click "Start Camera" to begin</small>
                         </div>
                         <video id="video" autoplay playsinline></video>
                         <canvas id="canvas"></canvas>
+                        <div class="countdown-display" id="countdownDisplay"></div>
                         <div class="flash-overlay" id="flashOverlay"></div>
                     </div>
                     
@@ -1374,7 +1493,7 @@
                     <div class="capture-guide-container">
                         <h6 class="guide-title">
                             <i class="fas fa-directions"></i>
-                            Face Capture Instructions
+                            Required Face Capture Steps
                         </h6>
                         <div class="capture-guide" id="captureGuide">
                             <div class="guide-step required" id="guideStep1">
@@ -1382,8 +1501,8 @@
                                     <i class="fas fa-user"></i>
                                 </div>
                                 <div class="guide-content">
-                                    <h6>Step 1: Position Your Face <span class="required-badge">REQUIRED</span></h6>
-                                    <p>Make sure your face is centered in the frame with good lighting</p>
+                                    <h6>Step 1: Front View <span class="required-badge">REQUIRED</span></h6>
+                                    <p>Face the camera directly with a neutral expression</p>
                                 </div>
                                 <div class="guide-status">
                                     <i class="fas fa-check-circle"></i>
@@ -1391,11 +1510,21 @@
                             </div>
                             <div class="guide-step required" id="guideStep2">
                                 <div class="guide-icon">
-                                    <i class="fas fa-eye"></i>
+                                    <i class="fas fa-arrow-left"></i>
                                 </div>
                                 <div class="guide-content">
-                                    <h6>Step 2: Blink to Capture <span class="required-badge">REQUIRED</span></h6>
-                                    <p>Blink your eyes naturally when ready. The system will capture automatically</p>
+                                    <h6>Step 2: Left Angle <span class="required-badge">REQUIRED</span></h6>
+                                    <p>Turn your head about 15 degrees to the left</p>
+                                </div>
+                                <div class="guide-status"></div>
+                            </div>
+                            <div class="guide-step required" id="guideStep3">
+                                <div class="guide-icon">
+                                    <i class="fas fa-arrow-right"></i>
+                                </div>
+                                <div class="guide-content">
+                                    <h6>Step 3: Right Angle <span class="required-badge">REQUIRED</span></h6>
+                                    <p>Turn your head about 15 degrees to the right</p>
                                 </div>
                                 <div class="guide-status"></div>
                             </div>
@@ -1404,47 +1533,66 @@
                     
                     <!-- Camera Controls -->
                     <div class="camera-controls">
-                        <button type="button" class="camera-btn retake" id="retakeBtn" onclick="retakeImage()" disabled>
-                            <i class="fas fa-redo"></i> Retake Image
+                        <button type="button" class="camera-btn start" id="startCameraBtn" onclick="initializeCamera()">
+                            <i class="fas fa-play"></i> Start Camera
                         </button>
-                        <button type="button" class="camera-btn" id="stopCameraBtn" onclick="stopCamera()">
+                        <button type="button" class="camera-btn retake" id="retakeBtn" onclick="retakeAllImages()" disabled>
+                            <i class="fas fa-redo"></i> Retake All
+                        </button>
+                        <button type="button" class="camera-btn" id="stopCameraBtn" onclick="stopCamera()" disabled>
                             <i class="fas fa-stop"></i> Stop Camera
                         </button>
                     </div>
                     
                     <!-- Capture Status -->
                     <div class="capture-status warning" id="captureStatus">
-                        <p><i class="fas fa-exclamation-circle me-2"></i><strong>REQUIREMENT:</strong> Position your face in the center and blink to capture</p>
+                        <p><i class="fas fa-exclamation-circle me-2"></i><strong>REQUIREMENT:</strong> All 3 different angles must be captured before you can proceed</p>
                     </div>
                     
                     <!-- Captured Images -->
                     <div class="captured-images-container">
                         <h4 class="images-title">
-                            <i class="fas fa-images"></i> Captured Image
-                            <span id="capturedCount">0/1 image captured</span>
+                            <i class="fas fa-images"></i> Captured Images
+                            <span id="capturedCount">0/3 images captured</span>
                         </h4>
                         
                         <div class="captured-images" id="capturedImages">
                             <div class="captured-image" data-index="1">
                                 <div class="image-placeholder">
                                     <i class="fas fa-user"></i>
-                                    <span>Face Image</span>
+                                    <span>Front View</span>
                                     <small class="mt-1"><strong>Required</strong></small>
                                 </div>
                                 <div class="image-number">1</div>
+                            </div>
+                            <div class="captured-image" data-index="2">
+                                <div class="image-placeholder">
+                                    <i class="fas fa-arrow-left"></i>
+                                    <span>Left Angle</span>
+                                    <small class="mt-1"><strong>Required</strong></small>
+                                </div>
+                                <div class="image-number">2</div>
+                            </div>
+                            <div class="captured-image" data-index="3">
+                                <div class="image-placeholder">
+                                    <i class="fas fa-arrow-right"></i>
+                                    <span>Right Angle</span>
+                                    <small class="mt-1"><strong>Required</strong></small>
+                                </div>
+                                <div class="image-number">3</div>
                             </div>
                         </div>
                     </div>
                     
                     <!-- Instructions -->
                     <div class="instructions">
-                        <h6><i class="fas fa-lightbulb"></i> Important Instructions</h6>
+                        <h6><i class="fas fa-lightbulb"></i> Why Different Angles Are Required</h6>
                         <ul>
-                            <li><strong>Face Position:</strong> Keep your face centered in the green box</li>
-                            <li><strong>Lighting:</strong> Ensure good lighting - avoid backlight and shadows</li>
-                            <li><strong>Blink Detection:</strong> Blink naturally when ready to capture</li>
-                            <li><strong>Quality Check:</strong> Image will be checked for face visibility, lighting, and sharpness</li>
-                            <li><strong>Next Button:</strong> Will be enabled only when a valid face is captured</li>
+                            <li><strong>Better Recognition:</strong> Different angles help the AI system recognize drivers more accurately</li>
+                            <li><strong>Prevents Confusion:</strong> Prevents misidentification between different drivers</li>
+                            <li><strong>System Requirement:</strong> The driver drowsiness detection system requires 3 unique angles for training</li>
+                            <li><strong>Mandatory:</strong> You cannot proceed to the next step until all 3 angles are captured</li>
+                            <li><strong>Quality Check:</strong> Each angle will be checked for clarity before proceeding</li>
                         </ul>
                     </div>
                 </div>
@@ -1453,7 +1601,7 @@
                     <button class="step-btn prev" onclick="prevStep(1)">
                         <i class="fas fa-arrow-left"></i> Previous
                     </button>
-                    <button class="step-btn next" id="step2NextBtn" onclick="nextStep(3)" disabled>
+                    <button class="step-btn next" id="step2NextBtn" onclick="validateAnglesAndProceed()">
                         Next <i class="fas fa-arrow-right"></i>
                     </button>
                 </div>
@@ -1505,49 +1653,57 @@
                     
                     <div class="col-md-6">
                         <div class="review-section mb-4">
-                            <h5 class="mb-3"><i class="fas fa-images me-2"></i>Captured Image</h5>
+                            <h5 class="mb-3"><i class="fas fa-images me-2"></i>Captured Images</h5>
                             <div class="captured-images">
-                                <div class="captured-image" id="reviewImage">
+                                <div class="captured-image" id="reviewImage1">
                                     <div class="image-placeholder">
                                         <i class="fas fa-user"></i>
-                                        <span>Face Image</span>
+                                        <span>Front View</span>
                                     </div>
                                     <div class="image-number">1</div>
                                 </div>
+                                <div class="captured-image" id="reviewImage2">
+                                    <div class="image-placeholder">
+                                        <i class="fas fa-arrow-left"></i>
+                                        <span>Left Angle</span>
+                                    </div>
+                                    <div class="image-number">2</div>
+                                </div>
+                                <div class="captured-image" id="reviewImage3">
+                                    <div class="image-placeholder">
+                                        <i class="fas fa-arrow-right"></i>
+                                        <span>Right Angle</span>
+                                    </div>
+                                    <div class="image-number">3</div>
+                                </div>
                             </div>
                             <div class="mt-3 text-center">
-                                <span id="reviewImageStatus" class="badge bg-warning">No image captured</span>
+                                <span id="reviewImageStatus" class="badge bg-warning">0/3 images captured</span>
                             </div>
                         </div>
                     </div>
                 </div>
                 
-                <!-- Face Validation Summary -->
+                <!-- Angle Verification -->
                 <div class="instructions mb-4">
-                    <h6><i class="fas fa-check-double me-2"></i>Face Validation Summary</h6>
-                    <div id="validationSummary">
+                    <h6><i class="fas fa-check-double me-2"></i>Angle Verification</h6>
+                    <div id="angleVerification">
                         <div class="form-check mb-2">
-                            <input class="form-check-input" type="checkbox" id="validationCheck1" disabled>
-                            <label class="form-check-label" for="validationCheck1">
-                                ✓ Face detected and centered
+                            <input class="form-check-input" type="checkbox" id="angleCheck1" checked disabled>
+                            <label class="form-check-label" for="angleCheck1">
+                                ✓ Front view captured
                             </label>
                         </div>
                         <div class="form-check mb-2">
-                            <input class="form-check-input" type="checkbox" id="validationCheck2" disabled>
-                            <label class="form-check-label" for="validationCheck2">
-                                ✓ Good lighting conditions
+                            <input class="form-check-input" type="checkbox" id="angleCheck2" checked disabled>
+                            <label class="form-check-label" for="angleCheck2">
+                                ✓ Left angle captured (15° left)
                             </label>
                         </div>
                         <div class="form-check mb-2">
-                            <input class="form-check-input" type="checkbox" id="validationCheck3" disabled>
-                            <label class="form-check-label" for="validationCheck3">
-                                ✓ Image is sharp and clear
-                            </label>
-                        </div>
-                        <div class="form-check mb-2">
-                            <input class="form-check-input" type="checkbox" id="validationCheck4" disabled>
-                            <label class="form-check-label" for="validationCheck4">
-                                ✓ Captured via blink detection
+                            <input class="form-check-input" type="checkbox" id="angleCheck3" checked disabled>
+                            <label class="form-check-label" for="angleCheck3">
+                                ✓ Right angle captured (15° right)
                             </label>
                         </div>
                     </div>
@@ -1559,7 +1715,7 @@
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="termsCheckbox">
                         <label class="form-check-label" for="termsCheckbox">
-                            I confirm that the face has been captured via blink detection and all information provided is accurate.
+                            I confirm that all 3 face angles have been captured and all information provided is accurate.
                         </label>
                     </div>
                 </div>
@@ -1585,27 +1741,27 @@
     <script>
         // ==================== GLOBAL VARIABLES ====================
         let stream = null;
-        let capturedImage = null;
+        let capturedImages = [];
         let guardianData = null;
         let sessionToken = null;
-        let currentCamera = 'user';
-        let isCameraActive = false;
-        let faceDetectorInterval = null;
-        let lastBlinkTime = 0;
-        let blinkCooldown = 2000; // 2 seconds cooldown
-        let faceModelLoaded = false;
+        let countdownInterval = null;
+        let isCapturing = false;
+        let countdownValue = 5;
         let currentStep = 1;
-        let faceDetectionActive = false;
-        let currentValidation = {
-            faceDetected: false,
-            faceCentered: false,
-            goodLighting: false,
-            notBlurry: false,
-            allGood: false
-        };
+        let currentCamera = 'user'; // Default to front camera
+        let availableCameras = [];
+        let currentCaptureStep = 0; // 0: Not started, 1: Front, 2: Left, 3: Right
+        const captureAngles = ['front', 'left', 'right'];
+        const captureInstructions = [
+            "Look straight at the camera",
+            "Turn your head slightly left (15°)",
+            "Turn your head slightly right (15°)"
+        ];
+        let guideTimeout = null;
+        let isAngleRequirementEnforced = true; // Set to true to enforce angle requirement
 
         // ==================== INITIALIZATION ====================
-        document.addEventListener('DOMContentLoaded', async function() {
+        document.addEventListener('DOMContentLoaded', function() {
             console.log('📋 Register Driver page loading...');
             
             // Get authentication from URL parameters
@@ -1635,8 +1791,11 @@
             // Setup event listeners
             setupEventListeners();
             
-            // Load face detection models
-            await loadFaceDetectionModels();
+            // Get available cameras
+            getAvailableCameras();
+            
+            // Initialize angle verification checkboxes
+            updateAngleVerification();
             
             // Hide loading overlay
             setTimeout(() => {
@@ -1648,41 +1807,205 @@
             
             console.log('✅ Page initialized successfully');
         });
-
-        // ==================== FACE DETECTION MODELS ====================
-        async function loadFaceDetectionModels() {
-            try {
-                console.log('🤖 Loading face detection models...');
-                updateCameraInfo('Loading face detection models...');
-                
-                // Define model URL (you need to host these models)
-                const MODEL_URL = '/models';
-                
-                // Load models with error handling
-                await Promise.all([
-                    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-                    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-                    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
-                ]);
-                
-                faceModelLoaded = true;
-                console.log('✅ Face detection models loaded');
-                
-            } catch (error) {
-                console.error('❌ Error loading face models:', error);
-                showToast('Face detection models not loaded. Using basic validation.', 'warning');
+        
+        // ==================== ANGLE REQUIREMENT ENFORCEMENT ====================
+        function validateAndProceedToStep2() {
+            // First validate step 1
+            if (!validateStep1()) {
+                showToast('Please fill in all required fields', 'warning');
+                return;
+            }
+            
+            // Proceed to step 2
+            nextStep(2);
+        }
+        
+        function validateAnglesAndProceed() {
+            // Check if all 3 angles are captured
+            if (capturedImages.length < 3) {
+                showToast('Please complete all 3 required face captures', 'danger');
+                showProgressionBlock('You must complete all 3 required face captures with different angles before proceeding.');
+                return;
+            }
+            
+            // Check if angles are different (simple check - at least we have 3 images)
+            // In a real implementation, you could add image similarity check here
+            
+            // Show confirmation
+            const angleConfirm = confirm('Are you sure all 3 face captures show different angles (Front, Left, Right)?\n\nThis is required for accurate driver recognition.');
+            
+            if (angleConfirm) {
+                // Proceed to step 3
+                nextStep(3);
+            } else {
+                showToast('Please make sure all 3 angles are properly captured', 'warning');
+                showProgressionBlock('Please verify that you have captured faces from 3 different angles (Front, Left, Right).');
             }
         }
-
+        
+        function showProgressionBlock(message) {
+            document.getElementById('blockMessageText').textContent = message;
+            document.getElementById('progressionBlock').classList.add('show');
+        }
+        
+        function hideProgressionBlock() {
+            document.getElementById('progressionBlock').classList.remove('show');
+        }
+        
+        async function getAvailableCameras() {
+            try {
+                // Check if browser supports mediaDevices API
+                if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+                    console.log('❌ Camera enumeration not supported');
+                    return;
+                }
+                
+                // Get all media devices
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                
+                // Filter video input devices
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                
+                console.log('📹 Available cameras:', videoDevices.length);
+                
+                if (videoDevices.length === 0) {
+                    console.log('❌ No cameras found');
+                    updateCameraInfo('No cameras detected on this device');
+                    document.getElementById('cameraSelect').disabled = true;
+                    document.getElementById('switchCameraBtn').disabled = true;
+                } else if (videoDevices.length === 1) {
+                    console.log('✅ 1 camera found');
+                    updateCameraInfo('1 camera available (front camera)');
+                    document.getElementById('cameraSelect').disabled = true;
+                    document.getElementById('switchCameraBtn').disabled = true;
+                    // Set default to user (front) if only one camera
+                    currentCamera = 'user';
+                } else {
+                    console.log(`✅ ${videoDevices.length} cameras found`);
+                    updateCameraInfo(`${videoDevices.length} cameras available`);
+                    
+                    // Store available cameras
+                    availableCameras = videoDevices;
+                    
+                    // Enable camera selection
+                    document.getElementById('cameraSelect').disabled = false;
+                    document.getElementById('switchCameraBtn').disabled = false;
+                    
+                    // Set default based on device type
+                    if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+                        // For mobile, default to back camera
+                        currentCamera = 'environment';
+                        document.getElementById('cameraSelect').value = 'environment';
+                    } else {
+                        // For desktop, default to front camera
+                        currentCamera = 'user';
+                        document.getElementById('cameraSelect').value = 'user';
+                    }
+                }
+                
+            } catch (error) {
+                console.error('❌ Error getting cameras:', error);
+                updateCameraInfo('Could not detect cameras');
+            }
+        }
+        
+        function updateCameraInfo(message) {
+            const infoElement = document.getElementById('cameraInfoText');
+            if (infoElement) {
+                infoElement.textContent = message;
+            }
+        }
+        
+        function setupEventListeners() {
+            // Terms checkbox listener
+            document.getElementById('termsCheckbox').addEventListener('change', function() {
+                updateSubmitButton();
+            });
+            
+            // Form validation listeners
+            ['driverName', 'driverPhone'].forEach(id => {
+                document.getElementById(id).addEventListener('input', validateStep1);
+            });
+            
+            // Prevent clicking next button if angles not complete
+            document.getElementById('step2NextBtn').addEventListener('click', function(e) {
+                if (capturedImages.length < 3) {
+                    e.preventDefault();
+                    showToast('Please complete all 3 required face captures', 'danger');
+                    showProgressionBlock('You must complete all 3 required face captures with different angles before proceeding.');
+                }
+            });
+        }
+        
+        // ==================== CAMERA SELECTION FUNCTIONS ====================
+        function changeCamera() {
+            const cameraSelect = document.getElementById('cameraSelect');
+            const selectedCamera = cameraSelect.value;
+            
+            if (selectedCamera === currentCamera) {
+                return; // No change needed
+            }
+            
+            console.log(`🔄 Changing camera from ${currentCamera} to ${selectedCamera}`);
+            
+            currentCamera = selectedCamera;
+            
+            // Stop current camera if running
+            if (stream) {
+                stopCamera();
+                
+                // Restart camera with new selection after a short delay
+                setTimeout(() => {
+                    if (currentStep === 2) {
+                        initializeCamera();
+                    }
+                }, 500);
+            }
+        }
+        
+        function switchCamera() {
+            const cameraSelect = document.getElementById('cameraSelect');
+            
+            // Toggle between front and back camera
+            if (currentCamera === 'user') {
+                currentCamera = 'environment';
+                cameraSelect.value = 'environment';
+            } else {
+                currentCamera = 'user';
+                cameraSelect.value = 'user';
+            }
+            
+            console.log(`🔄 Switching camera to ${currentCamera === 'user' ? 'front' : 'back'} camera`);
+            
+            // Stop current camera if running
+            if (stream) {
+                stopCamera();
+                
+                // Restart camera with new selection after a short delay
+                setTimeout(() => {
+                    if (currentStep === 2) {
+                        initializeCamera();
+                    }
+                }, 500);
+            }
+        }
+        
         // ==================== CAMERA FUNCTIONS ====================
         async function initializeCamera() {
             try {
                 console.log(`📷 Initializing ${currentCamera === 'user' ? 'front' : 'back'} camera...`);
-                updateCameraInfo('Starting camera...');
                 
-                // Stop any existing stream
-                if (stream) {
-                    stream.getTracks().forEach(track => track.stop());
+                const startBtn = document.getElementById('startCameraBtn');
+                startBtn.disabled = true;
+                startBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting...';
+                
+                // Disable camera selection while starting
+                document.getElementById('cameraSelect').disabled = true;
+                document.getElementById('switchCameraBtn').disabled = true;
+                
+                // Check if browser supports mediaDevices API
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('Camera API not supported in this browser');
                 }
                 
                 // Camera constraints
@@ -1690,13 +2013,14 @@
                     video: {
                         width: { ideal: 640 },
                         height: { ideal: 480 },
-                        facingMode: currentCamera === 'user' ? 'user' : { exact: 'environment' },
-                        frameRate: { ideal: 30 }
+                        facingMode: currentCamera === 'user' ? 'user' : { exact: 'environment' }
                     },
                     audio: false
                 };
                 
-                // Get user media
+                console.log('Attempting to access camera with constraints:', constraints);
+                
+                // Try to get user media
                 stream = await navigator.mediaDevices.getUserMedia(constraints);
                 
                 const video = document.getElementById('video');
@@ -1705,48 +2029,86 @@
                 // Wait for video to be ready
                 await new Promise((resolve, reject) => {
                     video.onloadedmetadata = () => {
-                        video.play();
+                        console.log(`✅ ${currentCamera === 'user' ? 'Front' : 'Back'} camera ready`);
                         resolve();
                     };
-                    video.onerror = reject;
-                    setTimeout(() => reject(new Error('Camera timeout')), 5000);
+                    video.onerror = (error) => {
+                        console.error('Video error:', error);
+                        reject(error);
+                    };
+                    
+                    // Timeout after 5 seconds
+                    setTimeout(() => {
+                        if (video.readyState < 2) {
+                            reject(new Error('Camera timeout - video not loading'));
+                        }
+                    }, 5000);
                 });
                 
                 // Show video and hide placeholder
                 document.getElementById('cameraPlaceholder').style.display = 'none';
                 video.style.display = 'block';
                 
-                isCameraActive = true;
+                // Update camera info
+                updateCameraInfo(`${currentCamera === 'user' ? 'Front' : 'Back'} camera active`);
                 
-                // Update UI
+                // Update button states
+                startBtn.disabled = true;
+                startBtn.innerHTML = '<i class="fas fa-video"></i> Camera Active';
                 document.getElementById('stopCameraBtn').disabled = false;
-                document.getElementById('retakeBtn').disabled = true;
+                document.getElementById('retakeBtn').disabled = capturedImages.length === 0;
                 
-                // Start face detection
-                startFaceDetection();
+                // Re-enable camera selection
+                document.getElementById('cameraSelect').disabled = false;
+                document.getElementById('switchCameraBtn').disabled = false;
                 
-                console.log(`✅ Camera initialized successfully`);
-                showToast('Camera started. Position your face in the frame.', 'info');
+                // Start guided capture
+                startGuidedCapture();
+                
+                showToast(`${currentCamera === 'user' ? 'Front' : 'Back'} camera started successfully!`, 'success');
                 
             } catch (error) {
                 console.error('❌ Camera initialization failed:', error);
+                
+                const startBtn = document.getElementById('startCameraBtn');
+                startBtn.disabled = false;
+                startBtn.innerHTML = '<i class="fas fa-play"></i> Start Camera';
+                
+                // Re-enable camera selection
+                document.getElementById('cameraSelect').disabled = false;
+                document.getElementById('switchCameraBtn').disabled = false;
                 
                 let errorMessage = 'Camera Error: ';
                 let detailedMessage = '';
                 
                 if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
                     errorMessage += 'Camera permission denied.';
-                    detailedMessage = 'Please allow camera access in your browser settings.';
-                } else if (error.name === 'NotFoundError') {
+                    detailedMessage = 'Please allow camera access in your browser settings. Click the camera/lock icon in the address bar and allow camera access.';
+                } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
                     errorMessage += 'No camera found.';
                     detailedMessage = 'Please check if your device has a working camera.';
-                } else if (error.message === 'Camera timeout') {
+                } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+                    errorMessage += 'Camera is busy.';
+                    detailedMessage = 'Camera is already in use by another application. Please close other camera apps.';
+                } else if (error.name === 'OverconstrainedError') {
+                    errorMessage += `${currentCamera === 'user' ? 'Front' : 'Back'} camera not available.`;
+                    detailedMessage = 'Trying alternative camera...';
+                    
+                    // Try the other camera
+                    setTimeout(() => tryAlternativeCamera(), 1000);
+                    return;
+                } else if (error.message === 'Camera API not supported in this browser') {
+                    errorMessage += 'Browser not supported.';
+                    detailedMessage = 'Your browser does not support camera access. Try Chrome, Firefox, or Edge.';
+                } else if (error.message === 'Camera timeout - video not loading') {
                     errorMessage += 'Camera timeout.';
-                    detailedMessage = 'Camera is taking too long to start.';
+                    detailedMessage = 'Camera is taking too long to start. Please try again.';
                 } else {
                     errorMessage += error.message || 'Unknown error occurred.';
                     detailedMessage = 'Please try again or use a different browser.';
                 }
+                
+                console.error('Camera error details:', errorMessage, detailedMessage);
                 
                 // Update placeholder with error
                 const placeholder = document.getElementById('cameraPlaceholder');
@@ -1763,577 +2125,11 @@
                 showToast(errorMessage, 'danger');
             }
         }
-
-        // ==================== FACE DETECTION ====================
-        function startFaceDetection() {
-            if (!isCameraActive || !stream) return;
+        
+        async function tryAlternativeCamera() {
+            console.log('🔄 Trying alternative camera...');
             
-            console.log('🔍 Starting face detection...');
-            
-            const video = document.getElementById('video');
-            const canvas = document.getElementById('canvas');
-            const overlay = document.getElementById('faceDetectionOverlay');
-            const ctx = canvas.getContext('2d');
-            
-            // Set canvas dimensions
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            
-            // Clear any existing interval
-            if (faceDetectorInterval) {
-                clearInterval(faceDetectorInterval);
-            }
-            
-            faceDetectorInterval = setInterval(async () => {
-                if (!isCameraActive) return;
-                
-                try {
-                    // Draw video frame to canvas
-                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    
-                    // Get image data for quality analysis
-                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                    
-                    // Analyze image quality
-                    const quality = analyzeImageQuality(imageData);
-                    
-                    // Update quality indicators
-                    updateQualityIndicators(quality);
-                    
-                    // Check if we can proceed with face detection
-                    if (!quality.faceVisible && (quality.tooDark || quality.tooBlurry)) {
-                        updateFaceIndicator('Adjust camera: Face not visible or poor quality', false);
-                        overlay.innerHTML = '';
-                        updateNextButton();
-                        return;
-                    }
-                    
-                    // Use face-api.js if loaded, otherwise use basic detection
-                    if (faceModelLoaded) {
-                        await detectFaceWithModels(video, canvas, overlay, quality);
-                    } else {
-                        detectFaceBasic(canvas, overlay, quality);
-                    }
-                    
-                } catch (error) {
-                    console.error('Face detection error:', error);
-                }
-            }, 100); // Run every 100ms
-        }
-
-        function analyzeImageQuality(imageData) {
-            const data = imageData.data;
-            const width = imageData.width;
-            const height = imageData.height;
-            
-            // Calculate brightness
-            let totalBrightness = 0;
-            for (let i = 0; i < data.length; i += 4) {
-                totalBrightness += (data[i] + data[i + 1] + data[i + 2]) / 3;
-            }
-            const avgBrightness = totalBrightness / (data.length / 4);
-            
-            // Calculate blurriness (simple variance of Laplacian)
-            let variance = 0;
-            for (let y = 1; y < height - 1; y++) {
-                for (let x = 1; x < width - 1; x++) {
-                    const idx = (y * width + x) * 4;
-                    const gray = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-                    
-                    // Simple Laplacian kernel
-                    const laplacian = 
-                        gray * 4 -
-                        ((data[((y-1)*width + x)*4] + data[((y-1)*width + x)*4 + 1] + data[((y-1)*width + x)*4 + 2]) / 3) -
-                        ((data[((y+1)*width + x)*4] + data[((y+1)*width + x)*4 + 1] + data[((y+1)*width + x)*4 + 2]) / 3) -
-                        ((data[(y*width + (x-1))*4] + data[(y*width + (x-1))*4 + 1] + data[(y*width + (x-1))*4 + 2]) / 3) -
-                        ((data[(y*width + (x+1))*4] + data[(y*width + (x+1))*4 + 1] + data[(y*width + (x+1))*4 + 2]) / 3);
-                    
-                    variance += laplacian * laplacian;
-                }
-            }
-            variance /= (width * height);
-            
-            // Check for face-like patterns in center
-            let faceLikePixels = 0;
-            const centerX = width / 2;
-            const centerY = height / 2;
-            const searchRadius = Math.min(width, height) * 0.2;
-            
-            for (let y = centerY - searchRadius; y < centerY + searchRadius; y++) {
-                for (let x = centerX - searchRadius; x < centerX + searchRadius; x++) {
-                    if (x >= 0 && x < width && y >= 0 && y < height) {
-                        const idx = (y * width + x) * 4;
-                        const r = data[idx];
-                        const g = data[idx + 1];
-                        const b = data[idx + 2];
-                        
-                        // Simple skin tone detection
-                        if (r > 95 && g > 40 && b > 20 && 
-                            Math.max(r, g, b) - Math.min(r, g, b) > 15 &&
-                            Math.abs(r - g) > 15 && r > g && r > b) {
-                            faceLikePixels++;
-                        }
-                    }
-                }
-            }
-            
-            const faceVisible = faceLikePixels > (searchRadius * searchRadius * 0.1);
-            const tooDark = avgBrightness < 50;
-            const tooBlurry = variance < 100;
-            
-            return {
-                faceVisible,
-                tooDark,
-                tooBlurry,
-                brightness: avgBrightness,
-                sharpness: variance,
-                facePixelCount: faceLikePixels
-            };
-        }
-
-        async function detectFaceWithModels(video, canvas, overlay, quality) {
-            try {
-                // Detect faces
-                const detections = await faceapi.detectAllFaces(
-                    video, 
-                    new faceapi.TinyFaceDetectorOptions({ 
-                        inputSize: 320, 
-                        scoreThreshold: 0.5 
-                    })
-                ).withFaceLandmarks();
-                
-                overlay.innerHTML = '';
-                
-                if (detections.length > 0) {
-                    const detection = detections[0];
-                    const box = detection.detection.box;
-                    const landmarks = detection.landmarks;
-                    
-                    // Calculate face position relative to canvas
-                    const faceCenterX = box.x + box.width / 2;
-                    const faceCenterY = box.y + box.height / 2;
-                    const canvasCenterX = canvas.width / 2;
-                    const canvasCenterY = canvas.height / 2;
-                    
-                    // Check if face is centered
-                    const xOffset = Math.abs(faceCenterX - canvasCenterX);
-                    const yOffset = Math.abs(faceCenterY - canvasCenterY);
-                    const maxOffset = canvas.width * 0.2;
-                    const isCentered = xOffset < maxOffset && yOffset < maxOffset;
-                    
-                    // Check face size
-                    const minFaceSize = canvas.width * 0.2;
-                    const maxFaceSize = canvas.width * 0.8;
-                    const goodSize = box.width > minFaceSize && box.width < maxFaceSize;
-                    
-                    // Update validation
-                    currentValidation.faceDetected = true;
-                    currentValidation.faceCentered = isCentered && goodSize;
-                    currentValidation.goodLighting = !quality.tooDark && quality.brightness > 80;
-                    currentValidation.notBlurry = !quality.tooBlurry && quality.sharpness > 200;
-                    currentValidation.allGood = currentValidation.faceDetected && 
-                                               currentValidation.faceCentered && 
-                                               currentValidation.goodLighting && 
-                                               currentValidation.notBlurry;
-                    
-                    // Draw face box (green if good, yellow if needs adjustment)
-                    const boxColor = currentValidation.allGood ? '#28a745' : '#ffc107';
-                    const boxDiv = document.createElement('div');
-                    boxDiv.className = 'face-box';
-                    boxDiv.style.cssText = `
-                        position: absolute;
-                        left: ${box.x}px;
-                        top: ${box.y}px;
-                        width: ${box.width}px;
-                        height: ${box.height}px;
-                        border: 3px solid ${boxColor};
-                        border-radius: 10px;
-                        box-shadow: 0 0 20px ${boxColor}80;
-                    `;
-                    overlay.appendChild(boxDiv);
-                    
-                    // Draw facial landmarks (green dots)
-                    const positions = landmarks.positions;
-                    positions.forEach((point, i) => {
-                        if (i % 5 === 0) { // Draw every 5th landmark to reduce clutter
-                            const landmark = document.createElement('div');
-                            landmark.className = 'face-landmark';
-                            landmark.style.cssText = `
-                                position: absolute;
-                                left: ${point.x}px;
-                                top: ${point.y}px;
-                                width: 4px;
-                                height: 4px;
-                                background: #28a745;
-                                border-radius: 50%;
-                                transform: translate(-50%, -50%);
-                            `;
-                            overlay.appendChild(landmark);
-                        }
-                    });
-                    
-                    // Update face indicator
-                    if (currentValidation.allGood) {
-                        updateFaceIndicator('✓ Face detected and ready. Blink to capture!', true);
-                        document.getElementById('blinkIndicator').style.display = 'block';
-                        
-                        // Check for blink
-                        checkForBlink(landmarks);
-                    } else {
-                        let message = 'Adjust: ';
-                        if (!currentValidation.faceCentered) message += 'Center your face';
-                        else if (!currentValidation.goodLighting) message += 'Improve lighting';
-                        else if (!currentValidation.notBlurry) message += 'Hold still';
-                        
-                        updateFaceIndicator(message, false);
-                        document.getElementById('blinkIndicator').style.display = 'none';
-                    }
-                    
-                } else {
-                    // No face detected
-                    currentValidation.faceDetected = false;
-                    currentValidation.faceCentered = false;
-                    currentValidation.allGood = false;
-                    
-                    updateFaceIndicator('No face detected. Please look at the camera.', false);
-                    document.getElementById('blinkIndicator').style.display = 'none';
-                    overlay.innerHTML = '';
-                }
-                
-                // Update next button
-                updateNextButton();
-                
-            } catch (error) {
-                console.error('Face detection error:', error);
-            }
-        }
-
-        function detectFaceBasic(canvas, overlay, quality) {
-            overlay.innerHTML = '';
-            
-            // Simple face detection based on quality analysis
-            if (quality.faceVisible && !quality.tooDark && !quality.tooBlurry) {
-                currentValidation.faceDetected = true;
-                currentValidation.faceCentered = true;
-                currentValidation.goodLighting = quality.brightness > 80;
-                currentValidation.notBlurry = quality.sharpness > 200;
-                currentValidation.allGood = true;
-                
-                // Draw simulated face box
-                const boxSize = canvas.width * 0.4;
-                const boxX = (canvas.width - boxSize) / 2;
-                const boxY = (canvas.height - boxSize) / 2;
-                
-                const boxDiv = document.createElement('div');
-                boxDiv.className = 'face-box';
-                boxDiv.style.cssText = `
-                    position: absolute;
-                    left: ${boxX}px;
-                    top: ${boxY}px;
-                    width: ${boxSize}px;
-                    height: ${boxSize}px;
-                    border: 3px solid #28a745;
-                    border-radius: 10px;
-                    box-shadow: 0 0 20px rgba(40, 167, 69, 0.5);
-                `;
-                overlay.appendChild(boxDiv);
-                
-                updateFaceIndicator('✓ Face detected. Blink to capture!', true);
-                document.getElementById('blinkIndicator').style.display = 'block';
-                
-                // For basic detection, use manual capture
-                setTimeout(() => {
-                    if (currentValidation.allGood && !capturedImage) {
-                        captureImage();
-                    }
-                }, 3000);
-                
-            } else {
-                currentValidation.faceDetected = false;
-                currentValidation.allGood = false;
-                
-                let message = 'Adjust: ';
-                if (!quality.faceVisible) message += 'Face not visible';
-                else if (quality.tooDark) message += 'Too dark';
-                else if (quality.tooBlurry) message += 'Too blurry';
-                
-                updateFaceIndicator(message, false);
-                document.getElementById('blinkIndicator').style.display = 'none';
-            }
-            
-            updateNextButton();
-        }
-
-        function checkForBlink(landmarks) {
-            if (!currentValidation.allGood || capturedImage) return;
-            
-            try {
-                // Get eye landmarks
-                const leftEye = landmarks.getLeftEye();
-                const rightEye = landmarks.getRightEye();
-                
-                // Calculate eye aspect ratio (simplified)
-                const leftEAR = calculateEyeAspectRatio(leftEye);
-                const rightEAR = calculateEyeAspectRatio(rightEye);
-                const avgEAR = (leftEAR + rightEAR) / 2;
-                
-                // Check for blink (EAR decreases when eyes are closed)
-                const now = Date.now();
-                const isBlinking = avgEAR < 0.2; // Threshold for blink detection
-                
-                if (isBlinking && (now - lastBlinkTime > blinkCooldown)) {
-                    lastBlinkTime = now;
-                    console.log('👀 Blink detected! Capturing image...');
-                    captureImage();
-                }
-                
-            } catch (error) {
-                console.error('Blink detection error:', error);
-            }
-        }
-
-        function calculateEyeAspectRatio(eyePoints) {
-            // Calculate vertical distances
-            const vertical1 = distance(eyePoints[1], eyePoints[5]);
-            const vertical2 = distance(eyePoints[2], eyePoints[4]);
-            
-            // Calculate horizontal distance
-            const horizontal = distance(eyePoints[0], eyePoints[3]);
-            
-            // Eye Aspect Ratio
-            return (vertical1 + vertical2) / (2 * horizontal);
-        }
-
-        function distance(point1, point2) {
-            return Math.sqrt(Math.pow(point2.x - point1.x, 2) + Math.pow(point2.y - point1.y, 2));
-        }
-
-        // ==================== IMAGE CAPTURE ====================
-        function captureImage() {
-            if (!isCameraActive || capturedImage) return;
-            
-            console.log('📸 Capturing image...');
-            
-            const video = document.getElementById('video');
-            const canvas = document.getElementById('canvas');
-            const ctx = canvas.getContext('2d');
-            
-            // Draw current frame
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            // Get image data
-            capturedImage = canvas.toDataURL('image/jpeg', 0.9);
-            
-            // Update UI
-            updateCapturedImageUI();
-            
-            // Flash effect
-            flashEffect();
-            
-            // Stop face detection
-            if (faceDetectorInterval) {
-                clearInterval(faceDetectorInterval);
-                faceDetectorInterval = null;
-            }
-            
-            // Update buttons
-            document.getElementById('retakeBtn').disabled = false;
-            document.getElementById('blinkIndicator').style.display = 'none';
-            
-            // Update status
-            updateCaptureStatus('✓ Face captured successfully! You can now proceed.', 'success');
-            updateCameraInfo('Face captured ✓ Ready to proceed');
-            
-            // Update next button
-            updateNextButton();
-            
-            // Update validation checkboxes
-            updateValidationCheckboxes();
-            
-            console.log('✅ Image captured successfully');
-            showToast('Face captured successfully via blink detection!', 'success');
-        }
-
-        function retakeImage() {
-            if (!capturedImage) return;
-            
-            console.log('🔄 Retaking image...');
-            
-            capturedImage = null;
-            
-            // Reset UI
-            const imagesContainer = document.getElementById('capturedImages');
-            const imageElement = imagesContainer.querySelector('.captured-image');
-            imageElement.classList.remove('captured');
-            imageElement.innerHTML = `
-                <div class="image-placeholder">
-                    <i class="fas fa-user"></i>
-                    <span>Face Image</span>
-                    <small class="mt-1"><strong>Required</strong></small>
-                </div>
-                <div class="image-number">1</div>
-            `;
-            
-            // Update counters
-            document.getElementById('imagesCounter').textContent = '0/1';
-            document.getElementById('capturedCount').textContent = 'No image captured';
-            
-            // Update status
-            updateCaptureStatus('Image removed. Position your face and blink to capture.', 'warning');
-            updateCameraInfo('Camera active - Position face and blink');
-            
-            // Update buttons
-            document.getElementById('retakeBtn').disabled = true;
-            
-            // Restart face detection
-            startFaceDetection();
-            
-            // Update next button
-            updateNextButton();
-            
-            console.log('✅ Image removed, ready for retake');
-        }
-
-        // ==================== UI UPDATES ====================
-        function updateFaceIndicator(message, isGood) {
-            const indicator = document.getElementById('faceIndicator');
-            const icon = document.getElementById('faceIcon');
-            const text = document.getElementById('faceText');
-            
-            indicator.classList.add('show');
-            if (isGood) {
-                indicator.classList.add('good');
-                icon.innerHTML = '<i class="fas fa-check"></i>';
-            } else {
-                indicator.classList.remove('good');
-                icon.innerHTML = '<i class="fas fa-exclamation"></i>';
-            }
-            text.textContent = message;
-        }
-
-        function updateQualityIndicators(quality) {
-            const indicator = document.getElementById('qualityIndicator');
-            const faceDot = document.getElementById('faceDot');
-            const faceStatus = document.getElementById('faceStatus');
-            const brightnessDot = document.getElementById('brightnessDot');
-            const brightnessStatus = document.getElementById('brightnessStatus');
-            const blurDot = document.getElementById('blurDot');
-            const blurStatus = document.getElementById('blurStatus');
-            
-            // Update face detection status
-            if (quality.faceVisible) {
-                faceDot.className = 'quality-dot good';
-                faceStatus.textContent = 'Face: Detected';
-            } else {
-                faceDot.className = 'quality-dot';
-                faceStatus.textContent = 'Face: Not detected';
-            }
-            
-            // Update brightness status
-            if (!quality.tooDark && quality.brightness > 80) {
-                brightnessDot.className = 'quality-dot good';
-                brightnessStatus.textContent = 'Lighting: Good';
-            } else if (quality.tooDark) {
-                brightnessDot.className = 'quality-dot';
-                brightnessStatus.textContent = 'Lighting: Too dark';
-            } else {
-                brightnessDot.className = 'quality-dot';
-                brightnessStatus.textContent = 'Lighting: Poor';
-            }
-            
-            // Update blur status
-            if (!quality.tooBlurry && quality.sharpness > 200) {
-                blurDot.className = 'quality-dot good';
-                blurStatus.textContent = 'Sharpness: Good';
-            } else if (quality.tooBlurry) {
-                blurDot.className = 'quality-dot';
-                blurStatus.textContent = 'Sharpness: Blurry';
-            } else {
-                blurDot.className = 'quality-dot';
-                blurStatus.textContent = 'Sharpness: Poor';
-            }
-            
-            // Show indicator if any issue
-            if (!quality.faceVisible || quality.tooDark || quality.tooBlurry) {
-                indicator.classList.add('show');
-            } else {
-                indicator.classList.remove('show');
-            }
-        }
-
-        function updateCapturedImageUI() {
-            if (!capturedImage) return;
-            
-            const imagesContainer = document.getElementById('capturedImages');
-            const imageElement = imagesContainer.querySelector('.captured-image');
-            
-            imageElement.classList.add('captured');
-            imageElement.innerHTML = `
-                <img src="${capturedImage}" alt="Captured face">
-                <div class="image-number">1</div>
-                <div class="image-remove" onclick="retakeImage()">
-                    <i class="fas fa-times"></i>
-                </div>
-            `;
-            
-            // Update counters
-            document.getElementById('imagesCounter').textContent = '1/1';
-            document.getElementById('capturedCount').textContent = 'Face captured ✓';
-        }
-
-        function updateNextButton() {
-            const nextBtn = document.getElementById('step2NextBtn');
-            // Only enable if face is captured
-            nextBtn.disabled = !capturedImage;
-        }
-
-        function updateValidationCheckboxes() {
-            const checks = ['validationCheck1', 'validationCheck2', 'validationCheck3', 'validationCheck4'];
-            checks.forEach((id, index) => {
-                const check = document.getElementById(id);
-                if (check) {
-                    check.checked = capturedImage !== null;
-                }
-            });
-        }
-
-        function updateCaptureStatus(message, type = 'info') {
-            const statusDiv = document.getElementById('captureStatus');
-            statusDiv.innerHTML = `<p><i class="fas fa-info-circle me-2"></i>${message}</p>`;
-            statusDiv.className = `capture-status ${type}`;
-        }
-
-        function updateCameraInfo(message) {
-            const infoElement = document.getElementById('cameraInfoText');
-            if (infoElement) {
-                infoElement.textContent = message;
-            }
-        }
-
-        function flashEffect() {
-            const flashOverlay = document.getElementById('flashOverlay');
-            flashOverlay.style.animation = 'flash 0.5s ease-out';
-            
-            setTimeout(() => {
-                flashOverlay.style.animation = '';
-            }, 500);
-        }
-
-        // ==================== CAMERA CONTROL ====================
-        function changeCamera() {
-            const cameraSelect = document.getElementById('cameraSelect');
-            const selectedCamera = cameraSelect.value;
-            
-            if (selectedCamera === currentCamera) return;
-            
-            console.log(`🔄 Changing camera from ${currentCamera} to ${selectedCamera}`);
-            currentCamera = selectedCamera;
-            
-            restartCamera();
-        }
-
-        function switchCamera() {
-            // Toggle between front and back camera
+            // Switch to the other camera
             if (currentCamera === 'user') {
                 currentCamera = 'environment';
                 document.getElementById('cameraSelect').value = 'environment';
@@ -2342,102 +2138,342 @@
                 document.getElementById('cameraSelect').value = 'user';
             }
             
-            console.log(`🔄 Switching to ${currentCamera === 'user' ? 'front' : 'back'} camera`);
-            restartCamera();
+            // Try to initialize with the alternative camera
+            initializeCamera();
         }
-
-        function restartCamera() {
-            // Stop current camera
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-                stream = null;
-            }
-            
-            if (faceDetectorInterval) {
-                clearInterval(faceDetectorInterval);
-                faceDetectorInterval = null;
-            }
-            
-            isCameraActive = false;
-            capturedImage = null;
-            
-            // Show placeholder
-            const video = document.getElementById('video');
-            const placeholder = document.getElementById('cameraPlaceholder');
-            video.style.display = 'none';
-            placeholder.style.display = 'flex';
-            placeholder.innerHTML = `
-                <i class="fas fa-sync-alt fa-spin"></i>
-                <p>Switching camera...</p>
-            `;
-            
-            // Clear overlay
-            document.getElementById('faceDetectionOverlay').innerHTML = '';
-            document.getElementById('faceIndicator').classList.remove('show');
-            document.getElementById('blinkIndicator').style.display = 'none';
-            
-            // Reset UI
-            retakeImage();
-            
-            // Restart camera after delay
-            setTimeout(() => {
-                initializeCamera();
-            }, 500);
-        }
-
-        function stopCamera() {
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-                stream = null;
-            }
-            
-            if (faceDetectorInterval) {
-                clearInterval(faceDetectorInterval);
-                faceDetectorInterval = null;
-            }
-            
-            isCameraActive = false;
-            
-            const video = document.getElementById('video');
-            const placeholder = document.getElementById('cameraPlaceholder');
-            video.style.display = 'none';
-            placeholder.style.display = 'flex';
-            placeholder.innerHTML = `
-                <i class="fas fa-camera"></i>
-                <p>Camera Stopped</p>
-                <small>${capturedImage ? 'Face captured' : 'No face captured'}</small>
-            `;
-            
-            // Clear overlay
-            document.getElementById('faceDetectionOverlay').innerHTML = '';
-            document.getElementById('faceIndicator').classList.remove('show');
-            document.getElementById('blinkIndicator').style.display = 'none';
-            document.getElementById('qualityIndicator').classList.remove('show');
-            
-            document.getElementById('stopCameraBtn').disabled = true;
-            updateCameraInfo('Camera stopped');
-            
-            console.log('✅ Camera stopped');
-        }
-
-        // ==================== STEP NAVIGATION ====================
-        function validateAndProceedToStep2() {
-            if (!validateStep1()) {
-                showToast('Please fill in all required fields', 'warning');
+        
+        function startGuidedCapture() {
+            if (capturedImages.length >= 3) {
+                showToast('Already captured all 3 required angles', 'info');
                 return;
             }
             
-            nextStep(2);
+            // Reset capture step if starting fresh
+            if (capturedImages.length === 0) {
+                currentCaptureStep = 0;
+                resetGuideSteps();
+            }
+            
+            // Start with first capture step
+            startNextCaptureStep();
         }
-
+        
+        function startNextCaptureStep() {
+            if (capturedImages.length >= 3) {
+                // All angles captured
+                updateCaptureStatus('✓ All 3 required angles captured successfully! You can now proceed to next step.', 'success');
+                showToast('All 3 required angles captured! You can now proceed.', 'success');
+                
+                // Enable next button
+                document.getElementById('step2NextBtn').disabled = false;
+                
+                // Mark all guide steps as completed
+                for (let i = 1; i <= 3; i++) {
+                    const step = document.getElementById(`guideStep${i}`);
+                    step.classList.add('completed');
+                    step.classList.remove('active');
+                }
+                
+                // Hide angle indicator
+                document.getElementById('angleIndicator').classList.remove('show');
+                
+                // Update angle verification
+                updateAngleVerification();
+                
+                return;
+            }
+            
+            currentCaptureStep = capturedImages.length + 1;
+            
+            // Update guide steps
+            updateGuideSteps();
+            
+            // Show angle indicator
+            const angleText = captureInstructions[currentCaptureStep - 1];
+            document.getElementById('angleText').textContent = angleText;
+            document.getElementById('angleIndicator').classList.add('show');
+            
+            // Update status with requirement emphasis
+            updateCaptureStatus(`REQUIRED: Capturing ${currentCaptureStep}/3 - ${angleText}`, 'warning');
+            
+            // Start countdown
+            startCountdownForStep();
+        }
+        
+        function updateGuideSteps() {
+            // Clear all active states
+            for (let i = 1; i <= 3; i++) {
+                const step = document.getElementById(`guideStep${i}`);
+                step.classList.remove('active');
+                
+                // Mark completed steps
+                if (i < currentCaptureStep) {
+                    step.classList.add('completed');
+                } else if (i > currentCaptureStep) {
+                    step.classList.remove('completed');
+                }
+            }
+            
+            // Set current step as active
+            const currentStep = document.getElementById(`guideStep${currentCaptureStep}`);
+            if (currentStep) {
+                currentStep.classList.add('active');
+            }
+        }
+        
+        function resetGuideSteps() {
+            for (let i = 1; i <= 3; i++) {
+                const step = document.getElementById(`guideStep${i}`);
+                step.classList.remove('active', 'completed');
+            }
+        }
+        
+        function startCountdownForStep() {
+            if (isCapturing || capturedImages.length >= 3) return;
+            
+            countdownValue = 5;
+            isCapturing = true;
+            
+            // Show countdown display
+            const countdownDisplay = document.getElementById('countdownDisplay');
+            countdownDisplay.textContent = countdownValue;
+            countdownDisplay.style.display = 'block';
+            
+            // Start countdown interval
+            countdownInterval = setInterval(() => {
+                countdownValue--;
+                countdownDisplay.textContent = countdownValue;
+                
+                // Update status
+                const angleText = captureInstructions[currentCaptureStep - 1];
+                updateCaptureStatus(`REQUIRED: Capturing ${currentCaptureStep}/3 in ${countdownValue} seconds - ${angleText}`, 'warning');
+                
+                if (countdownValue <= 0) {
+                    clearInterval(countdownInterval);
+                    countdownDisplay.style.display = 'none';
+                    
+                    // Capture image
+                    captureImage();
+                    
+                    // Prepare for next capture after a delay
+                    setTimeout(() => {
+                        isCapturing = false;
+                        startNextCaptureStep();
+                    }, 1500);
+                }
+            }, 1000);
+        }
+        
+        function captureImage() {
+            if (!stream || capturedImages.length >= 3) return;
+            
+            console.log(`📸 Capturing required angle ${capturedImages.length + 1}/3 (${captureAngles[capturedImages.length]})...`);
+            
+            const video = document.getElementById('video');
+            const canvas = document.getElementById('canvas');
+            const context = canvas.getContext('2d');
+            
+            // Set canvas dimensions
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            // Draw video frame to canvas
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Get image data
+            const imageData = canvas.toDataURL('image/jpeg', 0.8);
+            
+            // Add to captured images
+            capturedImages.push(imageData);
+            
+            // Update UI
+            updateCapturedImagesUI();
+            
+            const angleText = captureInstructions[currentCaptureStep - 1];
+            updateCaptureStatus(`✓ Required angle ${capturedImages.length} captured: ${captureAngles[capturedImages.length - 1]}`, 'success');
+            
+            // Flash effect
+            flashEffect();
+            
+            console.log(`✅ Required angle captured (${capturedImages.length}/3) - ${captureAngles[capturedImages.length - 1]}`);
+            
+            // Show success message emphasizing requirement
+            showToast(`✓ Required ${captureAngles[capturedImages.length - 1]} angle captured! ${3 - capturedImages.length} more required.`, 'success');
+            
+            // Update angle verification
+            updateAngleVerification();
+        }
+        
+        function updateAngleVerification() {
+            // Update angle checkboxes in step 3
+            for (let i = 1; i <= 3; i++) {
+                const checkbox = document.getElementById(`angleCheck${i}`);
+                if (checkbox) {
+                    checkbox.checked = i <= capturedImages.length;
+                }
+            }
+        }
+        
+        function flashEffect() {
+            const flashOverlay = document.getElementById('flashOverlay');
+            flashOverlay.style.animation = 'flash 0.5s ease-out';
+            
+            setTimeout(() => {
+                flashOverlay.style.animation = '';
+            }, 500);
+        }
+        
+        function stopCamera() {
+            // Clear intervals
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+                countdownInterval = null;
+            }
+            
+            if (guideTimeout) {
+                clearTimeout(guideTimeout);
+                guideTimeout = null;
+            }
+            
+            isCapturing = false;
+            currentCaptureStep = 0;
+            
+            // Hide countdown and angle indicator
+            document.getElementById('countdownDisplay').style.display = 'none';
+            document.getElementById('angleIndicator').classList.remove('show');
+            
+            // Reset guide steps
+            resetGuideSteps();
+            
+            if (stream) {
+                console.log('🛑 Stopping camera...');
+                
+                // Stop all tracks
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+                
+                // Hide video, show placeholder
+                const video = document.getElementById('video');
+                video.style.display = 'none';
+                video.srcObject = null;
+                
+                const placeholder = document.getElementById('cameraPlaceholder');
+                placeholder.style.display = 'flex';
+                placeholder.innerHTML = `
+                    <i class="fas fa-camera"></i>
+                    <p>Camera Stopped</p>
+                    <small>${capturedImages.length}/3 required angles captured</small>
+                `;
+                
+                // Update buttons
+                document.getElementById('startCameraBtn').disabled = false;
+                document.getElementById('startCameraBtn').innerHTML = '<i class="fas fa-play"></i> Start Camera';
+                document.getElementById('stopCameraBtn').disabled = true;
+                document.getElementById('retakeBtn').disabled = capturedImages.length === 0;
+                
+                updateCaptureStatus(`Camera stopped. ${capturedImages.length}/3 required angles captured.`, 'info');
+                updateCameraInfo('Camera stopped');
+                
+                console.log('✅ Camera stopped');
+            }
+        }
+        
+        function retakeAllImages() {
+            if (capturedImages.length === 0) {
+                showToast('No images to retake', 'warning');
+                return;
+            }
+            
+            console.log('🔄 Retaking all required angles...');
+            
+            // Remove all images
+            capturedImages = [];
+            
+            // Update UI
+            updateCapturedImagesUI();
+            
+            // Reset guide steps
+            resetGuideSteps();
+            
+            // Disable next button (angles not complete)
+            document.getElementById('step2NextBtn').disabled = true;
+            
+            // Update status
+            updateCaptureStatus('All required angles removed. You must capture all 3 angles again.', 'warning');
+            
+            // Update angle verification
+            updateAngleVerification();
+            
+            // If camera is on, restart guided capture
+            if (stream) {
+                if (countdownInterval) {
+                    clearInterval(countdownInterval);
+                    countdownInterval = null;
+                }
+                isCapturing = false;
+                currentCaptureStep = 0;
+                
+                // Hide angle indicator
+                document.getElementById('angleIndicator').classList.remove('show');
+                
+                setTimeout(() => {
+                    startGuidedCapture();
+                }, 1000);
+            }
+            
+            console.log('✅ All required angles removed. Must capture all 3 again.');
+            showToast('All required angles removed. You must capture all 3 angles again.', 'info');
+        }
+        
+        function removeImage(index) {
+            if (index < 0 || index >= capturedImages.length) return;
+            
+            console.log(`🗑️ Removing required angle ${index + 1} (${captureAngles[index]})...`);
+            
+            // Remove the specific image
+            capturedImages.splice(index, 1);
+            
+            // Update UI
+            updateCapturedImagesUI();
+            
+            // Disable next button (angles not complete)
+            document.getElementById('step2NextBtn').disabled = capturedImages.length < 3;
+            
+            // Update status
+            updateCaptureStatus(`Required angle removed. ${3 - capturedImages.length} more angles required.`, 'warning');
+            
+            // Update angle verification
+            updateAngleVerification();
+            
+            // Reset guide to current capture step
+            if (stream && capturedImages.length < 3) {
+                if (countdownInterval) {
+                    clearInterval(countdownInterval);
+                    countdownInterval = null;
+                }
+                isCapturing = false;
+                
+                // Restart from current position
+                setTimeout(() => {
+                    startGuidedCapture();
+                }, 1000);
+            }
+            
+            console.log(`✅ Required angle removed (${capturedImages.length}/3)`);
+            showToast('Required angle removed. You must capture it again.', 'info');
+        }
+        
+        // ==================== STEP NAVIGATION ====================
         function nextStep(step) {
+            // Validate current step
             if (currentStep === 1 && !validateStep1()) {
                 showToast('Please fill in all required fields', 'warning');
                 return;
             }
             
-            if (currentStep === 2 && !capturedImage) {
-                showToast('Please capture your face first', 'danger');
+            if (currentStep === 2 && capturedImages.length < 3) {
+                showToast('Please capture all 3 required face angles before proceeding', 'danger');
+                showProgressionBlock('You must complete all 3 required face captures with different angles before proceeding.');
                 return;
             }
             
@@ -2452,11 +2488,6 @@
             
             currentStep = step;
             
-            // Auto-start camera when entering step 2
-            if (step === 2) {
-                setTimeout(() => initializeCamera(), 500);
-            }
-            
             // Stop camera if moving away from step 2
             if (step !== 2 && stream) {
                 stopCamera();
@@ -2467,7 +2498,7 @@
             
             console.log(`➡️ Moving to step ${step}`);
         }
-
+        
         function prevStep(step) {
             // Mark current step as not active
             document.querySelector(`.step[data-step="${currentStep}"]`).classList.remove('active');
@@ -2479,21 +2510,147 @@
             
             currentStep = step;
             
-            // Auto-start camera when entering step 2
-            if (step === 2 && !capturedImage) {
-                setTimeout(() => initializeCamera(), 500);
-            }
-            
             console.log(`⬅️ Moving back to step ${step}`);
         }
-
+        
         function updateStepUI(step) {
+            // Update review section if step 3
             if (step === 3) {
                 updateReviewSection();
-                updateSubmitButton();
+            }
+            
+            // Stop camera if leaving step 2
+            if (step !== 2 && stream) {
+                stopCamera();
             }
         }
-
+        
+        // ==================== UI UPDATE FUNCTIONS ====================
+        function updateCaptureStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('captureStatus');
+            statusDiv.innerHTML = `<p><i class="fas fa-info-circle me-2"></i>${message}</p>`;
+            statusDiv.className = `capture-status ${type}`;
+        }
+        
+        function updateCapturedImagesUI() {
+            const imagesContainer = document.getElementById('capturedImages');
+            const imageElements = imagesContainer.querySelectorAll('.captured-image');
+            
+            imageElements.forEach((element, index) => {
+                const isCaptured = index < capturedImages.length;
+                
+                if (isCaptured) {
+                    element.classList.add('captured');
+                    element.innerHTML = `
+                        <img src="${capturedImages[index]}" alt="${captureAngles[index]} view">
+                        <div class="image-number">${index + 1}</div>
+                        <div class="image-remove" onclick="removeImage(${index})">
+                            <i class="fas fa-times"></i>
+                        </div>
+                    `;
+                } else {
+                    element.classList.remove('captured');
+                    const angleText = ['Front View', 'Left Angle', 'Right Angle'][index];
+                    const angleIcon = ['fa-user', 'fa-arrow-left', 'fa-arrow-right'][index];
+                    element.innerHTML = `
+                        <div class="image-placeholder">
+                            <i class="fas ${angleIcon}"></i>
+                            <span>${angleText}</span>
+                            <small class="mt-1"><strong>Required</strong></small>
+                        </div>
+                        <div class="image-number">${index + 1}</div>
+                    `;
+                }
+            });
+            
+            // Update counters
+            document.getElementById('imagesCounter').textContent = `${capturedImages.length}/3`;
+            document.getElementById('capturedCount').textContent = `${capturedImages.length}/3 required angles captured`;
+            
+            // Enable/disable retake button
+            document.getElementById('retakeBtn').disabled = capturedImages.length === 0;
+            
+            // Enable next button only if all 3 angles captured
+            if (capturedImages.length >= 3) {
+                document.getElementById('step2NextBtn').disabled = false;
+                document.getElementById('captureStatus').innerHTML = `
+                    <p><i class="fas fa-check-circle me-2"></i><strong>✓ All 3 required angles captured!</strong> You can now proceed to the next step.</p>
+                `;
+                document.getElementById('captureStatus').className = 'capture-status success';
+            } else {
+                document.getElementById('step2NextBtn').disabled = true;
+            }
+        }
+        
+        function updateReviewSection() {
+            // Update driver info
+            document.getElementById('reviewName').textContent = document.getElementById('driverName').value || '-';
+            document.getElementById('reviewPhone').textContent = document.getElementById('driverPhone').value || '-';
+            document.getElementById('reviewEmail').textContent = document.getElementById('driverEmail').value || '-';
+            document.getElementById('reviewAddress').textContent = document.getElementById('driverAddress').value || '-';
+            document.getElementById('reviewLicense').textContent = document.getElementById('licenseNumber').value || '-';
+            document.getElementById('reviewReference').textContent = document.getElementById('referenceNumber').value || '-';
+            
+            // Update captured images
+            const reviewImages = ['reviewImage1', 'reviewImage2', 'reviewImage3'];
+            reviewImages.forEach((id, index) => {
+                const element = document.getElementById(id);
+                if (index < capturedImages.length) {
+                    element.innerHTML = `
+                        <img src="${capturedImages[index]}" alt="${captureAngles[index]} view">
+                        <div class="image-number">${index + 1}</div>
+                    `;
+                    element.classList.add('captured');
+                }
+            });
+            
+            // Update image status
+            const statusElement = document.getElementById('reviewImageStatus');
+            if (capturedImages.length >= 3) {
+                statusElement.textContent = '✓ All 3 required angles captured';
+                statusElement.className = 'badge bg-success';
+            } else {
+                statusElement.textContent = `${capturedImages.length}/3 required angles`;
+                statusElement.className = 'badge bg-warning';
+            }
+            
+            // Update submit button
+            updateSubmitButton();
+        }
+        
+        function updateSubmitButton() {
+            const submitBtn = document.getElementById('submitBtn');
+            const termsChecked = document.getElementById('termsCheckbox').checked;
+            const hasAllAngles = capturedImages.length >= 3;
+            
+            submitBtn.disabled = !(termsChecked && hasAllAngles);
+        }
+        
+        function generateReferenceNumber() {
+            const timestamp = new Date().getTime();
+            const refNumber = `DRV${timestamp.toString().slice(-8)}`;
+            document.getElementById('referenceNumber').value = refNumber;
+            return refNumber;
+        }
+        
+        // ==================== VALIDATION FUNCTIONS ====================
+        function validateStep1() {
+            const name = document.getElementById('driverName').value.trim();
+            const phone = document.getElementById('driverPhone').value.trim();
+            
+            if (!name || !phone) {
+                return false;
+            }
+            
+            // Validate phone number
+            const phoneRegex = /^[0-9]{10,15}$/;
+            if (!phoneRegex.test(phone.replace(/\D/g, ''))) {
+                return false;
+            }
+            
+            return true;
+        }
+        
         // ==================== DRIVER REGISTRATION ====================
         async function registerDriver() {
             // Validate everything
@@ -2503,8 +2660,8 @@
                 return;
             }
             
-            if (!capturedImage) {
-                showToast('Please capture your face first', 'danger');
+            if (capturedImages.length < 3) {
+                showToast('Please capture all 3 required face angles', 'danger');
                 prevStep(2);
                 return;
             }
@@ -2536,15 +2693,15 @@
                 reference_number: document.getElementById('referenceNumber').value.trim(),
                 guardian_id: guardianData.id,
                 token: sessionToken,
-                face_image: capturedImage,
-                validation_summary: currentValidation,
-                capture_method: 'blink_detection'
+                face_images: capturedImages,
+                capture_angles: capturedImages.map((_, index) => captureAngles[index])
             };
             
             console.log('📤 Sending registration data:', {
                 driver_name: registrationData.driver_name,
                 driver_phone: registrationData.driver_phone,
-                image_captured: !!registrationData.face_image
+                image_count: registrationData.face_images.length,
+                capture_angles: registrationData.capture_angles
             });
             
             try {
@@ -2557,11 +2714,11 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    console.log('✅ Driver registered successfully');
-                    showToast(`Driver "${registrationData.driver_name}" registered successfully!`, 'success');
+                    console.log('✅ Driver registered successfully with all required angles');
+                    showToast(`Driver "${registrationData.driver_name}" registered successfully with all 3 required face angles!`, 'success');
                     
-                    // Clear captured image
-                    capturedImage = null;
+                    // Clear captured images
+                    capturedImages = [];
                     
                     setTimeout(() => {
                         goBackToDashboard();
@@ -2581,91 +2738,14 @@
                 showToast('Network error. Please try again.', 'danger');
             }
         }
-
-        // ==================== UTILITY FUNCTIONS ====================
-        function setupEventListeners() {
-            // Terms checkbox listener
-            document.getElementById('termsCheckbox').addEventListener('change', updateSubmitButton);
-            
-            // Form validation listeners
-            ['driverName', 'driverPhone'].forEach(id => {
-                document.getElementById(id).addEventListener('input', validateStep1);
-            });
-        }
-
-        function validateStep1() {
-            const name = document.getElementById('driverName').value.trim();
-            const phone = document.getElementById('driverPhone').value.trim();
-            
-            if (!name || !phone) {
-                return false;
-            }
-            
-            // Validate phone number
-            const phoneRegex = /^[0-9]{10,15}$/;
-            if (!phoneRegex.test(phone.replace(/\D/g, ''))) {
-                return false;
-            }
-            
-            return true;
-        }
-
-        function generateReferenceNumber() {
-            const timestamp = new Date().getTime();
-            const refNumber = `DRV${timestamp.toString().slice(-8)}`;
-            document.getElementById('referenceNumber').value = refNumber;
-            return refNumber;
-        }
-
-        function updateReviewSection() {
-            // Update driver info
-            document.getElementById('reviewName').textContent = document.getElementById('driverName').value || '-';
-            document.getElementById('reviewPhone').textContent = document.getElementById('driverPhone').value || '-';
-            document.getElementById('reviewEmail').textContent = document.getElementById('driverEmail').value || '-';
-            document.getElementById('reviewAddress').textContent = document.getElementById('driverAddress').value || '-';
-            document.getElementById('reviewLicense').textContent = document.getElementById('licenseNumber').value || '-';
-            document.getElementById('reviewReference').textContent = document.getElementById('referenceNumber').value || '-';
-            
-            // Update captured image
-            const reviewImage = document.getElementById('reviewImage');
-            if (capturedImage) {
-                reviewImage.innerHTML = `
-                    <img src="${capturedImage}" alt="Captured face">
-                    <div class="image-number">1</div>
-                `;
-                reviewImage.classList.add('captured');
-                document.getElementById('reviewImageStatus').textContent = '✓ Face captured';
-                document.getElementById('reviewImageStatus').className = 'badge bg-success';
-            } else {
-                reviewImage.innerHTML = `
-                    <div class="image-placeholder">
-                        <i class="fas fa-user"></i>
-                        <span>Face Image</span>
-                    </div>
-                    <div class="image-number">1</div>
-                `;
-                reviewImage.classList.remove('captured');
-                document.getElementById('reviewImageStatus').textContent = 'No image captured';
-                document.getElementById('reviewImageStatus').className = 'badge bg-warning';
-            }
-            
-            // Update submit button
-            updateSubmitButton();
-        }
-
-        function updateSubmitButton() {
-            const submitBtn = document.getElementById('submitBtn');
-            const termsChecked = document.getElementById('termsCheckbox').checked;
-            const hasFaceImage = capturedImage !== null;
-            
-            submitBtn.disabled = !(termsChecked && hasFaceImage);
-        }
-
+        
+        // ==================== NAVIGATION ====================
         function goBackToDashboard() {
             console.log('🔙 Returning to dashboard...');
             window.location.href = `/guardian-dashboard?guardian_id=${guardianData.id}&token=${sessionToken}`;
         }
-
+        
+        // ==================== UTILITY FUNCTIONS ====================
         function showToast(message, type = 'info', title = '') {
             const toastContainer = document.getElementById('toastContainer');
             if (!toastContainer) return;
@@ -2701,14 +2781,17 @@
                 }
             }, 5000);
         }
-
+        
         // ==================== CLEANUP ====================
         window.addEventListener('beforeunload', function() {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
             }
-            if (faceDetectorInterval) {
-                clearInterval(faceDetectorInterval);
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+            }
+            if (guideTimeout) {
+                clearTimeout(guideTimeout);
             }
         });
     </script>
