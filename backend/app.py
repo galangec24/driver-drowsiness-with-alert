@@ -112,6 +112,8 @@ GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 # List of allowed origins (Firebase domains + Render + localhost)
 ALLOWED_ORIGINS = [
     'https://guardian-drive.web.app',
+    'https://guardian-drive-app.web.app',
+    'https://guardian-drive-app.firebaseapp.com',
     'https://guardian-drive.firebaseapp.com',
     'https://driver-drowsiness-with-alert.onrender.com',
     'http://localhost:5000',
