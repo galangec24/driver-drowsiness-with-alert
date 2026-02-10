@@ -32,37 +32,9 @@ import jwt
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 
-# ==================== FACE VALIDATION IMPORTS ====================
-import numpy as np
-import cv2
-import tempfile
-from io import BytesIO
-
 # ==================== POSTGRESQL CONFIGURATION ====================
 import psycopg2
 from psycopg2.extras import RealDictCursor
-
-# ==================== FACE VALIDATION MODULES ====================
-# Try to import face detection libraries
-try:
-    # Try to import RetinaFace
-    from retinaface import RetinaFace
-    RETINAFACE_AVAILABLE = True
-    print("✅ RetinaFace is available")
-except ImportError:
-    RETINAFACE_AVAILABLE = False
-    print("⚠️ RetinaFace not available, falling back to OpenCV")
-
-# Ensure OpenCV is available for face detection
-try:
-    # Load Haar Cascade for face detection
-    face_cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-    FACE_CASCADE = cv2.CascadeClassifier(face_cascade_path)
-    OPENCV_AVAILABLE = True
-    print("✅ OpenCV face detection is available")
-except Exception as e:
-    OPENCV_AVAILABLE = False
-    print(f"⚠️ OpenCV face detection not available: {e}")
 
 # ==================== APP SETUP ====================
 app = Flask(__name__, 
@@ -168,335 +140,6 @@ ADMIN_CREDENTIALS = {
 
 admin_rate_limit = {}
 admin_sessions = {}
-
-# ==================== FACE VALIDATION FUNCTIONS ====================
-def decode_base64_image(image_data):
-    """Decode base64 image to OpenCV format"""
-    try:
-        # Remove data URL prefix if present
-        if ',' in image_data:
-            image_data = image_data.split(',')[1]
-        
-        # Decode base64
-        image_bytes = base64.b64decode(image_data)
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        if img is None:
-            raise ValueError("Failed to decode image")
-        
-        return img
-    except Exception as e:
-        print(f"Error decoding base64 image: {e}")
-        raise
-
-def validate_image_size(image_data, max_size_mb=5):
-    """Validate image size"""
-    if ',' in image_data:
-        image_data = image_data.split(',')[1]
-    
-    # Calculate approximate size (base64 is ~33% larger than binary)
-    size_bytes = len(image_data) * 3 // 4
-    size_mb = size_bytes / (1024 * 1024)
-    
-    if size_mb > max_size_mb:
-        return False, f"Image size ({size_mb:.1f}MB) exceeds maximum allowed ({max_size_mb}MB)"
-    
-    return True, "Valid size"
-
-def detect_faces_retinaface(image):
-    """Detect faces using RetinaFace"""
-    try:
-        if not RETINAFACE_AVAILABLE:
-            return None, "RetinaFace not available"
-        
-        faces = RetinaFace.detect_faces(image)
-        
-        if not faces:
-            return [], "No faces detected"
-        
-        # Convert to list of face data
-        face_list = []
-        for face_key, face_data in faces.items():
-            facial_area = face_data['facial_area']
-            score = face_data['score']
-            landmarks = face_data.get('landmarks', {})
-            
-            face_list.append({
-                'box': [int(facial_area[0]), int(facial_area[1]), 
-                       int(facial_area[2]), int(facial_area[3])],
-                'confidence': float(score),
-                'landmarks': landmarks
-            })
-        
-        return face_list, None
-        
-    except Exception as e:
-        return None, f"RetinaFace detection error: {str(e)}"
-
-def detect_faces_opencv(image):
-    """Detect faces using OpenCV Haar Cascade"""
-    try:
-        if not OPENCV_AVAILABLE:
-            return None, "OpenCV not available"
-        
-        # Convert to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        # Detect faces
-        faces = FACE_CASCADE.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(30, 30)
-        )
-        
-        if len(faces) == 0:
-            return [], "No faces detected"
-        
-        # Convert to standard format
-        face_list = []
-        for (x, y, w, h) in faces:
-            face_list.append({
-                'box': [int(x), int(y), int(x + w), int(y + h)],
-                'confidence': 0.9,  # Default confidence for Haar Cascade
-                'landmarks': {}
-            })
-        
-        return face_list, None
-        
-    except Exception as e:
-        return None, f"OpenCV detection error: {str(e)}"
-
-def detect_faces(image):
-    """Detect faces using best available method"""
-    # Try RetinaFace first
-    if RETINAFACE_AVAILABLE:
-        faces, error = detect_faces_retinaface(image)
-        if faces is not None:
-            return faces, error, 'retinaface'
-    
-    # Fall back to OpenCV
-    if OPENCV_AVAILABLE:
-        faces, error = detect_faces_opencv(image)
-        if faces is not None:
-            return faces, error, 'opencv'
-    
-    return None, "No face detection method available", 'none'
-
-def calculate_face_similarity(face1, face2):
-    """Calculate similarity between two faces based on size and position"""
-    try:
-        box1 = face1['box']
-        box2 = face2['box']
-        
-        # Calculate box areas
-        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
-        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
-        
-        # Calculate area similarity
-        min_area = min(area1, area2)
-        max_area = max(area1, area2)
-        area_similarity = min_area / max_area if max_area > 0 else 0
-        
-        # Calculate position similarity (center distance)
-        center1 = [(box1[0] + box1[2]) / 2, (box1[1] + box1[3]) / 2]
-        center2 = [(box2[0] + box2[2]) / 2, (box2[1] + box2[3]) / 2]
-        
-        max_dim = max(max(box1[2] - box1[0], box1[3] - box1[1]),
-                      max(box2[2] - box2[0], box2[3] - box2[1]))
-        
-        distance = np.sqrt((center1[0] - center2[0])**2 + (center1[1] - center2[1])**2)
-        position_similarity = 1 - min(distance / max_dim, 1) if max_dim > 0 else 0
-        
-        # Combined similarity
-        similarity = (area_similarity * 0.3) + (position_similarity * 0.7)
-        
-        return similarity
-        
-    except Exception as e:
-        print(f"Error calculating similarity: {e}")
-        return 0
-
-def estimate_head_angle(face):
-    """Estimate head rotation angle (simplified)"""
-    try:
-        box = face['box']
-        landmarks = face.get('landmarks', {})
-        
-        if landmarks:
-            # Use eye landmarks if available
-            if 'left_eye' in landmarks and 'right_eye' in landmarks:
-                left_eye = landmarks['left_eye']
-                right_eye = landmarks['right_eye']
-                
-                # Calculate angle based on eye positions
-                dx = right_eye[0] - left_eye[0]
-                dy = right_eye[1] - left_eye[1]
-                
-                if dx != 0:
-                    angle = np.degrees(np.arctan2(dy, dx))
-                    return angle
-        
-        # Fallback: use face box width/height ratio
-        width = box[2] - box[0]
-        height = box[3] - box[1]
-        
-        if height > 0:
-            aspect_ratio = width / height
-            # Map aspect ratio to approximate angle (-45 to 45 degrees)
-            angle = (aspect_ratio - 0.7) * 150  # Rough approximation
-            return angle
-        
-        return 0
-        
-    except Exception as e:
-        print(f"Error estimating head angle: {e}")
-        return 0
-
-def detect_expression(image, face_box):
-    """Detect facial expression (simplified)"""
-    try:
-        x1, y1, x2, y2 = face_box
-        face_region = image[y1:y2, x1:x2]
-        
-        if face_region.size == 0:
-            return "neutral"
-        
-        # Convert to grayscale
-        gray = cv2.cvtColor(face_region, cv2.COLOR_BGR2GRAY)
-        
-        # Simple smile detection based on mouth region histogram
-        # This is a simplified version - in production, use a proper expression detector
-        
-        # Define mouth region (lower half of face)
-        mouth_y_start = int(face_region.shape[0] * 0.6)
-        mouth_y_end = int(face_region.shape[0] * 0.9)
-        mouth_x_start = int(face_region.shape[1] * 0.25)
-        mouth_x_end = int(face_region.shape[1] * 0.75)
-        
-        if (mouth_y_start < mouth_y_end and mouth_x_start < mouth_x_end and
-            mouth_y_start >= 0 and mouth_y_end <= gray.shape[0] and
-            mouth_x_start >= 0 and mouth_x_end <= gray.shape[1]):
-            
-            mouth_region = gray[mouth_y_start:mouth_y_end, mouth_x_start:mouth_x_end]
-            
-            if mouth_region.size > 0:
-                # Calculate intensity variation in mouth region
-                mouth_var = np.var(mouth_region)
-                
-                # Higher variance might indicate open mouth (smiling)
-                if mouth_var > 1000:
-                    return "smiling"
-        
-        return "neutral"
-        
-    except Exception as e:
-        print(f"Error detecting expression: {e}")
-        return "neutral"
-
-def validate_face_images(image1_data, image2_data):
-    """
-    Main validation function for two face images
-    Returns: (success, details, error_message)
-    """
-    try:
-        print("🔄 Starting face validation...")
-        
-        # Validate image sizes
-        size_valid1, size_msg1 = validate_image_size(image1_data)
-        size_valid2, size_msg2 = validate_image_size(image2_data)
-        
-        if not size_valid1:
-            return False, None, f"First image: {size_msg1}"
-        if not size_valid2:
-            return False, None, f"Second image: {size_msg2}"
-        
-        # Decode images
-        print("📷 Decoding images...")
-        try:
-            img1 = decode_base64_image(image1_data)
-            img2 = decode_base64_image(image2_data)
-        except Exception as e:
-            return False, None, f"Failed to decode images: {str(e)}"
-        
-        # Detect faces
-        print("🔍 Detecting faces...")
-        faces1, error1, method1 = detect_faces(img1)
-        faces2, error2, method2 = detect_faces(img2)
-        
-        if faces1 is None:
-            return False, None, f"Face detection failed for first image: {error1}"
-        if faces2 is None:
-            return False, None, f"Face detection failed for second image: {error2}"
-        
-        print(f"📊 Detected {len(faces1)} face(s) in image 1, {len(faces2)} face(s) in image 2")
-        
-        # Check for exactly one face in each image
-        if len(faces1) != 1:
-            return False, None, f"Expected exactly one face in first image, found {len(faces1)}"
-        if len(faces2) != 1:
-            return False, None, f"Expected exactly one face in second image, found {len(faces2)}"
-        
-        face1 = faces1[0]
-        face2 = faces2[0]
-        
-        # Calculate similarity
-        print("📐 Calculating similarity...")
-        similarity_score = calculate_face_similarity(face1, face2)
-        
-        # Check if images are too similar (same pose/expression)
-        if similarity_score > 0.9:
-            return False, {
-                'similarity_score': similarity_score,
-                'detection_method': method1,
-                'reason': 'Images are too similar'
-            }, "Images appear to be the same pose/expression. Please provide images with different expressions or angles."
-        
-        # Check if different enough
-        if similarity_score < 0.3:
-            return False, {
-                'similarity_score': similarity_score,
-                'detection_method': method1,
-                'reason': 'Images may be of different people'
-            }, "Images may be of different people. Please ensure both images are of the same driver."
-        
-        # Analyze expressions
-        print("😊 Analyzing expressions...")
-        expression1 = detect_expression(img1, face1['box'])
-        expression2 = detect_expression(img2, face2['box'])
-        
-        # Estimate head angles
-        angle1 = estimate_head_angle(face1)
-        angle2 = estimate_head_angle(face2)
-        angle_diff = abs(angle1 - angle2)
-        
-        # Check if expressions are too similar
-        if expression1 == expression2 and angle_diff < 10:
-            return False, {
-                'similarity_score': similarity_score,
-                'expressions': [expression1, expression2],
-                'angle_difference': angle_diff,
-                'detection_method': method1,
-                'reason': 'Similar expressions and angles'
-            }, f"Images have similar expressions ({expression1}) and angles. Please provide one smiling and one neutral expression, or different angles."
-        
-        # All checks passed
-        print("✅ Face validation successful!")
-        return True, {
-            'similarity_score': similarity_score,
-            'expressions': [expression1, expression2],
-            'angle_difference': angle_diff,
-            'detection_method': method1,
-            'face_confidence_1': face1['confidence'],
-            'face_confidence_2': face2['confidence'],
-            'validation_timestamp': datetime.now().isoformat()
-        }, None
-        
-    except Exception as e:
-        print(f"❌ Face validation error: {str(e)}")
-        traceback.print_exc()
-        return False, None, f"Validation error: {str(e)}"
 
 # ==================== PASSWORD FUNCTIONS ====================
 def clean_password(password):
@@ -851,27 +494,6 @@ def init_db():
     except Exception as e:
         print(f"❌ Database initialization failed: {e}")
         return False
-
-def create_face_images_table():
-    """Create table for storing face images with enhanced schema"""
-    try:
-        with get_db_cursor() as cursor:
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS face_images (
-                    image_id SERIAL PRIMARY KEY,
-                    driver_id TEXT REFERENCES drivers(driver_id) ON DELETE CASCADE,
-                    image_data TEXT NOT NULL,
-                    image_type VARCHAR(50),
-                    expression VARCHAR(50),
-                    angle FLOAT,
-                    capture_method VARCHAR(20),
-                    validation_data JSONB,
-                    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            print("✅ Created/verified face_images table")
-    except Exception as e:
-        print(f"❌ Error creating face_images table: {e}")
 
 def update_db_schema():
     """Update existing database schema to add missing columns"""
@@ -1895,324 +1517,6 @@ def serve_service_worker():
             });
         ''', mimetype='application/javascript')
 
-# ==================== FACE VALIDATION API ENDPOINTS ====================
-
-@app.route('/api/validate-faces', methods=['POST'])
-def validate_faces_endpoint():
-    """Validate two face images for diversity"""
-    try:
-        print("📨 Received face validation request")
-        
-        data = request.get_json()
-        if not data:
-            return jsonify({'success': False, 'error': 'No data provided'}), 400
-        
-        # Get image data
-        image1 = data.get('image1')
-        image2 = data.get('image2')
-        source = data.get('source', 'upload')
-        
-        if not image1 or not image2:
-            return jsonify({'success': False, 'error': 'Both images are required'}), 400
-        
-        # Validate faces
-        is_valid, details, error_msg = validate_face_images(image1, image2)
-        
-        if is_valid:
-            return jsonify({
-                'success': True,
-                'message': 'Face validation successful',
-                'details': details,
-                'validation_passed': True
-            }), 200
-        else:
-            return jsonify({
-                'success': False,
-                'error': error_msg,
-                'details': details,
-                'validation_passed': False
-            }), 400
-            
-    except Exception as e:
-        print(f"❌ Validation endpoint error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': f'Server error: {str(e)}'
-        }), 500
-
-@app.route('/api/register-driver', methods=['POST'])
-def register_driver_endpoint():
-    """Register a new driver with face images"""
-    try:
-        print("📨 Received driver registration request")
-        
-        data = request.get_json()
-        if not data:
-            return jsonify({'success': False, 'error': 'No data provided'}), 400
-        
-        # Extract and validate required fields
-        required_fields = ['driver_name', 'driver_phone', 'guardian_id', 'token']
-        for field in required_fields:
-            if field not in data:
-                return jsonify({'success': False, 'error': f'Missing required field: {field}'}), 400
-        
-        # Verify session
-        guardian_id = data['guardian_id']
-        token = data['token']
-        
-        if not validate_session(guardian_id, token):
-            return jsonify({
-                'success': False,
-                'error': 'Invalid or expired session',
-                'redirect': '/?logged_out=true'
-            }), 401
-        
-        # Check if face images are provided
-        face_images = data.get('face_images', [])
-        if len(face_images) != 2:
-            return jsonify({
-                'success': False, 
-                'error': 'Exactly two face images are required'
-            }), 400
-        
-        # Optional: Validate faces on server side again
-        validation_result = data.get('validation_result', {})
-        capture_method = data.get('capture_method', 'upload')
-        
-        # Generate driver ID and reference number
-        import secrets
-        driver_id = f"DRV{datetime.now().strftime('%Y%m%d%H%M%S')}{secrets.token_hex(3).upper()}"
-        reference_number = data.get('reference_number')
-        
-        if not reference_number:
-            reference_number = f"REF{datetime.now().strftime('%Y%m%d')}{secrets.token_hex(4).upper()}"
-        
-        # Get guardian info for logging
-        guardian = get_guardian_by_id(guardian_id)
-        if not guardian:
-            return jsonify({'success': False, 'error': 'Guardian not found'}), 404
-        
-        print(f"📝 Registering driver: {data['driver_name']} for guardian: {guardian['full_name']}")
-        
-        with get_db_cursor() as cursor:
-            # Check if reference number already exists
-            cursor.execute(
-                "SELECT driver_id FROM drivers WHERE reference_number = %s",
-                (reference_number,)
-            )
-            if cursor.fetchone():
-                return jsonify({
-                    'success': False,
-                    'error': 'Reference number already exists'
-                }), 400
-            
-            # Insert driver into database
-            cursor.execute('''
-                INSERT INTO drivers (
-                    driver_id, name, address, phone, email, 
-                    reference_number, license_number, guardian_id
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            ''', (
-                driver_id,
-                data['driver_name'],
-                data.get('driver_address', ''),
-                data['driver_phone'],
-                data.get('driver_email', ''),
-                reference_number,
-                data.get('license_number', ''),
-                guardian_id
-            ))
-            
-            print(f"✅ Driver {driver_id} inserted into database")
-            
-            # Store face images
-            for i, image_data in enumerate(face_images):
-                # Extract expression from validation result if available
-                expression = "unknown"
-                if validation_result and 'details' in validation_result:
-                    expressions = validation_result['details'].get('expressions', [])
-                    if i < len(expressions):
-                        expression = expressions[i]
-                
-                # Extract angle if available
-                angle = None
-                if validation_result and 'details' in validation_result:
-                    angle_diff = validation_result['details'].get('angle_difference', 0)
-                    angle = angle_diff
-                
-                cursor.execute('''
-                    INSERT INTO face_images (
-                        driver_id, image_data, image_type, expression,
-                        angle, capture_method, validation_data
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ''', (
-                    driver_id,
-                    image_data,
-                    f'face_{i+1}',
-                    expression,
-                    angle,
-                    capture_method,
-                    json.dumps(validation_result) if validation_result else None
-                ))
-                
-                print(f"✅ Stored face image {i+1} for driver {driver_id}")
-            
-            # Log activity
-            cursor.execute('''
-                INSERT INTO activity_log (guardian_id, action, details)
-                VALUES (%s, %s, %s)
-            ''', (
-                guardian_id,
-                'DRIVER_REGISTERED',
-                f'Registered driver: {data["driver_name"]} (ID: {driver_id}) with {len(face_images)} face images'
-            ))
-        
-        # Emit socket event for real-time update
-        socketio.emit('driver_registered', {
-            'guardian_id': guardian_id,
-            'driver_id': driver_id,
-            'driver_name': data['driver_name'],
-            'timestamp': datetime.now().isoformat()
-        })
-        
-        return jsonify({
-            'success': True,
-            'driver_id': driver_id,
-            'reference_number': reference_number,
-            'message': 'Driver registered successfully with face images'
-        }), 200
-        
-    except psycopg2.Error as e:
-        print(f"❌ Database error in driver registration: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': f'Database error: {str(e)}'
-        }), 500
-        
-    except Exception as e:
-        print(f"❌ Driver registration error: {str(e)}")
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': f'Registration error: {str(e)}'
-        }), 500
-
-@app.route('/api/driver/<driver_id>/faces', methods=['GET'])
-def get_driver_faces(driver_id):
-    """Get face images for a driver"""
-    try:
-        token = request.args.get('token')
-        guardian_id = request.args.get('guardian_id')
-        
-        if not guardian_id or not token:
-            return jsonify({'success': False, 'error': 'Authentication required'}), 401
-        
-        # Validate session
-        if not validate_session(guardian_id, token):
-            return jsonify({'success': False, 'error': 'Invalid session'}), 401
-        
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Verify the driver belongs to the guardian
-            cursor.execute('''
-                SELECT d.driver_id, d.name, d.guardian_id
-                FROM drivers d
-                WHERE d.driver_id = %s AND d.guardian_id = %s
-            ''', (driver_id, guardian_id))
-            
-            driver = cursor.fetchone()
-            if not driver:
-                return jsonify({'success': False, 'error': 'Driver not found or not authorized'}), 404
-            
-            # Get face images
-            cursor.execute('''
-                SELECT image_id, image_type, expression, angle, 
-                       capture_method, uploaded_at
-                FROM face_images
-                WHERE driver_id = %s
-                ORDER BY image_type
-            ''', (driver_id,))
-            
-            faces = cursor.fetchall()
-            
-            # Convert to list of dicts
-            face_list = []
-            for face in faces:
-                face_list.append({
-                    'image_id': face[0],
-                    'image_type': face[1],
-                    'expression': face[2],
-                    'angle': float(face[3]) if face[3] else None,
-                    'capture_method': face[4],
-                    'uploaded_at': face[5].isoformat() if face[5] else None
-                })
-            
-            return jsonify({
-                'success': True,
-                'driver_id': driver_id,
-                'driver_name': driver[1],
-                'face_count': len(face_list),
-                'faces': face_list
-            })
-            
-    except Exception as e:
-        print(f"❌ Error getting driver faces: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/driver/<driver_id>/face-image/<int:image_id>', methods=['GET'])
-def get_driver_face_image(driver_id, image_id):
-    """Get specific face image data"""
-    try:
-        token = request.args.get('token')
-        guardian_id = request.args.get('guardian_id')
-        
-        if not guardian_id or not token:
-            return jsonify({'success': False, 'error': 'Authentication required'}), 401
-        
-        # Validate session
-        if not validate_session(guardian_id, token):
-            return jsonify({'success': False, 'error': 'Invalid session'}), 401
-        
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Verify the driver belongs to the guardian
-            cursor.execute('''
-                SELECT d.driver_id
-                FROM drivers d
-                WHERE d.driver_id = %s AND d.guardian_id = %s
-            ''', (driver_id, guardian_id))
-            
-            if not cursor.fetchone():
-                return jsonify({'success': False, 'error': 'Not authorized'}), 403
-            
-            # Get the face image
-            cursor.execute('''
-                SELECT image_data, image_type, expression, validation_data
-                FROM face_images
-                WHERE driver_id = %s AND image_id = %s
-            ''', (driver_id, image_id))
-            
-            face = cursor.fetchone()
-            
-            if not face:
-                return jsonify({'success': False, 'error': 'Face image not found'}), 404
-            
-            return jsonify({
-                'success': True,
-                'image_id': image_id,
-                'driver_id': driver_id,
-                'image_type': face[1],
-                'expression': face[2],
-                'image_data': face[0],  # Base64 image data
-                'validation_data': json.loads(face[3]) if face[3] else None
-            })
-            
-    except Exception as e:
-        print(f"❌ Error getting face image: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
 # ==================== API ENDPOINTS ====================
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -2226,8 +1530,7 @@ def health_check():
             'connected_clients': len(connected_clients),
             'active_sessions': len(active_sessions),
             'database': 'postgresql',
-            'google_auth': bool(GOOGLE_CLIENT_ID),
-            'face_validation': 'RetinaFace' if RETINAFACE_AVAILABLE else 'OpenCV' if OPENCV_AVAILABLE else 'Disabled'
+            'google_auth': bool(GOOGLE_CLIENT_ID)
         }
         
         return jsonify(health_info)
@@ -4156,7 +3459,7 @@ def serve_static(filename):
 
 # ==================== APPLICATION STARTUP ====================
 def startup_tasks():
-    """Run startup tasks - UPDATED VERSION"""
+    """Run startup tasks"""
     print(f"\n{'='*70}")
     print("🚗 DRIVER DROWSINESS ALERT SYSTEM - CAPSTONE PROJECT")
     print(f"{'='*70}")
@@ -4164,8 +3467,6 @@ def startup_tasks():
     print("🌐 DEPLOYMENT: Render.com Cloud")
     print("📊 Database: PostgreSQL (Persistent)")
     print("🔒 Security: bcrypt password hashing enabled")
-    print("🤖 Face Validation: " + 
-          ("RetinaFace" if RETINAFACE_AVAILABLE else "OpenCV" if OPENCV_AVAILABLE else "Disabled"))
     
     # Check environment variables
     print("\n🔧 Environment Check:")
@@ -4227,7 +3528,7 @@ def startup_tasks():
             # Check specific important files
             important_files = [
                 'icon-192.png','icon-72.png', 'icon-96.png', 'icon-128.png', 'icon-512.png', 'login.html', 
-                'admin_login.html', 'guardian-register.html', 'register-driver.html',
+                'admin_login.html', 'guardian-register.html',
                 'manifest.json', 'service-worker.js'
             ]
             
@@ -4266,10 +3567,6 @@ def startup_tasks():
         # Update schema for google_id column
         print("\n🔧 Schema Updates:")
         update_db_schema()
-        
-        # Create face images table
-        create_face_images_table()
-        
     except Exception as e:
         print(f"⚠️ Database initialization error: {e}")
         import traceback
@@ -4279,15 +3576,6 @@ def startup_tasks():
     print("\n🔐 Security Status:")
     print(f"   Admin password hash: {ADMIN_PASSWORD_HASH[:20]}...")
     print(f"   Hash algorithm: bcrypt (12 rounds)")
-    
-    # Face validation status
-    print("\n🤖 Face Validation Status:")
-    if RETINAFACE_AVAILABLE:
-        print("   ✅ RetinaFace: Available")
-    elif OPENCV_AVAILABLE:
-        print("   ✅ OpenCV: Available (fallback)")
-    else:
-        print("   ❌ Face detection: Not available")
     
     # Network and server info
     print("\n🌐 Network Configuration:")
@@ -4303,7 +3591,7 @@ def startup_tasks():
     else:
         print(f"   ⚠️  Not running on Render (local development)")
     
-    # API endpoints summary - UPDATED with new endpoints
+    # API endpoints summary
     print(f"\n🔗 Available API Endpoints:")
     endpoints = [
         ("GET", "/api/health", "Health check"),
@@ -4313,8 +3601,6 @@ def startup_tasks():
         ("POST", "/api/send-alert", "Send drowsiness alert"),
         ("GET", "/api/guardian/dashboard", "Guardian dashboard"),
         ("POST", "/api/admin/login", "Admin login"),
-        ("POST", "/api/validate-faces", "Validate face images"),
-        ("POST", "/api/register-driver", "Register driver with faces"),
         ("GET", "/api/debug/files", "Debug file paths"),
     ]
     
@@ -4334,22 +3620,15 @@ def startup_tasks():
     print(f"  • Active Clients: {len(connected_clients)}")
     print(f"  • Active Sessions: {len(active_sessions)}")
     
-    # Face validation requirements
-    print(f"\n📸 Face Validation Requirements:")
-    print(f"  • Required: 2 images per driver")
-    print(f"  • Validation: Different expressions/angles")
-    print(f"  • Technology: " + ("RetinaFace" if RETINAFACE_AVAILABLE else "OpenCV Haar Cascade"))
-    
     # Startup completion
     print(f"\n✅ Startup Tasks Complete")
-    print(f"   Server Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   Server Time: {datetime.now().strftime('%Y-%m-d %H:%M:%S')}")
     print(f"   Timezone: {time.tzname[0] if time.tzname else 'UTC'}")
     
     print(f"\n🚀 Ready to accept connections")
     print(f"   Web Interface: http://localhost:{port}")
     print(f"   Health Check: http://localhost:{port}/api/health")
     print(f"   WebSocket: ws://localhost:{port}/socket.io/")
-    print(f"   Face Validation: POST http://localhost:{port}/api/validate-faces")
     print(f"{'='*70}\n")
 
 # ==================== MAIN ENTRY POINT ====================
@@ -4364,11 +3643,8 @@ if __name__ == '__main__':
     print(f"🚀 Starting server on {host}:{port}")
     print(f"🌐 WebSocket endpoint: ws://{host}:{port}")
     print(f"📡 Alert endpoint: http://{host}:{port}/api/send-alert")
-    print(f"📸 Face Validation: http://{host}:{port}/api/validate-faces")
-    print(f"👤 Driver Registration: http://{host}:{port}/api/register-driver")
     print(f"🔧 Debug endpoints available at /api/debug/*")
     print(f"🔐 Google OAuth: {'Enabled' if GOOGLE_CLIENT_ID else 'Disabled'}")
-    print(f"🤖 Face Detection: {'RetinaFace' if RETINAFACE_AVAILABLE else 'OpenCV' if OPENCV_AVAILABLE else 'Disabled'}")
     
     # Run the application
     socketio.run(app, 

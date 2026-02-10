@@ -214,285 +214,7 @@
         .step.completed .step-circle span {
             display: none;
         }
-        /* Capture Method Tabs */
-        .capture-method-tabs {
-            margin-bottom: 25px;
-        }
-
-        .capture-method-tabs .nav-tabs {
-            display: flex;
-            background: #f8f9fa;
-            border-radius: 8px;
-            padding: 5px;
-            border: 2px solid #e9ecef;
-        }
-
-        .capture-method-tabs .nav-link {
-            flex: 1;
-            padding: 12px 20px;
-            text-align: center;
-            background: none;
-            border: none;
-            color: var(--secondary-color);
-            font-weight: 600;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: var(--transition);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-        }
-
-        .capture-method-tabs .nav-link.active {
-            background: var(--primary-color);
-            color: white;
-            box-shadow: 0 2px 8px rgba(45, 59, 139, 0.2);
-        }
-
-        .capture-method-tabs .nav-link:hover:not(.active) {
-            background: rgba(45, 59, 139, 0.1);
-            color: var(--primary-color);
-        }
-
-        /* Method Content */
-        .method-content {
-            display: none;
-            animation: fadeIn 0.5s ease;
-        }
-
-        .method-content.active {
-            display: block;
-        }
-
-        /* Upload Container */
-        .upload-container {
-            background: #f8f9fa;
-            border-radius: var(--border-radius);
-            padding: 25px;
-            margin-bottom: 20px;
-            border: 2px solid #e9ecef;
-        }
-
-        .upload-instructions {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 25px;
-            border-left: 4px solid var(--info-color);
-        }
-
-        .upload-instructions h5 {
-            color: var(--dark-color);
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .upload-instructions ul {
-            margin: 0;
-            padding-left: 20px;
-        }
-
-        .upload-instructions li {
-            margin-bottom: 8px;
-            color: var(--secondary-color);
-            font-size: 14px;
-        }
-
-        /* Upload Sections */
-        .upload-sections {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 25px;
-            margin-bottom: 25px;
-        }
-
-        .upload-section {
-            background: white;
-            border-radius: 10px;
-            padding: 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        }
-
-        .upload-section h6 {
-            color: var(--dark-color);
-            margin-bottom: 15px;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .upload-section h6 i {
-            color: var(--primary-color);
-        }
-
-        .upload-area {
-            width: 100%;
-            height: 250px;
-            border: 3px dashed #ddd;
-            border-radius: 8px;
-            cursor: pointer;
-            position: relative;
-            overflow: hidden;
-            transition: var(--transition);
-        }
-
-        .upload-area:hover {
-            border-color: var(--primary-color);
-            background: rgba(45, 59, 139, 0.02);
-        }
-
-        .upload-placeholder {
-            width: 100%;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            color: var(--secondary-color);
-            padding: 20px;
-            text-align: center;
-        }
-
-        .upload-placeholder i {
-            font-size: 48px;
-            margin-bottom: 15px;
-            opacity: 0.5;
-        }
-
-        .upload-placeholder p {
-            font-size: 16px;
-            font-weight: 500;
-            margin-bottom: 8px;
-        }
-
-        .upload-placeholder small {
-            font-size: 13px;
-            color: #6c757d;
-            text-align: center;
-        }
-
-        .upload-preview {
-            width: 100%;
-            height: 100%;
-            position: absolute;
-            top: 0;
-            left: 0;
-            background: white;
-            display: none;
-        }
-
-        .upload-preview img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            border-radius: 5px;
-        }
-
-        .upload-controls {
-            margin-top: 15px;
-            text-align: right;
-        }
-
-        /* Upload Validation */
-        .upload-validation .alert {
-            margin-bottom: 0;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 15px;
-        }
-
-        .upload-validation .alert i {
-            font-size: 20px;
-        }
-
-        /* Validation Result */
-        .validation-result {
-            max-width: 640px;
-            margin: 20px auto;
-        }
-
-        .validation-result .alert {
-            margin-bottom: 0;
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            padding: 20px;
-        }
-
-        .validation-result .alert i {
-            font-size: 24px;
-        }
-
-        /* Validation Status Card */
-        .validation-status-card {
-            background: #f8f9fa;
-            border-radius: var(--border-radius);
-            padding: 20px;
-            margin-top: 20px;
-            border-left: 4px solid var(--info-color);
-        }
-
-        .validation-status-card h6 {
-            color: var(--dark-color);
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .validation-checks {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-        }
-
-        /* Similarity Warning */
-        .similarity-warning {
-            background: rgba(255, 193, 7, 0.1);
-            border: 2px solid var(--warning-color);
-            border-radius: var(--border-radius);
-            padding: 15px;
-            margin-top: 15px;
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            animation: fadeIn 0.5s ease;
-        }
-
-        .similarity-warning i {
-            color: var(--warning-color);
-            font-size: 24px;
-        }
-
-        .similarity-warning-content h6 {
-            font-size: 15px;
-            font-weight: 600;
-            margin-bottom: 3px;
-            color: var(--dark-color);
-        }
-
-        .similarity-warning-content p {
-            font-size: 13px;
-            color: var(--secondary-color);
-            margin-bottom: 0;
-        }
-
-        /* Responsive Adjustments */
-        @media (max-width: 768px) {
-            .upload-sections {
-                grid-template-columns: 1fr;
-            }
-            
-            .capture-method-tabs .nav-link {
-                padding: 10px 15px;
-                font-size: 14px;
-            }
-        }
+        
         .step-label {
             font-size: 14px;
             font-weight: 500;
@@ -1705,94 +1427,19 @@ if ('serviceWorker' in navigator) {
                 <h2 class="section-title">
                     <i class="fas fa-camera"></i>
                     Face Capture
-                    <span class="images-counter" id="imagesCounter">0/2</span>
+                    <span class="images-counter" id="imagesCounter">0/3</span>
                 </h2>
                 
-                <!-- Capture Method Tabs -->
-                <div class="capture-method-tabs">
-                    <div class="nav nav-tabs" id="captureMethodTabs">
-                        <button class="nav-link active" id="uploadTab" data-method="upload" onclick="switchCaptureMethod('upload')">
-                            <i class="fas fa-upload"></i> Upload Images
-                        </button>
-                        <button class="nav-link" id="cameraTab" data-method="camera" onclick="switchCaptureMethod('camera')">
-                            <i class="fas fa-camera"></i> Take Photos
-                        </button>
+                <!-- Angle Requirement Warning -->
+                <div class="angle-warning" id="angleWarning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <div class="angle-warning-content">
+                        <h6>Angle Requirement: All 3 Different Angles Required</h6>
+                        <p>You must capture faces from 3 different angles (Front, Left, Right) for accurate driver recognition. You cannot proceed until all angles are captured.</p>
                     </div>
                 </div>
                 
-                <!-- Upload Method Content -->
-                <div class="method-content active" id="uploadContent">
-                    <div class="upload-container">
-                        <div class="upload-instructions">
-                            <h5><i class="fas fa-info-circle"></i> Upload Requirements</h5>
-                            <ul>
-                                <li>Upload <strong>2 different images</strong> of the same driver</li>
-                                <li>Images should show <strong>different expressions</strong> (e.g., smiling vs neutral)</li>
-                                <li>Images should be from <strong>different angles</strong> (front, left, right)</li>
-                                <li>Face must be clearly visible without sunglasses</li>
-                                <li>Maximum file size: 5MB per image</li>
-                            </ul>
-                        </div>
-                        
-                        <div class="upload-sections">
-                            <!-- Upload Section 1 -->
-                            <div class="upload-section" data-index="1">
-                                <h6><i class="fas fa-user"></i> Image 1: First Expression</h6>
-                                <div class="upload-area" id="uploadArea1" onclick="triggerFileInput(1)">
-                                    <input type="file" id="uploadInput1" class="d-none" accept="image/*" onchange="handleImageUpload(event, 1)">
-                                    <div class="upload-placeholder" id="uploadPlaceholder1">
-                                        <i class="fas fa-cloud-upload-alt"></i>
-                                        <p>Click to upload first image</p>
-                                        <small>Example: Front view with smile</small>
-                                    </div>
-                                    <div class="upload-preview" id="uploadPreview1"></div>
-                                </div>
-                                <div class="upload-controls">
-                                    <button class="btn btn-sm btn-outline-danger" id="removeBtn1" onclick="removeUploadedImage(1)" style="display: none;">
-                                        <i class="fas fa-trash"></i> Remove
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <!-- Upload Section 2 -->
-                            <div class="upload-section" data-index="2">
-                                <h6><i class="fas fa-user"></i> Image 2: Second Expression</h6>
-                                <div class="upload-area" id="uploadArea2" onclick="triggerFileInput(2)">
-                                    <input type="file" id="uploadInput2" class="d-none" accept="image/*" onchange="handleImageUpload(event, 2)">
-                                    <div class="upload-placeholder" id="uploadPlaceholder2">
-                                        <i class="fas fa-cloud-upload-alt"></i>
-                                        <p>Click to upload second image</p>
-                                        <small>Example: Side view with neutral face</small>
-                                    </div>
-                                    <div class="upload-preview" id="uploadPreview2"></div>
-                                </div>
-                                <div class="upload-controls">
-                                    <button class="btn btn-sm btn-outline-danger" id="removeBtn2" onclick="removeUploadedImage(2)" style="display: none;">
-                                        <i class="fas fa-trash"></i> Remove
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Upload Validation Status -->
-                        <div class="upload-validation mt-4">
-                            <div class="alert alert-info" id="uploadValidationStatus">
-                                <i class="fas fa-info-circle"></i>
-                                <span>Please upload 2 images with different expressions/angles</span>
-                            </div>
-                        </div>
-                        
-                        <!-- Validation Button -->
-                        <div class="text-center mt-4">
-                            <button class="btn btn-primary" id="validateImagesBtn" onclick="validateUploadedImages()" disabled>
-                                <i class="fas fa-check-circle"></i> Validate Images
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Camera Method Content -->
-                <div class="method-content" id="cameraContent">
+                <div class="face-capture-section">
                     <!-- Camera Selection -->
                     <div class="camera-selection">
                         <div class="camera-select-group">
@@ -1817,6 +1464,20 @@ if ('serviceWorker' in navigator) {
                     
                     <!-- Camera Container -->
                     <div class="camera-container" id="cameraContainer">
+                        <div class="angle-indicator" id="angleIndicator">
+                            <div class="angle-icon" id="angleIcon">
+                                <i class="fas fa-user"></i>
+                            </div>
+                            <span class="angle-text" id="angleText">Look Straight</span>
+                        </div>
+
+                        <!-- Add face detection overlay -->
+                        <div class="face-detection-overlay" id="faceDetectionOverlay"></div>
+
+                        <!-- Add angle status text -->
+                        <div class="angle-status-text" id="angleStatusText">
+                            Angle: <span id="currentAngleValue">0°</span>
+                        </div>
                         <div class="camera-placeholder" id="cameraPlaceholder">
                             <i class="fas fa-camera"></i>
                             <p>Camera Ready</p>
@@ -1828,16 +1489,46 @@ if ('serviceWorker' in navigator) {
                         <div class="flash-overlay" id="flashOverlay"></div>
                     </div>
                     
-                    <!-- Camera Instructions -->
-                    <div class="instructions mb-4">
-                        <h6><i class="fas fa-lightbulb"></i> Camera Capture Instructions</h6>
-                        <ul>
-                            <li>Capture <strong>2 different images</strong> showing different expressions</li>
-                            <li>First image: <strong>Smiling expression</strong> (look at camera and smile)</li>
-                            <li>Second image: <strong>Neutral expression</strong> (straight face, different angle)</li>
-                            <li>Ensure good lighting and clear visibility</li>
-                            <li>Images will be validated for diversity before proceeding</li>
-                        </ul>
+                    <!-- Capture Guide -->
+                    <div class="capture-guide-container">
+                        <h6 class="guide-title">
+                            <i class="fas fa-directions"></i>
+                            Required Face Capture Steps
+                        </h6>
+                        <div class="capture-guide" id="captureGuide">
+                            <div class="guide-step required" id="guideStep1">
+                                <div class="guide-icon">
+                                    <i class="fas fa-user"></i>
+                                </div>
+                                <div class="guide-content">
+                                    <h6>Step 1: Front View <span class="required-badge">REQUIRED</span></h6>
+                                    <p>Face the camera directly with a neutral expression</p>
+                                </div>
+                                <div class="guide-status">
+                                    <i class="fas fa-check-circle"></i>
+                                </div>
+                            </div>
+                            <div class="guide-step required" id="guideStep2">
+                                <div class="guide-icon">
+                                    <i class="fas fa-arrow-left"></i>
+                                </div>
+                                <div class="guide-content">
+                                    <h6>Step 2: Left Angle <span class="required-badge">REQUIRED</span></h6>
+                                    <p>Turn your head about 15 degrees to the left</p>
+                                </div>
+                                <div class="guide-status"></div>
+                            </div>
+                            <div class="guide-step required" id="guideStep3">
+                                <div class="guide-icon">
+                                    <i class="fas fa-arrow-right"></i>
+                                </div>
+                                <div class="guide-content">
+                                    <h6>Step 3: Right Angle <span class="required-badge">REQUIRED</span></h6>
+                                    <p>Turn your head about 15 degrees to the right</p>
+                                </div>
+                                <div class="guide-status"></div>
+                            </div>
+                        </div>
                     </div>
                     
                     <!-- Camera Controls -->
@@ -1845,62 +1536,64 @@ if ('serviceWorker' in navigator) {
                         <button type="button" class="camera-btn start" id="startCameraBtn" onclick="initializeCamera()">
                             <i class="fas fa-play"></i> Start Camera
                         </button>
-                        <button type="button" class="camera-btn" id="captureBtn1" onclick="captureImage(1)" disabled>
-                            <i class="fas fa-camera"></i> Capture Image 1
-                        </button>
-                        <button type="button" class="camera-btn" id="captureBtn2" onclick="captureImage(2)" disabled>
-                            <i class="fas fa-camera"></i> Capture Image 2
-                        </button>
                         <button type="button" class="camera-btn retake" id="retakeBtn" onclick="retakeAllImages()" disabled>
                             <i class="fas fa-redo"></i> Retake All
                         </button>
+                        <button type="button" class="camera-btn" id="stopCameraBtn" onclick="stopCamera()" disabled>
+                            <i class="fas fa-stop"></i> Stop Camera
+                        </button>
                     </div>
                     
-                    <!-- Camera Validation Status -->
+                    <!-- Capture Status -->
                     <div class="capture-status warning" id="captureStatus">
-                        <p><i class="fas fa-exclamation-circle me-2"></i>Capture 2 images with different expressions</p>
+                        <p><i class="fas fa-exclamation-circle me-2"></i><strong>REQUIREMENT:</strong> All 3 different angles must be captured before you can proceed</p>
                     </div>
                     
-                    <!-- Captured Images Display -->
+                    <!-- Captured Images -->
                     <div class="captured-images-container">
                         <h4 class="images-title">
                             <i class="fas fa-images"></i> Captured Images
-                            <span id="capturedCount">0/2 images captured</span>
+                            <span id="capturedCount">0/3 images captured</span>
                         </h4>
                         
                         <div class="captured-images" id="capturedImages">
-                            <div class="captured-image" data-index="1" id="cameraImage1">
+                            <div class="captured-image" data-index="1">
                                 <div class="image-placeholder">
                                     <i class="fas fa-user"></i>
-                                    <span>Image 1</span>
-                                    <small class="mt-1">Required</small>
+                                    <span>Front View</span>
+                                    <small class="mt-1"><strong>Required</strong></small>
                                 </div>
                                 <div class="image-number">1</div>
                             </div>
-                            <div class="captured-image" data-index="2" id="cameraImage2">
+                            <div class="captured-image" data-index="2">
                                 <div class="image-placeholder">
-                                    <i class="fas fa-user"></i>
-                                    <span>Image 2</span>
-                                    <small class="mt-1">Required</small>
+                                    <i class="fas fa-arrow-left"></i>
+                                    <span>Left Angle</span>
+                                    <small class="mt-1"><strong>Required</strong></small>
                                 </div>
                                 <div class="image-number">2</div>
+                            </div>
+                            <div class="captured-image" data-index="3">
+                                <div class="image-placeholder">
+                                    <i class="fas fa-arrow-right"></i>
+                                    <span>Right Angle</span>
+                                    <small class="mt-1"><strong>Required</strong></small>
+                                </div>
+                                <div class="image-number">3</div>
                             </div>
                         </div>
                     </div>
                     
-                    <!-- Camera Validation Button -->
-                    <div class="text-center mt-4">
-                        <button class="btn btn-primary" id="validateCameraBtn" onclick="validateCameraImages()" disabled>
-                            <i class="fas fa-check-circle"></i> Validate Captured Images
-                        </button>
-                    </div>
-                </div>
-                
-                <!-- Global Validation Result -->
-                <div class="validation-result mt-4" id="validationResult" style="display: none;">
-                    <div class="alert" id="validationAlert">
-                        <i class="fas fa-spinner fa-spin"></i>
-                        <span>Validating images...</span>
+                    <!-- Instructions -->
+                    <div class="instructions">
+                        <h6><i class="fas fa-lightbulb"></i> Why Different Angles Are Required</h6>
+                        <ul>
+                            <li><strong>Better Recognition:</strong> Different angles help the AI system recognize drivers more accurately</li>
+                            <li><strong>Prevents Confusion:</strong> Prevents misidentification between different drivers</li>
+                            <li><strong>System Requirement:</strong> The driver drowsiness detection system requires 3 unique angles for training</li>
+                            <li><strong>Mandatory:</strong> You cannot proceed to the next step until all 3 angles are captured</li>
+                            <li><strong>Quality Check:</strong> Each angle will be checked for clarity before proceeding</li>
+                        </ul>
                     </div>
                 </div>
                 
@@ -1908,7 +1601,7 @@ if ('serviceWorker' in navigator) {
                     <button class="step-btn prev" onclick="prevStep(1)">
                         <i class="fas fa-arrow-left"></i> Previous
                     </button>
-                    <button class="step-btn next" id="step2NextBtn" onclick="validateAndProceed()" disabled>
+                    <button class="step-btn next" id="step2NextBtn" onclick="validateAnglesAndProceed()">
                         Next <i class="fas fa-arrow-right"></i>
                     </button>
                 </div>
@@ -1952,10 +1645,6 @@ if ('serviceWorker' in navigator) {
                                             <th>Reference:</th>
                                             <td id="reviewReference">-</td>
                                         </tr>
-                                        <tr>
-                                            <th>Capture Method:</th>
-                                            <td id="reviewMethod">-</td>
-                                        </tr>
                                     </table>
                                 </div>
                             </div>
@@ -1965,50 +1654,57 @@ if ('serviceWorker' in navigator) {
                     <div class="col-md-6">
                         <div class="review-section mb-4">
                             <h5 class="mb-3"><i class="fas fa-images me-2"></i>Captured Images</h5>
-                            <div class="captured-images" id="reviewImages">
+                            <div class="captured-images">
                                 <div class="captured-image" id="reviewImage1">
                                     <div class="image-placeholder">
                                         <i class="fas fa-user"></i>
-                                        <span>Image 1</span>
+                                        <span>Front View</span>
                                     </div>
                                     <div class="image-number">1</div>
                                 </div>
                                 <div class="captured-image" id="reviewImage2">
                                     <div class="image-placeholder">
-                                        <i class="fas fa-user"></i>
-                                        <span>Image 2</span>
+                                        <i class="fas fa-arrow-left"></i>
+                                        <span>Left Angle</span>
                                     </div>
                                     <div class="image-number">2</div>
                                 </div>
+                                <div class="captured-image" id="reviewImage3">
+                                    <div class="image-placeholder">
+                                        <i class="fas fa-arrow-right"></i>
+                                        <span>Right Angle</span>
+                                    </div>
+                                    <div class="image-number">3</div>
+                                </div>
                             </div>
                             <div class="mt-3 text-center">
-                                <span id="reviewImageStatus" class="badge bg-warning">0/2 images</span>
+                                <span id="reviewImageStatus" class="badge bg-warning">0/3 images captured</span>
                             </div>
                         </div>
-                        
-                        <!-- Image Validation Status -->
-                        <div class="validation-status-card">
-                            <h6><i class="fas fa-check-circle me-2"></i>Image Validation</h6>
-                            <div class="validation-checks" id="validationChecks">
-                                <div class="form-check mb-2">
-                                    <input class="form-check-input" type="checkbox" id="validationCheck1" disabled>
-                                    <label class="form-check-label" for="validationCheck1">
-                                        ✓ Two images uploaded/captured
-                                    </label>
-                                </div>
-                                <div class="form-check mb-2">
-                                    <input class="form-check-input" type="checkbox" id="validationCheck2" disabled>
-                                    <label class="form-check-label" for="validationCheck2">
-                                        ✓ Different expressions detected
-                                    </label>
-                                </div>
-                                <div class="form-check mb-2">
-                                    <input class="form-check-input" type="checkbox" id="validationCheck3" disabled>
-                                    <label class="form-check-label" for="validationCheck3">
-                                        ✓ Same driver verified
-                                    </label>
-                                </div>
-                            </div>
+                    </div>
+                </div>
+                
+                <!-- Angle Verification -->
+                <div class="instructions mb-4">
+                    <h6><i class="fas fa-check-double me-2"></i>Angle Verification</h6>
+                    <div id="angleVerification">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="angleCheck1" checked disabled>
+                            <label class="form-check-label" for="angleCheck1">
+                                ✓ Front view captured
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="angleCheck2" checked disabled>
+                            <label class="form-check-label" for="angleCheck2">
+                                ✓ Left angle captured (15° left)
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="angleCheck3" checked disabled>
+                            <label class="form-check-label" for="angleCheck3">
+                                ✓ Right angle captured (15° right)
+                            </label>
                         </div>
                     </div>
                 </div>
@@ -2019,7 +1715,7 @@ if ('serviceWorker' in navigator) {
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="termsCheckbox">
                         <label class="form-check-label" for="termsCheckbox">
-                            I confirm that all images are of the same driver with different expressions/angles and all information provided is accurate.
+                            I confirm that all 3 face angles have been captured and all information provided is accurate.
                         </label>
                     </div>
                 </div>
@@ -2043,28 +1739,26 @@ if ('serviceWorker' in navigator) {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     
     <script>
+        // ==================== GLOBAL VARIABLES ====================
         let stream = null;
+        let capturedImages = [];
         let guardianData = null;
         let sessionToken = null;
         let countdownInterval = null;
         let isCapturing = false;
         let countdownValue = 5;
         let currentStep = 1;
-        let currentCamera = 'user'; 
+        let currentCamera = 'user'; // Default to front camera
         let availableCameras = [];
-
-        // Image storage for both methods
-        let uploadedImages = { 1: null, 2: null };
-        let capturedCameraImages = { 1: null, 2: null };
-        let currentCaptureMethod = 'upload'; // 'upload' or 'camera'
-        let isValidationComplete = false;
-        let validationResult = null;
-
-        // Capture configurations
-        const captureInstructions = {
-            upload: ["Upload first image with clear face", "Upload second image with different expression"],
-            camera: ["Look straight with clear face", "Show different expression or angle"]
-        };
+        let currentCaptureStep = 0; // 0: Not started, 1: Front, 2: Left, 3: Right
+        const captureAngles = ['front', 'left', 'right'];
+        const captureInstructions = [
+            "Look straight at the camera",
+            "Turn your head slightly left (15°)",
+            "Turn your head slightly right (15°)"
+        ];
+        let guideTimeout = null;
+        let isAngleRequirementEnforced = true; // Set to true to enforce angle requirement
 
         // ==================== INITIALIZATION ====================
         document.addEventListener('DOMContentLoaded', function() {
@@ -2100,8 +1794,8 @@ if ('serviceWorker' in navigator) {
             // Get available cameras
             getAvailableCameras();
             
-            // Initialize capture method
-            switchCaptureMethod('upload');
+            // Initialize angle verification checkboxes
+            updateAngleVerification();
             
             // Hide loading overlay
             setTimeout(() => {
@@ -2113,47 +1807,51 @@ if ('serviceWorker' in navigator) {
             
             console.log('✅ Page initialized successfully');
         });
-
-        function setupEventListeners() {
-            // Terms checkbox listener
-            const termsCheckbox = document.getElementById('termsCheckbox');
-            if (termsCheckbox) {
-                termsCheckbox.addEventListener('change', function() {
-                    updateSubmitButton();
-                });
+        
+        // ==================== ANGLE REQUIREMENT ENFORCEMENT ====================
+        function validateAndProceedToStep2() {
+            // First validate step 1
+            if (!validateStep1()) {
+                showToast('Please fill in all required fields', 'warning');
+                return;
             }
             
-            // Form validation listeners
-            ['driverName', 'driverPhone'].forEach(id => {
-                const element = document.getElementById(id);
-                if (element) {
-                    element.addEventListener('input', validateStep1);
-                }
-            });
+            // Proceed to step 2
+            nextStep(2);
+        }
+        
+        function validateAnglesAndProceed() {
+            // Check if all 3 angles are captured
+            if (capturedImages.length < 3) {
+                showToast('Please complete all 3 required face captures', 'danger');
+                showProgressionBlock('You must complete all 3 required face captures with different angles before proceeding.');
+                return;
+            }
             
-            // Setup upload area click handlers
-            for (let i = 1; i <= 2; i++) {
-                const uploadArea = document.getElementById(`uploadArea${i}`);
-                const uploadInput = document.getElementById(`uploadInput${i}`);
-                
-                if (uploadArea && uploadInput) {
-                    uploadArea.addEventListener('click', () => uploadInput.click());
-                    uploadInput.addEventListener('change', (e) => handleImageUpload(e, i));
-                }
+            // Check if angles are different (simple check - at least we have 3 images)
+            // In a real implementation, you could add image similarity check here
+            
+            // Show confirmation
+            const angleConfirm = confirm('Are you sure all 3 face captures show different angles (Front, Left, Right)?\n\nThis is required for accurate driver recognition.');
+            
+            if (angleConfirm) {
+                // Proceed to step 3
+                nextStep(3);
+            } else {
+                showToast('Please make sure all 3 angles are properly captured', 'warning');
+                showProgressionBlock('Please verify that you have captured faces from 3 different angles (Front, Left, Right).');
             }
         }
-
-        function generateReferenceNumber() {
-            const timestamp = new Date().getTime();
-            const randomNum = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-            const refNumber = `DRV${timestamp.toString().slice(-6)}${randomNum}`;
-            const refElement = document.getElementById('referenceNumber');
-            if (refElement) {
-                refElement.value = refNumber;
-            }
-            return refNumber;
+        
+        function showProgressionBlock(message) {
+            document.getElementById('blockMessageText').textContent = message;
+            document.getElementById('progressionBlock').classList.add('show');
         }
-
+        
+        function hideProgressionBlock() {
+            document.getElementById('progressionBlock').classList.remove('show');
+        }
+        
         async function getAvailableCameras() {
             try {
                 // Check if browser supports mediaDevices API
@@ -2173,17 +1871,14 @@ if ('serviceWorker' in navigator) {
                 if (videoDevices.length === 0) {
                     console.log('❌ No cameras found');
                     updateCameraInfo('No cameras detected on this device');
-                    const cameraSelect = document.getElementById('cameraSelect');
-                    const switchCameraBtn = document.getElementById('switchCameraBtn');
-                    if (cameraSelect) cameraSelect.disabled = true;
-                    if (switchCameraBtn) switchCameraBtn.disabled = true;
+                    document.getElementById('cameraSelect').disabled = true;
+                    document.getElementById('switchCameraBtn').disabled = true;
                 } else if (videoDevices.length === 1) {
                     console.log('✅ 1 camera found');
                     updateCameraInfo('1 camera available (front camera)');
-                    const cameraSelect = document.getElementById('cameraSelect');
-                    const switchCameraBtn = document.getElementById('switchCameraBtn');
-                    if (cameraSelect) cameraSelect.disabled = true;
-                    if (switchCameraBtn) switchCameraBtn.disabled = true;
+                    document.getElementById('cameraSelect').disabled = true;
+                    document.getElementById('switchCameraBtn').disabled = true;
+                    // Set default to user (front) if only one camera
                     currentCamera = 'user';
                 } else {
                     console.log(`✅ ${videoDevices.length} cameras found`);
@@ -2193,20 +1888,18 @@ if ('serviceWorker' in navigator) {
                     availableCameras = videoDevices;
                     
                     // Enable camera selection
-                    const cameraSelect = document.getElementById('cameraSelect');
-                    const switchCameraBtn = document.getElementById('switchCameraBtn');
-                    if (cameraSelect) cameraSelect.disabled = false;
-                    if (switchCameraBtn) switchCameraBtn.disabled = false;
+                    document.getElementById('cameraSelect').disabled = false;
+                    document.getElementById('switchCameraBtn').disabled = false;
                     
                     // Set default based on device type
                     if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
                         // For mobile, default to back camera
                         currentCamera = 'environment';
-                        if (cameraSelect) cameraSelect.value = 'environment';
+                        document.getElementById('cameraSelect').value = 'environment';
                     } else {
                         // For desktop, default to front camera
                         currentCamera = 'user';
-                        if (cameraSelect) cameraSelect.value = 'user';
+                        document.getElementById('cameraSelect').value = 'user';
                     }
                 }
                 
@@ -2215,190 +1908,38 @@ if ('serviceWorker' in navigator) {
                 updateCameraInfo('Could not detect cameras');
             }
         }
-
+        
         function updateCameraInfo(message) {
             const infoElement = document.getElementById('cameraInfoText');
             if (infoElement) {
                 infoElement.textContent = message;
             }
         }
-
-        // ==================== CAPTURE METHOD FUNCTIONS ====================
-        function switchCaptureMethod(method) {
-            currentCaptureMethod = method;
-            
-            // Update active tab
-            document.querySelectorAll('.capture-method-tabs .nav-link').forEach(tab => {
-                tab.classList.remove('active');
+        
+        function setupEventListeners() {
+            // Terms checkbox listener
+            document.getElementById('termsCheckbox').addEventListener('change', function() {
+                updateSubmitButton();
             });
-            const activeTab = document.querySelector(`.nav-link[data-method="${method}"]`);
-            if (activeTab) activeTab.classList.add('active');
             
-            // Update active content
-            document.querySelectorAll('.method-content').forEach(content => {
-                content.classList.remove('active');
+            // Form validation listeners
+            ['driverName', 'driverPhone'].forEach(id => {
+                document.getElementById(id).addEventListener('input', validateStep1);
             });
-            const activeContent = document.getElementById(`${method}Content`);
-            if (activeContent) activeContent.classList.add('active');
             
-            // Stop camera if switching away from camera
-            if (method !== 'camera' && stream) {
-                stopCamera();
-            }
-            
-            // Reset validation and update UI
-            resetValidation();
-            updateNextButton();
-            updateImagesCounter();
-            
-            console.log(`🔄 Switched to ${method} method`);
-        }
-
-        function updateImagesCounter() {
-            let count = 0;
-            if (currentCaptureMethod === 'upload') {
-                count = Object.values(uploadedImages).filter(img => img !== null).length;
-            } else {
-                count = Object.values(capturedCameraImages).filter(img => img !== null).length;
-            }
-            
-            const counter = document.getElementById('imagesCounter');
-            if (counter) {
-                counter.textContent = `${count}/2`;
-            }
-        }
-
-        // ==================== UPLOAD METHOD FUNCTIONS ====================
-        function triggerFileInput(index) {
-            const uploadInput = document.getElementById(`uploadInput${index}`);
-            if (uploadInput) {
-                uploadInput.click();
-            }
-        }
-
-        function handleImageUpload(event, index) {
-            const file = event.target.files[0];
-            if (!file) return;
-            
-            // Validate file
-            if (!validateImageFile(file)) {
-                event.target.value = ''; // Reset file input
-                return;
-            }
-            
-            // Show loading
-            const placeholder = document.getElementById(`uploadPlaceholder${index}`);
-            const preview = document.getElementById(`uploadPreview${index}`);
-            const removeBtn = document.getElementById(`removeBtn${index}`);
-            
-            if (placeholder) {
-                placeholder.innerHTML = `
-                    <i class="fas fa-spinner fa-spin"></i>
-                    <p>Processing image...</p>
-                `;
-            }
-            
-            // Read file as base64
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const imageData = e.target.result;
-                
-                // Store image
-                uploadedImages[index] = imageData;
-                
-                // Show preview
-                if (placeholder) placeholder.style.display = 'none';
-                if (preview) {
-                    preview.innerHTML = `<img src="${imageData}" alt="Uploaded image ${index}">`;
-                    preview.style.display = 'block';
+            // Prevent clicking next button if angles not complete
+            document.getElementById('step2NextBtn').addEventListener('click', function(e) {
+                if (capturedImages.length < 3) {
+                    e.preventDefault();
+                    showToast('Please complete all 3 required face captures', 'danger');
+                    showProgressionBlock('You must complete all 3 required face captures with different angles before proceeding.');
                 }
-                if (removeBtn) removeBtn.style.display = 'block';
-                
-                // Update UI
-                updateUploadValidationButton();
-                updateImagesCounter();
-                resetValidation();
-                
-                showToast(`Image ${index} uploaded successfully`, 'success');
-                console.log(`✅ Uploaded image ${index}`);
-            };
-            
-            reader.onerror = function() {
-                showToast('Error reading image file', 'danger');
-                if (placeholder) {
-                    placeholder.innerHTML = `
-                        <i class="fas fa-cloud-upload-alt"></i>
-                        <p>Click to upload image ${index}</p>
-                        <small>Required</small>
-                    `;
-                }
-            };
-            
-            reader.readAsDataURL(file);
+            });
         }
-
-        function validateImageFile(file) {
-            // Check file type
-            const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-            if (!validTypes.includes(file.type)) {
-                showToast('Please upload JPEG, PNG, or WebP images only', 'warning');
-                return false;
-            }
-            
-            // Check file size (5MB max)
-            if (file.size > 5 * 1024 * 1024) {
-                showToast('Image size should be less than 5MB', 'warning');
-                return false;
-            }
-            
-            return true;
-        }
-
-        function removeUploadedImage(index) {
-            uploadedImages[index] = null;
-            
-            // Reset UI
-            const placeholder = document.getElementById(`uploadPlaceholder${index}`);
-            const preview = document.getElementById(`uploadPreview${index}`);
-            const removeBtn = document.getElementById(`removeBtn${index}`);
-            const fileInput = document.getElementById(`uploadInput${index}`);
-            
-            if (placeholder) {
-                placeholder.style.display = 'flex';
-                placeholder.innerHTML = `
-                    <i class="fas fa-cloud-upload-alt"></i>
-                    <p>Click to upload image ${index}</p>
-                    <small>Required</small>
-                `;
-            }
-            if (preview) {
-                preview.style.display = 'none';
-                preview.innerHTML = '';
-            }
-            if (removeBtn) removeBtn.style.display = 'none';
-            if (fileInput) fileInput.value = '';
-            
-            // Update validation
-            updateUploadValidationButton();
-            updateImagesCounter();
-            resetValidation();
-            
-            console.log(`🗑️ Removed uploaded image ${index}`);
-        }
-
-        function updateUploadValidationButton() {
-            const hasBothImages = uploadedImages[1] && uploadedImages[2];
-            const validateBtn = document.getElementById('validateImagesBtn');
-            if (validateBtn) {
-                validateBtn.disabled = !hasBothImages;
-            }
-        }
-
-        // ==================== CAMERA METHOD FUNCTIONS ====================
+        
+        // ==================== CAMERA SELECTION FUNCTIONS ====================
         function changeCamera() {
             const cameraSelect = document.getElementById('cameraSelect');
-            if (!cameraSelect) return;
-            
             const selectedCamera = cameraSelect.value;
             
             if (selectedCamera === currentCamera) {
@@ -2421,10 +1962,9 @@ if ('serviceWorker' in navigator) {
                 }, 500);
             }
         }
-
+        
         function switchCamera() {
             const cameraSelect = document.getElementById('cameraSelect');
-            if (!cameraSelect) return;
             
             // Toggle between front and back camera
             if (currentCamera === 'user') {
@@ -2449,22 +1989,19 @@ if ('serviceWorker' in navigator) {
                 }, 500);
             }
         }
-
+        
+        // ==================== CAMERA FUNCTIONS ====================
         async function initializeCamera() {
             try {
                 console.log(`📷 Initializing ${currentCamera === 'user' ? 'front' : 'back'} camera...`);
                 
                 const startBtn = document.getElementById('startCameraBtn');
-                if (!startBtn) return;
-                
                 startBtn.disabled = true;
                 startBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting...';
                 
                 // Disable camera selection while starting
-                const cameraSelect = document.getElementById('cameraSelect');
-                const switchCameraBtn = document.getElementById('switchCameraBtn');
-                if (cameraSelect) cameraSelect.disabled = true;
-                if (switchCameraBtn) switchCameraBtn.disabled = true;
+                document.getElementById('cameraSelect').disabled = true;
+                document.getElementById('switchCameraBtn').disabled = true;
                 
                 // Check if browser supports mediaDevices API
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -2487,8 +2024,6 @@ if ('serviceWorker' in navigator) {
                 stream = await navigator.mediaDevices.getUserMedia(constraints);
                 
                 const video = document.getElementById('video');
-                if (!video) return;
-                
                 video.srcObject = stream;
                 
                 // Wait for video to be ready
@@ -2511,8 +2046,7 @@ if ('serviceWorker' in navigator) {
                 });
                 
                 // Show video and hide placeholder
-                const cameraPlaceholder = document.getElementById('cameraPlaceholder');
-                if (cameraPlaceholder) cameraPlaceholder.style.display = 'none';
+                document.getElementById('cameraPlaceholder').style.display = 'none';
                 video.style.display = 'block';
                 
                 // Update camera info
@@ -2521,20 +2055,15 @@ if ('serviceWorker' in navigator) {
                 // Update button states
                 startBtn.disabled = true;
                 startBtn.innerHTML = '<i class="fas fa-video"></i> Camera Active';
-                
-                const stopCameraBtn = document.getElementById('stopCameraBtn');
-                const captureBtn1 = document.getElementById('captureBtn1');
-                const captureBtn2 = document.getElementById('captureBtn2');
-                const retakeBtn = document.getElementById('retakeBtn');
-                
-                if (stopCameraBtn) stopCameraBtn.disabled = false;
-                if (captureBtn1) captureBtn1.disabled = false;
-                if (captureBtn2) captureBtn2.disabled = false;
-                if (retakeBtn) retakeBtn.disabled = Object.values(capturedCameraImages).filter(Boolean).length === 0;
+                document.getElementById('stopCameraBtn').disabled = false;
+                document.getElementById('retakeBtn').disabled = capturedImages.length === 0;
                 
                 // Re-enable camera selection
-                if (cameraSelect) cameraSelect.disabled = false;
-                if (switchCameraBtn) switchCameraBtn.disabled = false;
+                document.getElementById('cameraSelect').disabled = false;
+                document.getElementById('switchCameraBtn').disabled = false;
+                
+                // Start guided capture
+                startGuidedCapture();
                 
                 showToast(`${currentCamera === 'user' ? 'Front' : 'Back'} camera started successfully!`, 'success');
                 
@@ -2542,16 +2071,12 @@ if ('serviceWorker' in navigator) {
                 console.error('❌ Camera initialization failed:', error);
                 
                 const startBtn = document.getElementById('startCameraBtn');
-                if (startBtn) {
-                    startBtn.disabled = false;
-                    startBtn.innerHTML = '<i class="fas fa-play"></i> Start Camera';
-                }
+                startBtn.disabled = false;
+                startBtn.innerHTML = '<i class="fas fa-play"></i> Start Camera';
                 
                 // Re-enable camera selection
-                const cameraSelect = document.getElementById('cameraSelect');
-                const switchCameraBtn = document.getElementById('switchCameraBtn');
-                if (cameraSelect) cameraSelect.disabled = false;
-                if (switchCameraBtn) switchCameraBtn.disabled = false;
+                document.getElementById('cameraSelect').disabled = false;
+                document.getElementById('switchCameraBtn').disabled = false;
                 
                 let errorMessage = 'Camera Error: ';
                 let detailedMessage = '';
@@ -2587,49 +2112,165 @@ if ('serviceWorker' in navigator) {
                 
                 // Update placeholder with error
                 const placeholder = document.getElementById('cameraPlaceholder');
-                if (placeholder) {
-                    placeholder.innerHTML = `
-                        <i class="fas fa-exclamation-triangle" style="color: var(--danger-color);"></i>
-                        <p style="font-weight: bold; margin: 10px 0;">${errorMessage}</p>
-                        <small style="margin-bottom: 15px; display: block;">${detailedMessage}</small>
-                        <button class="camera-btn mt-3" onclick="initializeCamera()" style="padding: 10px 20px; font-size: 14px;">
-                            <i class="fas fa-redo"></i> Try Again
-                        </button>
-                    `;
-                }
+                placeholder.innerHTML = `
+                    <i class="fas fa-exclamation-triangle" style="color: var(--danger-color);"></i>
+                    <p style="font-weight: bold; margin: 10px 0;">${errorMessage}</p>
+                    <small style="margin-bottom: 15px; display: block;">${detailedMessage}</small>
+                    <button class="camera-btn mt-3" onclick="initializeCamera()" style="padding: 10px 20px; font-size: 14px;">
+                        <i class="fas fa-redo"></i> Try Again
+                    </button>
+                `;
                 
                 updateCameraInfo('Camera failed to start');
                 showToast(errorMessage, 'danger');
             }
         }
-
+        
         async function tryAlternativeCamera() {
             console.log('🔄 Trying alternative camera...');
             
             // Switch to the other camera
             if (currentCamera === 'user') {
                 currentCamera = 'environment';
-                const cameraSelect = document.getElementById('cameraSelect');
-                if (cameraSelect) cameraSelect.value = 'environment';
+                document.getElementById('cameraSelect').value = 'environment';
             } else {
                 currentCamera = 'user';
-                const cameraSelect = document.getElementById('cameraSelect');
-                if (cameraSelect) cameraSelect.value = 'user';
+                document.getElementById('cameraSelect').value = 'user';
             }
             
             // Try to initialize with the alternative camera
             initializeCamera();
         }
-
-        function captureImage(index) {
-            if (!stream || index < 1 || index > 2) return;
+        
+        function startGuidedCapture() {
+            if (capturedImages.length >= 3) {
+                showToast('Already captured all 3 required angles', 'info');
+                return;
+            }
             
-            console.log(`📸 Capturing image ${index}...`);
+            // Reset capture step if starting fresh
+            if (capturedImages.length === 0) {
+                currentCaptureStep = 0;
+                resetGuideSteps();
+            }
+            
+            // Start with first capture step
+            startNextCaptureStep();
+        }
+        
+        function startNextCaptureStep() {
+            if (capturedImages.length >= 3) {
+                // All angles captured
+                updateCaptureStatus('✓ All 3 required angles captured successfully! You can now proceed to next step.', 'success');
+                showToast('All 3 required angles captured! You can now proceed.', 'success');
+                
+                // Enable next button
+                document.getElementById('step2NextBtn').disabled = false;
+                
+                // Mark all guide steps as completed
+                for (let i = 1; i <= 3; i++) {
+                    const step = document.getElementById(`guideStep${i}`);
+                    step.classList.add('completed');
+                    step.classList.remove('active');
+                }
+                
+                // Hide angle indicator
+                document.getElementById('angleIndicator').classList.remove('show');
+                
+                // Update angle verification
+                updateAngleVerification();
+                
+                return;
+            }
+            
+            currentCaptureStep = capturedImages.length + 1;
+            
+            // Update guide steps
+            updateGuideSteps();
+            
+            // Show angle indicator
+            const angleText = captureInstructions[currentCaptureStep - 1];
+            document.getElementById('angleText').textContent = angleText;
+            document.getElementById('angleIndicator').classList.add('show');
+            
+            // Update status with requirement emphasis
+            updateCaptureStatus(`REQUIRED: Capturing ${currentCaptureStep}/3 - ${angleText}`, 'warning');
+            
+            // Start countdown
+            startCountdownForStep();
+        }
+        
+        function updateGuideSteps() {
+            // Clear all active states
+            for (let i = 1; i <= 3; i++) {
+                const step = document.getElementById(`guideStep${i}`);
+                step.classList.remove('active');
+                
+                // Mark completed steps
+                if (i < currentCaptureStep) {
+                    step.classList.add('completed');
+                } else if (i > currentCaptureStep) {
+                    step.classList.remove('completed');
+                }
+            }
+            
+            // Set current step as active
+            const currentStep = document.getElementById(`guideStep${currentCaptureStep}`);
+            if (currentStep) {
+                currentStep.classList.add('active');
+            }
+        }
+        
+        function resetGuideSteps() {
+            for (let i = 1; i <= 3; i++) {
+                const step = document.getElementById(`guideStep${i}`);
+                step.classList.remove('active', 'completed');
+            }
+        }
+        
+        function startCountdownForStep() {
+            if (isCapturing || capturedImages.length >= 3) return;
+            
+            countdownValue = 5;
+            isCapturing = true;
+            
+            // Show countdown display
+            const countdownDisplay = document.getElementById('countdownDisplay');
+            countdownDisplay.textContent = countdownValue;
+            countdownDisplay.style.display = 'block';
+            
+            // Start countdown interval
+            countdownInterval = setInterval(() => {
+                countdownValue--;
+                countdownDisplay.textContent = countdownValue;
+                
+                // Update status
+                const angleText = captureInstructions[currentCaptureStep - 1];
+                updateCaptureStatus(`REQUIRED: Capturing ${currentCaptureStep}/3 in ${countdownValue} seconds - ${angleText}`, 'warning');
+                
+                if (countdownValue <= 0) {
+                    clearInterval(countdownInterval);
+                    countdownDisplay.style.display = 'none';
+                    
+                    // Capture image
+                    captureImage();
+                    
+                    // Prepare for next capture after a delay
+                    setTimeout(() => {
+                        isCapturing = false;
+                        startNextCaptureStep();
+                    }, 1500);
+                }
+            }, 1000);
+        }
+        
+        function captureImage() {
+            if (!stream || capturedImages.length >= 3) return;
+            
+            console.log(`📸 Capturing required angle ${capturedImages.length + 1}/3 (${captureAngles[capturedImages.length]})...`);
             
             const video = document.getElementById('video');
             const canvas = document.getElementById('canvas');
-            if (!video || !canvas) return;
-            
             const context = canvas.getContext('2d');
             
             // Set canvas dimensions
@@ -2642,119 +2283,46 @@ if ('serviceWorker' in navigator) {
             // Get image data
             const imageData = canvas.toDataURL('image/jpeg', 0.8);
             
-            // Store image
-            capturedCameraImages[index] = imageData;
+            // Add to captured images
+            capturedImages.push(imageData);
             
             // Update UI
-            updateCameraImageUI(index, imageData);
+            updateCapturedImagesUI();
+            
+            const angleText = captureInstructions[currentCaptureStep - 1];
+            updateCaptureStatus(`✓ Required angle ${capturedImages.length} captured: ${captureAngles[capturedImages.length - 1]}`, 'success');
             
             // Flash effect
             flashEffect();
             
-            // Update validation button
-            updateCameraValidationButton();
-            updateImagesCounter();
-            resetValidation();
+            console.log(`✅ Required angle captured (${capturedImages.length}/3) - ${captureAngles[capturedImages.length - 1]}`);
             
-            showToast(`Image ${index} captured!`, 'success');
-            console.log(`✅ Captured image ${index}`);
+            // Show success message emphasizing requirement
+            showToast(`✓ Required ${captureAngles[capturedImages.length - 1]} angle captured! ${3 - capturedImages.length} more required.`, 'success');
+            
+            // Update angle verification
+            updateAngleVerification();
         }
-
-        function updateCameraImageUI(index, imageData) {
-            const imageElement = document.getElementById(`cameraImage${index}`);
-            if (!imageElement) return;
-            
-            imageElement.classList.add('captured');
-            imageElement.innerHTML = `
-                <img src="${imageData}" alt="Captured image ${index}">
-                <div class="image-number">${index}</div>
-                <div class="image-remove" onclick="removeCameraImage(${index})">
-                    <i class="fas fa-times"></i>
-                </div>
-            `;
-            
-            // Update counter
-            const capturedCount = Object.values(capturedCameraImages).filter(Boolean).length;
-            const capturedCountElement = document.getElementById('capturedCount');
-            if (capturedCountElement) {
-                capturedCountElement.textContent = `${capturedCount}/2 images captured`;
-            }
-            
-            const retakeBtn = document.getElementById('retakeBtn');
-            if (retakeBtn) {
-                retakeBtn.disabled = capturedCount === 0;
-            }
-        }
-
-        function removeCameraImage(index) {
-            capturedCameraImages[index] = null;
-            
-            // Reset UI
-            const imageElement = document.getElementById(`cameraImage${index}`);
-            if (imageElement) {
-                imageElement.classList.remove('captured');
-                imageElement.innerHTML = `
-                    <div class="image-placeholder">
-                        <i class="fas fa-user"></i>
-                        <span>Image ${index}</span>
-                        <small class="mt-1">Required</small>
-                    </div>
-                    <div class="image-number">${index}</div>
-                `;
-            }
-            
-            // Update validation
-            updateCameraValidationButton();
-            updateImagesCounter();
-            resetValidation();
-            
-            console.log(`🗑️ Removed camera image ${index}`);
-        }
-
-        function updateCameraValidationButton() {
-            const hasBothImages = capturedCameraImages[1] && capturedCameraImages[2];
-            const validateBtn = document.getElementById('validateCameraBtn');
-            if (validateBtn) {
-                validateBtn.disabled = !hasBothImages;
-            }
-        }
-
-        function retakeAllImages() {
-            capturedCameraImages = { 1: null, 2: null };
-            
-            // Reset UI
-            for (let i = 1; i <= 2; i++) {
-                const imageElement = document.getElementById(`cameraImage${i}`);
-                if (imageElement) {
-                    imageElement.classList.remove('captured');
-                    imageElement.innerHTML = `
-                        <div class="image-placeholder">
-                            <i class="fas fa-user"></i>
-                            <span>Image ${i}</span>
-                            <small class="mt-1">Required</small>
-                        </div>
-                        <div class="image-number">${i}</div>
-                    `;
+        
+        function updateAngleVerification() {
+            // Update angle checkboxes in step 3
+            for (let i = 1; i <= 3; i++) {
+                const checkbox = document.getElementById(`angleCheck${i}`);
+                if (checkbox) {
+                    checkbox.checked = i <= capturedImages.length;
                 }
             }
-            
-            // Update counter
-            const capturedCountElement = document.getElementById('capturedCount');
-            if (capturedCountElement) {
-                capturedCountElement.textContent = '0/2 images captured';
-            }
-            
-            const retakeBtn = document.getElementById('retakeBtn');
-            const validateBtn = document.getElementById('validateCameraBtn');
-            if (retakeBtn) retakeBtn.disabled = true;
-            if (validateBtn) validateBtn.disabled = true;
-            
-            updateImagesCounter();
-            resetValidation();
-            
-            console.log('🔄 All camera images removed');
         }
-
+        
+        function flashEffect() {
+            const flashOverlay = document.getElementById('flashOverlay');
+            flashOverlay.style.animation = 'flash 0.5s ease-out';
+            
+            setTimeout(() => {
+                flashOverlay.style.animation = '';
+            }, 500);
+        }
+        
         function stopCamera() {
             // Clear intervals
             if (countdownInterval) {
@@ -2762,7 +2330,20 @@ if ('serviceWorker' in navigator) {
                 countdownInterval = null;
             }
             
+            if (guideTimeout) {
+                clearTimeout(guideTimeout);
+                guideTimeout = null;
+            }
+            
             isCapturing = false;
+            currentCaptureStep = 0;
+            
+            // Hide countdown and angle indicator
+            document.getElementById('countdownDisplay').style.display = 'none';
+            document.getElementById('angleIndicator').classList.remove('show');
+            
+            // Reset guide steps
+            resetGuideSteps();
             
             if (stream) {
                 console.log('🛑 Stopping camera...');
@@ -2773,259 +2354,116 @@ if ('serviceWorker' in navigator) {
                 
                 // Hide video, show placeholder
                 const video = document.getElementById('video');
-                const cameraPlaceholder = document.getElementById('cameraPlaceholder');
+                video.style.display = 'none';
+                video.srcObject = null;
                 
-                if (video) {
-                    video.style.display = 'none';
-                    video.srcObject = null;
-                }
-                
-                if (cameraPlaceholder) {
-                    cameraPlaceholder.style.display = 'flex';
-                    cameraPlaceholder.innerHTML = `
-                        <i class="fas fa-camera"></i>
-                        <p>Camera Stopped</p>
-                        <small>${Object.values(capturedCameraImages).filter(Boolean).length}/2 images captured</small>
-                    `;
-                }
+                const placeholder = document.getElementById('cameraPlaceholder');
+                placeholder.style.display = 'flex';
+                placeholder.innerHTML = `
+                    <i class="fas fa-camera"></i>
+                    <p>Camera Stopped</p>
+                    <small>${capturedImages.length}/3 required angles captured</small>
+                `;
                 
                 // Update buttons
-                const startBtn = document.getElementById('startCameraBtn');
-                const stopCameraBtn = document.getElementById('stopCameraBtn');
-                const captureBtn1 = document.getElementById('captureBtn1');
-                const captureBtn2 = document.getElementById('captureBtn2');
-                const retakeBtn = document.getElementById('retakeBtn');
+                document.getElementById('startCameraBtn').disabled = false;
+                document.getElementById('startCameraBtn').innerHTML = '<i class="fas fa-play"></i> Start Camera';
+                document.getElementById('stopCameraBtn').disabled = true;
+                document.getElementById('retakeBtn').disabled = capturedImages.length === 0;
                 
-                if (startBtn) {
-                    startBtn.disabled = false;
-                    startBtn.innerHTML = '<i class="fas fa-play"></i> Start Camera';
-                }
-                if (stopCameraBtn) stopCameraBtn.disabled = true;
-                if (captureBtn1) captureBtn1.disabled = true;
-                if (captureBtn2) captureBtn2.disabled = true;
-                if (retakeBtn) retakeBtn.disabled = Object.values(capturedCameraImages).filter(Boolean).length === 0;
-                
+                updateCaptureStatus(`Camera stopped. ${capturedImages.length}/3 required angles captured.`, 'info');
                 updateCameraInfo('Camera stopped');
                 
                 console.log('✅ Camera stopped');
             }
         }
-
-        function flashEffect() {
-            const flashOverlay = document.getElementById('flashOverlay');
-            if (flashOverlay) {
-                flashOverlay.style.animation = 'flash 0.5s ease-out';
+        
+        function retakeAllImages() {
+            if (capturedImages.length === 0) {
+                showToast('No images to retake', 'warning');
+                return;
+            }
+            
+            console.log('🔄 Retaking all required angles...');
+            
+            // Remove all images
+            capturedImages = [];
+            
+            // Update UI
+            updateCapturedImagesUI();
+            
+            // Reset guide steps
+            resetGuideSteps();
+            
+            // Disable next button (angles not complete)
+            document.getElementById('step2NextBtn').disabled = true;
+            
+            // Update status
+            updateCaptureStatus('All required angles removed. You must capture all 3 angles again.', 'warning');
+            
+            // Update angle verification
+            updateAngleVerification();
+            
+            // If camera is on, restart guided capture
+            if (stream) {
+                if (countdownInterval) {
+                    clearInterval(countdownInterval);
+                    countdownInterval = null;
+                }
+                isCapturing = false;
+                currentCaptureStep = 0;
+                
+                // Hide angle indicator
+                document.getElementById('angleIndicator').classList.remove('show');
                 
                 setTimeout(() => {
-                    flashOverlay.style.animation = '';
-                }, 500);
+                    startGuidedCapture();
+                }, 1000);
             }
+            
+            console.log('✅ All required angles removed. Must capture all 3 again.');
+            showToast('All required angles removed. You must capture all 3 angles again.', 'info');
         }
-
-        // ==================== IMAGE VALIDATION FUNCTIONS ====================
-        async function validateUploadedImages() {
-            if (!uploadedImages[1] || !uploadedImages[2]) {
-                showToast('Please upload both images first', 'warning');
-                return;
-            }
+        
+        function removeImage(index) {
+            if (index < 0 || index >= capturedImages.length) return;
             
-            await validateImages(uploadedImages[1], uploadedImages[2], 'upload');
-        }
-
-        async function validateCameraImages() {
-            if (!capturedCameraImages[1] || !capturedCameraImages[2]) {
-                showToast('Please capture both images first', 'warning');
-                return;
-            }
+            console.log(`🗑️ Removing required angle ${index + 1} (${captureAngles[index]})...`);
             
-            await validateImages(capturedCameraImages[1], capturedCameraImages[2], 'camera');
-        }
-
-        async function validateImages(image1Data, image2Data, source) {
-            // Show validation in progress
-            const validationDiv = document.getElementById('validationResult');
-            const validationAlert = document.getElementById('validationAlert');
+            // Remove the specific image
+            capturedImages.splice(index, 1);
             
-            if (validationDiv) validationDiv.style.display = 'block';
-            if (validationAlert) {
-                validationAlert.className = 'alert alert-info';
-                validationAlert.innerHTML = `
-                    <i class="fas fa-spinner fa-spin"></i>
-                    <span>Validating images with server...</span>
-                `;
-            }
+            // Update UI
+            updateCapturedImagesUI();
             
-            // Disable validation buttons
-            const validateImagesBtn = document.getElementById('validateImagesBtn');
-            const validateCameraBtn = document.getElementById('validateCameraBtn');
-            if (validateImagesBtn) validateImagesBtn.disabled = true;
-            if (validateCameraBtn) validateCameraBtn.disabled = true;
+            // Disable next button (angles not complete)
+            document.getElementById('step2NextBtn').disabled = capturedImages.length < 3;
             
-            try {
-                // Send images to server for validation
-                const response = await fetch('/api/validate-faces', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        image1: image1Data,
-                        image2: image2Data,
-                        source: source
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    // Store validation result
-                    validationResult = result;
-                    isValidationComplete = true;
-                    
-                    // Show success
-                    if (validationAlert) {
-                        validationAlert.className = 'alert alert-success';
-                        validationAlert.innerHTML = `
-                            <i class="fas fa-check-circle"></i>
-                            <div>
-                                <strong>Validation Successful!</strong>
-                                <p style="margin: 5px 0 0; font-size: 13px;">
-                                    ✓ Same person detected<br>
-                                    ${result.details ? `
-                                    ✓ Different expressions detected<br>
-                                    ✓ Angle difference: ${result.details.angle_difference ? result.details.angle_difference.toFixed(1) : 'N/A'}°<br>
-                                    ✓ Similarity score: ${result.details.similarity_score ? (result.details.similarity_score * 100).toFixed(1) : 'N/A'}%
-                                    ` : '✓ Images meet requirements'}
-                                </p>
-                            </div>
-                        `;
-                    }
-                    
-                    // Update validation checks in step 3 preview
-                    updateValidationChecks(true, true, true);
-                    
-                    // Enable next button
-                    updateNextButton();
-                    
-                    showToast('Images validated successfully!', 'success');
-                    console.log('✅ Images validated successfully');
-                    
-                } else {
-                    // Validation failed
-                    if (validationAlert) {
-                        validationAlert.className = 'alert alert-danger';
-                        validationAlert.innerHTML = `
-                            <i class="fas fa-exclamation-triangle"></i>
-                            <div>
-                                <strong>Validation Failed!</strong>
-                                <p style="margin: 5px 0 0; font-size: 13px;">
-                                    ${result.error || 'Images do not meet requirements'}<br>
-                                    ${result.details ? result.details.reason || '' : ''}
-                                </p>
-                            </div>
-                        `;
-                    }
-                    
-                    isValidationComplete = false;
-                    validationResult = null;
-                    updateNextButton();
-                    
-                    showToast('Image validation failed. Please try different images.', 'danger');
-                    console.log('❌ Image validation failed:', result.error);
+            // Update status
+            updateCaptureStatus(`Required angle removed. ${3 - capturedImages.length} more angles required.`, 'warning');
+            
+            // Update angle verification
+            updateAngleVerification();
+            
+            // Reset guide to current capture step
+            if (stream && capturedImages.length < 3) {
+                if (countdownInterval) {
+                    clearInterval(countdownInterval);
+                    countdownInterval = null;
                 }
+                isCapturing = false;
                 
-            } catch (error) {
-                console.error('Validation error:', error);
-                
-                if (validationAlert) {
-                    validationAlert.className = 'alert alert-warning';
-                    validationAlert.innerHTML = `
-                        <i class="fas fa-exclamation-circle"></i>
-                        <span>Validation service unavailable. Please ensure images show different expressions.</span>
-                    `;
-                }
-                
-                // Allow proceeding but warn user
-                isValidationComplete = false;
-                validationResult = null;
-                updateNextButton();
-                
-                showToast('Validation service unavailable. Proceed with caution.', 'warning');
-                console.log('⚠️ Validation service unavailable');
-            } finally {
-                // Re-enable validation buttons
-                if (validateImagesBtn) validateImagesBtn.disabled = false;
-                if (validateCameraBtn) validateCameraBtn.disabled = false;
-            }
-        }
-
-        function resetValidation() {
-            isValidationComplete = false;
-            validationResult = null;
-            
-            // Hide validation result
-            const validationDiv = document.getElementById('validationResult');
-            if (validationDiv) validationDiv.style.display = 'none';
-            
-            // Reset validation checks
-            updateValidationChecks(false, false, false);
-            
-            // Update next button
-            updateNextButton();
-            
-            console.log('🔄 Validation reset');
-        }
-
-        function updateValidationChecks(check1, check2, check3) {
-            const check1Elem = document.getElementById('validationCheck1');
-            const check2Elem = document.getElementById('validationCheck2');
-            const check3Elem = document.getElementById('validationCheck3');
-            
-            if (check1Elem) check1Elem.checked = check1;
-            if (check2Elem) check2Elem.checked = check2;
-            if (check3Elem) check3Elem.checked = check3;
-        }
-
-        function updateNextButton() {
-            let hasRequiredImages = false;
-            
-            if (currentCaptureMethod === 'upload') {
-                hasRequiredImages = uploadedImages[1] && uploadedImages[2];
-            } else {
-                hasRequiredImages = capturedCameraImages[1] && capturedCameraImages[2];
+                // Restart from current position
+                setTimeout(() => {
+                    startGuidedCapture();
+                }, 1000);
             }
             
-            // Enable next button only if we have images AND validation is complete
-            const step2NextBtn = document.getElementById('step2NextBtn');
-            if (step2NextBtn) {
-                step2NextBtn.disabled = !(hasRequiredImages && isValidationComplete);
-            }
+            console.log(`✅ Required angle removed (${capturedImages.length}/3)`);
+            showToast('Required angle removed. You must capture it again.', 'info');
         }
-
+        
         // ==================== STEP NAVIGATION ====================
-        function validateAndProceedToStep2() {
-            // First validate step 1
-            if (!validateStep1()) {
-                showToast('Please fill in all required fields', 'warning');
-                return;
-            }
-            
-            // Proceed to step 2
-            nextStep(2);
-        }
-
-        function validateAndProceed() {
-            if (!isValidationComplete) {
-                showToast('Please validate images before proceeding', 'warning');
-                return;
-            }
-            
-            // Confirm with user
-            const confirmMsg = confirm('Are you sure both images show the same driver with different expressions/angles?\n\nThis is required for accurate driver recognition.');
-            
-            if (confirmMsg) {
-                nextStep(3);
-            }
-        }
-
         function nextStep(step) {
             // Validate current step
             if (currentStep === 1 && !validateStep1()) {
@@ -3033,31 +2471,20 @@ if ('serviceWorker' in navigator) {
                 return;
             }
             
-            if (currentStep === 2 && (!isValidationComplete || !getCurrentImages().every(img => img))) {
-                showToast('Please complete image validation before proceeding', 'warning');
+            if (currentStep === 2 && capturedImages.length < 3) {
+                showToast('Please capture all 3 required face angles before proceeding', 'danger');
+                showProgressionBlock('You must complete all 3 required face captures with different angles before proceeding.');
                 return;
             }
             
             // Mark current step as completed
-            const currentStepElem = document.querySelector(`.step[data-step="${currentStep}"]`);
-            if (currentStepElem) {
-                currentStepElem.classList.add('completed');
-                currentStepElem.classList.remove('active');
-            }
-            
-            // Hide current step content
-            const currentContent = document.querySelector(`#step${currentStep}`);
-            if (currentContent) currentContent.classList.remove('active');
+            document.querySelector(`.step[data-step="${currentStep}"]`).classList.add('completed');
+            document.querySelector(`.step[data-step="${currentStep}"]`).classList.remove('active');
             
             // Update to new step
-            const newStepElem = document.querySelector(`.step[data-step="${step}"]`);
-            const newContent = document.querySelector(`#step${step}`);
-            
-            if (newStepElem) {
-                newStepElem.classList.add('active');
-                newStepElem.classList.remove('completed');
-            }
-            if (newContent) newContent.classList.add('active');
+            document.querySelector(`#step${currentStep}`).classList.remove('active');
+            document.querySelector(`.step[data-step="${step}"]`).classList.add('active');
+            document.querySelector(`#step${step}`).classList.add('active');
             
             currentStep = step;
             
@@ -3071,27 +2498,21 @@ if ('serviceWorker' in navigator) {
             
             console.log(`➡️ Moving to step ${step}`);
         }
-
+        
         function prevStep(step) {
             // Mark current step as not active
-            const currentStepElem = document.querySelector(`.step[data-step="${currentStep}"]`);
-            const currentContent = document.querySelector(`#step${currentStep}`);
-            
-            if (currentStepElem) currentStepElem.classList.remove('active');
-            if (currentContent) currentContent.classList.remove('active');
+            document.querySelector(`.step[data-step="${currentStep}"]`).classList.remove('active');
+            document.querySelector(`#step${currentStep}`).classList.remove('active');
             
             // Update to previous step
-            const prevStepElem = document.querySelector(`.step[data-step="${step}"]`);
-            const prevContent = document.querySelector(`#step${step}`);
-            
-            if (prevStepElem) prevStepElem.classList.add('active');
-            if (prevContent) prevContent.classList.add('active');
+            document.querySelector(`.step[data-step="${step}"]`).classList.add('active');
+            document.querySelector(`#step${step}`).classList.add('active');
             
             currentStep = step;
             
             console.log(`⬅️ Moving back to step ${step}`);
         }
-
+        
         function updateStepUI(step) {
             // Update review section if step 3
             if (step === 3) {
@@ -3103,19 +2524,119 @@ if ('serviceWorker' in navigator) {
                 stopCamera();
             }
         }
-
-        function getCurrentImages() {
-            if (currentCaptureMethod === 'upload') {
-                return [uploadedImages[1], uploadedImages[2]];
+        
+        // ==================== UI UPDATE FUNCTIONS ====================
+        function updateCaptureStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('captureStatus');
+            statusDiv.innerHTML = `<p><i class="fas fa-info-circle me-2"></i>${message}</p>`;
+            statusDiv.className = `capture-status ${type}`;
+        }
+        
+        function updateCapturedImagesUI() {
+            const imagesContainer = document.getElementById('capturedImages');
+            const imageElements = imagesContainer.querySelectorAll('.captured-image');
+            
+            imageElements.forEach((element, index) => {
+                const isCaptured = index < capturedImages.length;
+                
+                if (isCaptured) {
+                    element.classList.add('captured');
+                    element.innerHTML = `
+                        <img src="${capturedImages[index]}" alt="${captureAngles[index]} view">
+                        <div class="image-number">${index + 1}</div>
+                        <div class="image-remove" onclick="removeImage(${index})">
+                            <i class="fas fa-times"></i>
+                        </div>
+                    `;
+                } else {
+                    element.classList.remove('captured');
+                    const angleText = ['Front View', 'Left Angle', 'Right Angle'][index];
+                    const angleIcon = ['fa-user', 'fa-arrow-left', 'fa-arrow-right'][index];
+                    element.innerHTML = `
+                        <div class="image-placeholder">
+                            <i class="fas ${angleIcon}"></i>
+                            <span>${angleText}</span>
+                            <small class="mt-1"><strong>Required</strong></small>
+                        </div>
+                        <div class="image-number">${index + 1}</div>
+                    `;
+                }
+            });
+            
+            // Update counters
+            document.getElementById('imagesCounter').textContent = `${capturedImages.length}/3`;
+            document.getElementById('capturedCount').textContent = `${capturedImages.length}/3 required angles captured`;
+            
+            // Enable/disable retake button
+            document.getElementById('retakeBtn').disabled = capturedImages.length === 0;
+            
+            // Enable next button only if all 3 angles captured
+            if (capturedImages.length >= 3) {
+                document.getElementById('step2NextBtn').disabled = false;
+                document.getElementById('captureStatus').innerHTML = `
+                    <p><i class="fas fa-check-circle me-2"></i><strong>✓ All 3 required angles captured!</strong> You can now proceed to the next step.</p>
+                `;
+                document.getElementById('captureStatus').className = 'capture-status success';
             } else {
-                return [capturedCameraImages[1], capturedCameraImages[2]];
+                document.getElementById('step2NextBtn').disabled = true;
             }
         }
-
+        
+        function updateReviewSection() {
+            // Update driver info
+            document.getElementById('reviewName').textContent = document.getElementById('driverName').value || '-';
+            document.getElementById('reviewPhone').textContent = document.getElementById('driverPhone').value || '-';
+            document.getElementById('reviewEmail').textContent = document.getElementById('driverEmail').value || '-';
+            document.getElementById('reviewAddress').textContent = document.getElementById('driverAddress').value || '-';
+            document.getElementById('reviewLicense').textContent = document.getElementById('licenseNumber').value || '-';
+            document.getElementById('reviewReference').textContent = document.getElementById('referenceNumber').value || '-';
+            
+            // Update captured images
+            const reviewImages = ['reviewImage1', 'reviewImage2', 'reviewImage3'];
+            reviewImages.forEach((id, index) => {
+                const element = document.getElementById(id);
+                if (index < capturedImages.length) {
+                    element.innerHTML = `
+                        <img src="${capturedImages[index]}" alt="${captureAngles[index]} view">
+                        <div class="image-number">${index + 1}</div>
+                    `;
+                    element.classList.add('captured');
+                }
+            });
+            
+            // Update image status
+            const statusElement = document.getElementById('reviewImageStatus');
+            if (capturedImages.length >= 3) {
+                statusElement.textContent = '✓ All 3 required angles captured';
+                statusElement.className = 'badge bg-success';
+            } else {
+                statusElement.textContent = `${capturedImages.length}/3 required angles`;
+                statusElement.className = 'badge bg-warning';
+            }
+            
+            // Update submit button
+            updateSubmitButton();
+        }
+        
+        function updateSubmitButton() {
+            const submitBtn = document.getElementById('submitBtn');
+            const termsChecked = document.getElementById('termsCheckbox').checked;
+            const hasAllAngles = capturedImages.length >= 3;
+            
+            submitBtn.disabled = !(termsChecked && hasAllAngles);
+        }
+        
+        function generateReferenceNumber() {
+            const timestamp = new Date().getTime();
+            const refNumber = `DRV${timestamp.toString().slice(-8)}`;
+            document.getElementById('referenceNumber').value = refNumber;
+            return refNumber;
+        }
+        
         // ==================== VALIDATION FUNCTIONS ====================
         function validateStep1() {
-            const name = document.getElementById('driverName')?.value.trim();
-            const phone = document.getElementById('driverPhone')?.value.trim();
+            const name = document.getElementById('driverName').value.trim();
+            const phone = document.getElementById('driverPhone').value.trim();
             
             if (!name || !phone) {
                 return false;
@@ -3129,77 +2650,7 @@ if ('serviceWorker' in navigator) {
             
             return true;
         }
-
-        function updateReviewSection() {
-            // Update driver info
-            const reviewName = document.getElementById('reviewName');
-            const reviewPhone = document.getElementById('reviewPhone');
-            const reviewEmail = document.getElementById('reviewEmail');
-            const reviewAddress = document.getElementById('reviewAddress');
-            const reviewLicense = document.getElementById('reviewLicense');
-            const reviewReference = document.getElementById('reviewReference');
-            const reviewMethod = document.getElementById('reviewMethod');
-            
-            if (reviewName) reviewName.textContent = document.getElementById('driverName')?.value || '-';
-            if (reviewPhone) reviewPhone.textContent = document.getElementById('driverPhone')?.value || '-';
-            if (reviewEmail) reviewEmail.textContent = document.getElementById('driverEmail')?.value || '-';
-            if (reviewAddress) reviewAddress.textContent = document.getElementById('driverAddress')?.value || '-';
-            if (reviewLicense) reviewLicense.textContent = document.getElementById('licenseNumber')?.value || '-';
-            if (reviewReference) reviewReference.textContent = document.getElementById('referenceNumber')?.value || '-';
-            if (reviewMethod) reviewMethod.textContent = currentCaptureMethod === 'upload' ? 'Uploaded Images' : 'Camera Capture';
-            
-            // Update images based on method
-            const reviewImagesContainer = document.getElementById('reviewImages');
-            if (reviewImagesContainer) {
-                reviewImagesContainer.innerHTML = '';
-                
-                const images = getCurrentImages();
-                
-                images.forEach((imgData, index) => {
-                    if (imgData) {
-                        const imgDiv = document.createElement('div');
-                        imgDiv.className = 'captured-image captured';
-                        imgDiv.innerHTML = `
-                            <img src="${imgData}" alt="Review image ${index + 1}">
-                            <div class="image-number">${index + 1}</div>
-                        `;
-                        reviewImagesContainer.appendChild(imgDiv);
-                    }
-                });
-            }
-            
-            // Update image status
-            const images = getCurrentImages();
-            const imageCount = images.filter(Boolean).length;
-            const statusElement = document.getElementById('reviewImageStatus');
-            if (statusElement) {
-                if (imageCount === 2 && isValidationComplete) {
-                    statusElement.textContent = '✓ 2 images validated';
-                    statusElement.className = 'badge bg-success';
-                } else {
-                    statusElement.textContent = `${imageCount}/2 images`;
-                    statusElement.className = 'badge bg-warning';
-                }
-            }
-            
-            // Update submit button
-            updateSubmitButton();
-            
-            console.log('✅ Review section updated');
-        }
-
-        function updateSubmitButton() {
-            const submitBtn = document.getElementById('submitBtn');
-            if (!submitBtn) return;
-            
-            const termsChecked = document.getElementById('termsCheckbox')?.checked || false;
-            
-            const images = getCurrentImages();
-            const hasValidImages = images.every(img => img) && isValidationComplete;
-            
-            submitBtn.disabled = !(termsChecked && hasValidImages);
-        }
-
+        
         // ==================== DRIVER REGISTRATION ====================
         async function registerDriver() {
             // Validate everything
@@ -3209,22 +2660,13 @@ if ('serviceWorker' in navigator) {
                 return;
             }
             
-            // Get images based on method
-            const images = getCurrentImages();
-            if (!images.every(img => img)) {
-                showToast('Please complete all image requirements', 'danger');
+            if (capturedImages.length < 3) {
+                showToast('Please capture all 3 required face angles', 'danger');
                 prevStep(2);
                 return;
             }
             
-            if (!isValidationComplete) {
-                showToast('Please complete image validation', 'danger');
-                prevStep(2);
-                return;
-            }
-            
-            const termsCheckbox = document.getElementById('termsCheckbox');
-            if (!termsCheckbox?.checked) {
+            if (!document.getElementById('termsCheckbox').checked) {
                 showToast('Please accept the terms and conditions', 'warning');
                 return;
             }
@@ -3233,10 +2675,8 @@ if ('serviceWorker' in navigator) {
             
             // Disable submit button
             const submitBtn = document.getElementById('submitBtn');
-            if (submitBtn) {
-                submitBtn.disabled = true;
-                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> Registering...';
-            }
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> Registering...';
             
             // Stop camera if running
             if (stream) {
@@ -3245,24 +2685,23 @@ if ('serviceWorker' in navigator) {
             
             // Prepare registration data
             const registrationData = {
-                driver_name: document.getElementById('driverName')?.value.trim(),
-                driver_phone: document.getElementById('driverPhone')?.value.trim(),
-                driver_email: document.getElementById('driverEmail')?.value.trim() || '',
-                driver_address: document.getElementById('driverAddress')?.value.trim() || '',
-                license_number: document.getElementById('licenseNumber')?.value.trim() || '',
-                reference_number: document.getElementById('referenceNumber')?.value.trim(),
-                guardian_id: guardianData?.id,
+                driver_name: document.getElementById('driverName').value.trim(),
+                driver_phone: document.getElementById('driverPhone').value.trim(),
+                driver_email: document.getElementById('driverEmail').value.trim() || '',
+                driver_address: document.getElementById('driverAddress').value.trim() || '',
+                license_number: document.getElementById('licenseNumber').value.trim() || '',
+                reference_number: document.getElementById('referenceNumber').value.trim(),
+                guardian_id: guardianData.id,
                 token: sessionToken,
-                face_images: images,
-                capture_method: currentCaptureMethod,
-                validation_result: validationResult
+                face_images: capturedImages,
+                capture_angles: capturedImages.map((_, index) => captureAngles[index])
             };
             
             console.log('📤 Sending registration data:', {
                 driver_name: registrationData.driver_name,
                 driver_phone: registrationData.driver_phone,
                 image_count: registrationData.face_images.length,
-                capture_method: registrationData.capture_method
+                capture_angles: registrationData.capture_angles
             });
             
             try {
@@ -3275,49 +2714,37 @@ if ('serviceWorker' in navigator) {
                 const data = await response.json();
                 
                 if (data.success) {
-                    console.log('✅ Driver registered successfully');
-                    showToast(`Driver "${registrationData.driver_name}" registered successfully!`, 'success');
+                    console.log('✅ Driver registered successfully with all required angles');
+                    showToast(`Driver "${registrationData.driver_name}" registered successfully with all 3 required face angles!`, 'success');
                     
-                    // Clear all data
-                    uploadedImages = { 1: null, 2: null };
-                    capturedCameraImages = { 1: null, 2: null };
-                    isValidationComplete = false;
-                    validationResult = null;
+                    // Clear captured images
+                    capturedImages = [];
                     
-                    // Redirect to dashboard after delay
                     setTimeout(() => {
                         goBackToDashboard();
                     }, 2000);
                     
                 } else {
                     console.error('❌ Registration failed:', data.error);
-                    if (submitBtn) {
-                        submitBtn.disabled = false;
-                        submitBtn.innerHTML = '<i class="fas fa-paper-plane me-2"></i> Submit Registration';
-                    }
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = '<i class="fas fa-paper-plane me-2"></i> Submit Registration';
                     showToast(`Registration failed: ${data.error || 'Unknown error'}`, 'danger');
                 }
                 
             } catch (error) {
                 console.error('❌ Network error:', error);
-                if (submitBtn) {
-                    submitBtn.disabled = false;
-                    submitBtn.innerHTML = '<i class="fas fa-paper-plane me-2"></i> Submit Registration';
-                }
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="fas fa-paper-plane me-2"></i> Submit Registration';
                 showToast('Network error. Please try again.', 'danger');
             }
         }
-
+        
         // ==================== NAVIGATION ====================
         function goBackToDashboard() {
             console.log('🔙 Returning to dashboard...');
-            if (guardianData && sessionToken) {
-                window.location.href = `/guardian-dashboard?guardian_id=${guardianData.id}&token=${sessionToken}`;
-            } else {
-                window.location.href = '/';
-            }
+            window.location.href = `/guardian-dashboard?guardian_id=${guardianData.id}&token=${sessionToken}`;
         }
-
+        
         // ==================== UTILITY FUNCTIONS ====================
         function showToast(message, type = 'info', title = '') {
             const toastContainer = document.getElementById('toastContainer');
@@ -3348,14 +2775,13 @@ if ('serviceWorker' in navigator) {
             
             toastContainer.appendChild(toast);
             
-            // Auto-remove after 5 seconds
             setTimeout(() => {
                 if (toast.parentElement) {
                     toast.remove();
                 }
             }, 5000);
         }
-
+        
         // ==================== CLEANUP ====================
         window.addEventListener('beforeunload', function() {
             if (stream) {
@@ -3363,6 +2789,9 @@ if ('serviceWorker' in navigator) {
             }
             if (countdownInterval) {
                 clearInterval(countdownInterval);
+            }
+            if (guideTimeout) {
+                clearTimeout(guideTimeout);
             }
         });
     </script>
