@@ -62,7 +62,7 @@ GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 # ==================== FIREBASE HOSTING INTEGRATION ====================
 # List of allowed origins (Firebase domains + localhost for development)
 ALLOWED_ORIGINS = [
-    # 'https://guardian-drive.web.app',
+    # 'https://guardian-drive-app.web.app',
     'https://guardian-drive-app.web.app',
     'https://guardian-drive-app.firebaseapp.com',
     'https://guardian-drive.firebaseapp.com',
@@ -890,7 +890,7 @@ def add_security_headers(response):
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-XSS-Protection'] = '1; mode=block'
     response.headers['Content-Security-Policy'] = (
-        "default-src 'self' https://guardian-drive.web.app; "
+        "default-src 'self' https://guardian-drive-app.web.app; "
         "script-src 'self' https://cdn.jsdelivr.net https://accounts.google.com 'unsafe-inline' 'unsafe-eval'; "
         "style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
         "img-src 'self' data: https:; "
@@ -966,7 +966,7 @@ def serve_home():
         'message': 'Driver Alert System API Server',
         'backend': 'Render.com',
         'frontend': 'Firebase Hosting',
-        'frontend_url': 'https://guardian-drive.web.app',
+        'frontend_url': 'https://guardian-drive-app.web.app',
         'api_docs': 'https://driver-drowsiness-with-alert.onrender.com/api/health',
         'version': '2.0.0'
     })
@@ -987,7 +987,7 @@ def health_check():
             'firebase_integration': True,
             'allowed_origins': ALLOWED_ORIGINS,
             'websocket_connections': len(connected_clients),
-            'frontend_url': 'https://guardian-drive.web.app',
+            'frontend_url': 'https://guardian-drive-app.web.app',
             'note': 'This is a pure API server. Frontend is hosted on Firebase.'
         }
         
@@ -1163,7 +1163,7 @@ def google_login():
             'session_token': token,
             'message': 'Google login successful',
             'is_google_user': True,
-            'redirect_url': f'https://guardian-drive.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
+            'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
         })
         
     except Exception as e:
@@ -1263,7 +1263,7 @@ def google_login_with_email():
             'session_token': token,
             'message': 'Login successful',
             'method': 'email_based_google_login',
-            'redirect_url': f'https://guardian-drive.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
+            'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
         })
         
     except Exception as e:
@@ -1334,7 +1334,7 @@ def google_login_simple():
             'email': email,
             'session_token': token,
             'message': 'Google login successful',
-            'redirect_url': f'https://guardian-drive.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
+            'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
         })
         
     except Exception as e:
@@ -1376,7 +1376,7 @@ def login():
                 'phone': guardian['phone'],
                 'session_token': token,
                 'message': 'Login successful',
-                'redirect_url': f'https://guardian-drive.web.app/guardian-dashboard.html?guardian_id={guardian["guardian_id"]}&token={token}'
+                'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian["guardian_id"]}&token={token}'
             })
 
         return jsonify({'success': False, 'error': 'Invalid phone or password'}), 401
@@ -1414,7 +1414,7 @@ def logout():
         return jsonify({
             'success': True,
             'message': 'Logged out successfully',
-            'redirect_url': 'https://guardian-drive.web.app/?logged_out=true'
+            'redirect_url': 'https://guardian-drive-app.web.app/?logged_out=true'
         })
         
     except Exception as e:
@@ -1601,7 +1601,7 @@ def register_guardian():
             'phone': final_phone,
             'email': data.get('email', ''),
             'message': 'Registration successful! You can now login.',
-            'redirect_url': f'https://guardian-drive.web.app/login.html?registered=true&prefilled_phone={final_phone}'
+            'redirect_url': f'https://guardian-drive-app.web.app/login.html?registered=true&prefilled_phone={final_phone}'
         }
         
         print(f"✅ [REGISTRATION] Registration complete for guardian_id: {guardian_id}")
@@ -1995,7 +1995,7 @@ def admin_login():
                 'token': token,
                 'expires': expires_at.isoformat(),
                 'message': 'Admin login successful',
-                'redirect_url': f'https://guardian-drive.web.app/admin-dashboard.html?username={username}&token={token}'
+                'redirect_url': f'https://guardian-drive-app.web.app/admin-dashboard.html?username={username}&token={token}'
             })
         
         return jsonify({
@@ -2134,7 +2134,7 @@ def admin_stats():
                 'server_time': datetime.now().isoformat(),
                 'firebase_integration': True,
                 'allowed_origins': ALLOWED_ORIGINS,
-                'frontend_url': 'https://guardian-drive.web.app'
+                'frontend_url': 'https://guardian-drive-app.web.app'
             }
         })
         
@@ -2435,7 +2435,7 @@ def startup_tasks():
     
     # Firebase integration
     print(f"   ✅ Firebase Integration: Enabled")
-    print(f"   ✅ Frontend URL: https://guardian-drive.web.app")
+    print(f"   ✅ Frontend URL: https://guardian-drive-app.web.app")
     print(f"   ✅ Allowed Origins: {len(ALLOWED_ORIGINS)} domains configured")
     
     # Database initialization
@@ -2469,7 +2469,7 @@ def startup_tasks():
     render_env = os.environ.get('RENDER', '')
     if render_env:
         print(f"   ✅ Running on Render.com")
-        print(f"   Firebase Frontend: https://guardian-drive.web.app")
+        print(f"   Firebase Frontend: https://guardian-drive-app.web.app")
     else:
         print(f"   ⚠️  Not running on Render (local development)")
     
@@ -2509,7 +2509,7 @@ def startup_tasks():
     
     print(f"\n🚀 Ready to accept connections")
     print(f"   Render Backend: https://driver-drowsiness-with-alert.onrender.com")
-    print(f"   Firebase Frontend: https://guardian-drive.web.app")
+    print(f"   Firebase Frontend: https://guardian-drive-app.web.app")
     print(f"   Health Check: https://driver-drowsiness-with-alert.onrender.com/api/health")
     print(f"   WebSocket: wss://driver-drowsiness-with-alert.onrender.com/socket.io/")
     print(f"{'='*70}\n")
@@ -2526,7 +2526,7 @@ if __name__ == '__main__':
     print(f"🚀 Starting server on {host}:{port}")
     print(f"🌐 WebSocket endpoint: ws://{host}:{port}")
     print(f"📡 Alert endpoint: http://{host}:{port}/api/send-alert")
-    print(f"🔥 Firebase Frontend: https://guardian-drive.web.app")
+    print(f"🔥 Firebase Frontend: https://guardian-drive-app.web.app")
     print(f"🔐 Google OAuth: {'Enabled' if GOOGLE_CLIENT_ID else 'Disabled'}")
     
     # Run the application
