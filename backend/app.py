@@ -2347,6 +2347,301 @@ def get_driver_details(driver_id):
             'error': str(e)
         }), 500
 
+# ==================== UPDATE GUARDIAN ENDPOINT ====================
+
+@app.route('/api/driver/update', methods=['POST'])
+def update_driver():
+    """Update driver information"""
+    try:
+        data = request.json
+        
+        guardian_id = data.get('guardian_id')
+        token = data.get('token')
+        driver_id = data.get('driver_id')
+        
+        if not all([guardian_id, token, driver_id]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing required fields'
+            }), 400
+        
+        # Validate session
+        if not validate_session(guardian_id, token):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid or expired session'
+            }), 401
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if driver belongs to this guardian
+            cursor.execute('''
+                SELECT driver_id FROM drivers 
+                WHERE driver_id = %s AND guardian_id = %s
+            ''', (driver_id, guardian_id))
+            
+            if not cursor.fetchone():
+                return jsonify({
+                    'success': False,
+                    'error': 'Driver not found or not authorized'
+                }), 404
+            
+            # Build update query dynamically
+            update_fields = []
+            update_values = []
+            
+            # Check phone number uniqueness
+            new_phone = data.get('phone')
+            if new_phone:
+                # Clean phone number
+                phone_clean = re.sub(r'[\s\-\(\)\+]', '', new_phone)
+                
+                # Check if phone already exists for another driver
+                cursor.execute('''
+                    SELECT driver_id FROM drivers 
+                    WHERE phone = %s AND driver_id != %s
+                ''', (phone_clean, driver_id))
+                
+                if cursor.fetchone():
+                    return jsonify({
+                        'success': False,
+                        'error': f'Phone number {phone_clean} is already registered for another driver'
+                    }), 409
+                
+                update_fields.append('phone = %s')
+                update_values.append(phone_clean)
+            
+            # Other fields that can be updated
+            fields_to_update = ['name', 'email', 'address', 'license_number']
+            for field in fields_to_update:
+                if field in data:
+                    update_fields.append(f'{field} = %s')
+                    update_values.append(data[field])
+            
+            if not update_fields:
+                return jsonify({
+                    'success': False,
+                    'error': 'No fields to update'
+                }), 400
+            
+            # Add driver_id to values
+            update_values.append(driver_id)
+            
+            # Execute update
+            query = f'''
+                UPDATE drivers 
+                SET {', '.join(update_fields)}, updated_at = %s
+                WHERE driver_id = %s
+            '''
+            
+            cursor.execute(query, (*update_values, datetime.now()))
+            conn.commit()
+            
+            # Get updated driver info
+            cursor.execute('''
+                SELECT * FROM drivers WHERE driver_id = %s
+            ''', (driver_id,))
+            
+            driver = dict(cursor.fetchone())
+            
+            # Log activity
+            cursor.execute('''
+                INSERT INTO activity_log (guardian_id, action, details)
+                VALUES (%s, %s, %s)
+            ''', (guardian_id, 'DRIVER_UPDATED', 
+                f'Updated driver: {driver.get("name")} (ID: {driver_id})'))
+            
+            return jsonify({
+                'success': True,
+                'driver': driver,
+                'message': 'Driver updated successfully'
+            })
+        
+    except Exception as e:
+        print(f"❌ Error in update_driver: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/guardian/update', methods=['POST'])
+def update_guardian():
+    """Update guardian information"""
+    try:
+        data = request.json
+        
+        guardian_id = data.get('guardian_id')
+        token = data.get('token')
+        
+        if not all([guardian_id, token]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing required fields'
+            }), 400
+        
+        # Validate session
+        if not validate_session(guardian_id, token):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid or expired session'
+            }), 401
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Build update query dynamically
+            update_fields = []
+            update_values = []
+            
+            # Check phone number uniqueness
+            new_phone = data.get('phone')
+            if new_phone:
+                # Clean phone number
+                phone_clean = re.sub(r'[\s\-\(\)\+]', '', new_phone)
+                
+                # Convert to 09 format if needed
+                if len(phone_clean) == 12 and phone_clean.startswith('639'):
+                    phone_clean = '09' + phone_clean[3:]
+                elif len(phone_clean) == 11 and phone_clean.startswith('63'):
+                    phone_clean = '09' + phone_clean[2:]
+                elif len(phone_clean) == 10 and phone_clean.startswith('9'):
+                    phone_clean = '0' + phone_clean
+                elif len(phone_clean) == 10:
+                    phone_clean = '09' + phone_clean
+                
+                # Check if phone already exists for another guardian
+                cursor.execute('''
+                    SELECT guardian_id FROM guardians 
+                    WHERE phone = %s AND guardian_id != %s
+                ''', (phone_clean, guardian_id))
+                
+                if cursor.fetchone():
+                    return jsonify({
+                        'success': False,
+                        'error': f'Phone number {phone_clean} is already registered for another guardian'
+                    }), 409
+                
+                update_fields.append('phone = %s')
+                update_values.append(phone_clean)
+            
+            # Other fields that can be updated
+            fields_to_update = ['full_name', 'email', 'address']
+            for field in fields_to_update:
+                if field in data:
+                    update_fields.append(f'{field} = %s')
+                    update_values.append(data[field])
+            
+            if not update_fields:
+                return jsonify({
+                    'success': False,
+                    'error': 'No fields to update'
+                }), 400
+            
+            # Add guardian_id to values
+            update_values.append(guardian_id)
+            
+            # Execute update
+            query = f'''
+                UPDATE guardians 
+                SET {', '.join(update_fields)}
+                WHERE guardian_id = %s
+            '''
+            
+            cursor.execute(query, (*update_values,))
+            conn.commit()
+            
+            # Get updated guardian info
+            cursor.execute('''
+                SELECT * FROM guardians WHERE guardian_id = %s
+            ''', (guardian_id,))
+            
+            guardian = dict(cursor.fetchone())
+            
+            # Update localStorage data if needed
+            if 'full_name' in data:
+                # This would be handled by frontend
+            
+                return jsonify({
+                'success': True,
+                'guardian': guardian,
+                'message': 'Profile updated successfully'
+            })
+        
+    except Exception as e:
+        print(f"❌ Error in update_guardian: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# ==================== GET DRIVER DETAILS ENDPOINT ====================
+
+@app.route('/api/driver/<driver_id>/details', methods=['GET'])
+def get_driver_details_full(driver_id):
+    """Get detailed information about a specific driver with validation"""
+    try:
+        guardian_id = request.args.get('guardian_id')
+        token = request.args.get('token')
+        
+        if not guardian_id or not token:
+            return jsonify({
+                'success': False,
+                'error': 'Authentication required'
+            }), 401
+        
+        # Validate session
+        if not validate_session(guardian_id, token):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid or expired session'
+            }), 401
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get driver details with validation
+            cursor.execute('''
+                SELECT d.*, 
+                       (SELECT COUNT(*) FROM alerts a WHERE a.driver_id = d.driver_id AND a.acknowledged = FALSE) as unread_alerts,
+                       (SELECT COUNT(*) FROM face_images f WHERE f.driver_id = d.driver_id) as face_image_count
+                FROM drivers d
+                WHERE d.driver_id = %s AND d.guardian_id = %s
+            ''', (driver_id, guardian_id))
+            
+            driver_result = cursor.fetchone()
+            
+            if not driver_result:
+                return jsonify({
+                    'success': False,
+                    'error': 'Driver not found or not authorized'
+                }), 404
+            
+            driver = dict(driver_result)
+            
+            # Get face images
+            cursor.execute('''
+                SELECT image_id, image_path, capture_date
+                FROM face_images
+                WHERE driver_id = %s
+                ORDER BY capture_date DESC
+            ''', (driver_id,))
+            
+            face_images = cursor.fetchall()
+            driver['face_images'] = [dict(img) for img in face_images]
+            
+            return jsonify({
+                'success': True,
+                'driver': driver
+            })
+            
+    except Exception as e:
+        print(f"❌ Error in get_driver_details_full: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 # ==================== ALERT ENDPOINTS ====================
 @app.route('/api/send-alert', methods=['POST'])
 def send_alert():
