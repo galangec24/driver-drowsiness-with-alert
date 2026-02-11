@@ -1713,71 +1713,126 @@ def guardian_dashboard():
 # ==================== DRIVER REGISTRATION WITH CLOUDINARY ====================
 @app.route('/api/register-driver', methods=['POST'])
 def register_driver():
-    """Register a new driver with face images uploaded to Cloudinary"""
+    """Register a new driver with face images uploaded to Cloudinary - FIXED VERSION"""
     try:
         data = request.json
+        print(f"\n🚗 [DRIVER REGISTRATION] ===== STARTING DRIVER REGISTRATION =====")
+        print(f"   Received data keys: {list(data.keys())}")
+        print(f"   Request headers: {dict(request.headers)}")
         
-        # Extract required fields
+        # Extract required fields - MATCHING FRONTEND FIELD NAMES EXACTLY
         driver_name = data.get('driver_name')
         driver_phone = data.get('driver_phone')
         guardian_id = data.get('guardian_id')
         token = data.get('token')
         face_images = data.get('face_images', [])  # Array of base64 images
         
-        print(f"🚗 [DRIVER REGISTRATION] Starting registration for driver: {driver_name}")
+        print(f"\n🔍 [DRIVER REGISTRATION] Extracted data:")
+        print(f"   Driver Name: {driver_name}")
+        print(f"   Driver Phone: {driver_phone}")
         print(f"   Guardian ID: {guardian_id}")
-        print(f"   Phone: {driver_phone}")
+        print(f"   Token present: {bool(token)}")
+        print(f"   Token length: {len(token) if token else 0}")
         print(f"   Face images count: {len(face_images)}")
         
         # Validate required fields
         if not all([driver_name, driver_phone, guardian_id, token]):
+            print("❌ [DRIVER REGISTRATION] Missing required fields:")
+            print(f"   driver_name: {bool(driver_name)}")
+            print(f"   driver_phone: {bool(driver_phone)}")
+            print(f"   guardian_id: {bool(guardian_id)}")
+            print(f"   token: {bool(token)}")
             return jsonify({
                 'success': False,
                 'error': 'Missing required fields: driver_name, driver_phone, guardian_id, or token'
             }), 400
         
+        print(f"\n🔐 [DRIVER REGISTRATION] Validating session for guardian_id: {guardian_id}")
+        print(f"   Token to validate: {token[:20]}...")
+        
         # Validate guardian session
         if not validate_session(guardian_id, token):
+            print(f"❌ [DRIVER REGISTRATION] Session validation failed for guardian_id: {guardian_id}")
+            print(f"   Checking if session exists in memory: {guardian_id in active_sessions}")
+            
+            # Try to get guardian info for debugging
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT guardian_id FROM guardians WHERE guardian_id = %s', (guardian_id,))
+                guardian_exists = cursor.fetchone()
+                print(f"   Guardian exists in DB: {bool(guardian_exists)}")
+            
             return jsonify({
                 'success': False,
-                'error': 'Invalid or expired guardian session'
+                'error': 'Invalid or expired guardian session. Please login again.',
+                'details': {
+                    'guardian_id': guardian_id,
+                    'token_short': token[:20],
+                    'session_valid': False
+                }
             }), 401
+        
+        print("✅ [DRIVER REGISTRATION] Session validated successfully")
         
         # Validate face images - need at least 3 for different angles
         if len(face_images) < 3:
+            print(f"❌ [DRIVER REGISTRATION] Not enough face images: {len(face_images)} (need at least 3)")
             return jsonify({
                 'success': False,
-                'error': 'At least 3 face images from different angles are required'
+                'error': f'At least 3 face images from different angles are required. Received {len(face_images)} images.',
+                'details': {
+                    'required': 3,
+                    'received': len(face_images)
+                }
             }), 400
         
         # Check if Cloudinary is configured
         if not CLOUDINARY_ENABLED:
+            print("❌ [DRIVER REGISTRATION] Cloudinary not enabled")
             return jsonify({
                 'success': False,
-                'error': 'Image upload service is not configured. Please contact administrator.'
+                'error': 'Image upload service is not configured. Please contact administrator.',
+                'details': {
+                    'cloudinary_cloud_name': bool(CLOUDINARY_CLOUD_NAME),
+                    'cloudinary_api_key': bool(CLOUDINARY_API_KEY),
+                    'cloudinary_api_secret': bool(CLOUDINARY_API_SECRET)
+                }
             }), 500
         
         # Generate unique driver ID
-        driver_id = f"DRV{str(uuid.uuid4().int)[:8].upper()}"
+        import time
+        timestamp = int(time.time() * 1000)
+        driver_id = f"DRV{str(timestamp)[-8:].upper()}"
         
         # Generate reference number if not provided
-        reference_number = data.get('reference_number', 
-                                  f"REF{str(uuid.uuid4().int)[:8].upper()}")
+        reference_number = data.get('reference_number', f"REF{str(timestamp)[-8:].upper()}")
         
-        # Get additional driver info
+        # Get additional driver info - FIXED FIELD NAMES
         driver_email = data.get('driver_email', '')
         driver_address = data.get('driver_address', '')
         license_number = data.get('license_number', '')
         capture_angles = data.get('capture_angles', ['front', 'left', 'right'])
+        
+        print(f"\n📝 [DRIVER REGISTRATION] Processing registration for driver: {driver_name}")
+        print(f"   Driver ID: {driver_id}")
+        print(f"   Reference Number: {reference_number}")
+        print(f"   Driver Email: {driver_email}")
+        print(f"   Driver Address: {driver_address}")
+        print(f"   License Number: {license_number}")
+        print(f"   Capture Angles: {capture_angles}")
         
         with get_db_cursor() as cursor:
             # Check if phone already exists
             cursor.execute('SELECT driver_id FROM drivers WHERE phone = %s', (driver_phone,))
             existing = cursor.fetchone()
             if existing:
+                print(f"❌ [DRIVER REGISTRATION] Phone already registered: {driver_phone}")
                 return jsonify({
                     'success': False,
-                    'error': 'Phone number already registered'
+                    'error': f'Phone number {driver_phone} is already registered for another driver.',
+                    'details': {
+                        'existing_driver_id': existing[0] if isinstance(existing, tuple) else existing['driver_id']
+                    }
                 }), 409
             
             # Check if reference number already exists
@@ -1786,34 +1841,59 @@ def register_driver():
             existing_ref = cursor.fetchone()
             if existing_ref:
                 # Generate new reference number
-                reference_number = f"REF{str(uuid.uuid4().int)[:8].upper()}"
+                new_ref_number = f"REF{str(uuid.uuid4().int)[:8].upper()}"
+                print(f"🔧 [DRIVER REGISTRATION] Reference number already exists. Generated new: {new_ref_number}")
+                reference_number = new_ref_number
             
-            # Insert driver into database first
-            cursor.execute('''
-                INSERT INTO drivers (
-                    driver_id, name, phone, email, address, 
-                    reference_number, license_number, guardian_id, 
-                    registration_date, is_active
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ''', (
-                driver_id, 
-                driver_name, 
-                driver_phone, 
-                driver_email, 
-                driver_address,
-                reference_number,
-                license_number,
-                guardian_id,
-                datetime.now(),
-                True
-            ))
+            print(f"\n🗄️ [DRIVER REGISTRATION] Inserting driver into database...")
             
-            print(f"✅ [DRIVER REGISTRATION] Driver registered: {driver_name} (ID: {driver_id})")
+            try:
+                # Insert driver into database
+                cursor.execute('''
+                    INSERT INTO drivers (
+                        driver_id, name, phone, email, address, 
+                        reference_number, license_number, guardian_id, 
+                        registration_date, is_active
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING driver_id
+                ''', (
+                    driver_id, 
+                    driver_name, 
+                    driver_phone, 
+                    driver_email, 
+                    driver_address,
+                    reference_number,
+                    license_number,
+                    guardian_id,
+                    datetime.now(),
+                    True
+                ))
+                
+                # Get the inserted driver ID
+                inserted_driver = cursor.fetchone()
+                if isinstance(inserted_driver, dict):
+                    inserted_driver_id = inserted_driver['driver_id']
+                else:
+                    inserted_driver_id = inserted_driver[0] if inserted_driver else driver_id
+                
+                print(f"✅ [DRIVER REGISTRATION] Driver registered: {driver_name} (ID: {inserted_driver_id})")
+                
+            except Exception as db_error:
+                print(f"❌ [DRIVER REGISTRATION] Database insertion failed: {db_error}")
+                import traceback
+                traceback.print_exc()
+                return jsonify({
+                    'success': False,
+                    'error': f'Database error: {str(db_error)}',
+                    'details': 'Failed to insert driver record'
+                }), 500
             
             # Upload face images to Cloudinary
             saved_images = []
             upload_errors = []
+            
+            print(f"\n☁️ [DRIVER REGISTRATION] Starting Cloudinary upload for {len(face_images)} images...")
             
             for i, face_image_data in enumerate(face_images[:3], 1):  # Limit to 3 images
                 # Use provided angle or default
@@ -1822,14 +1902,19 @@ def register_driver():
                 else:
                     capture_angle = f"angle_{i}"
                 
+                print(f"\n📤 [DRIVER REGISTRATION] Processing image {i}/{len(face_images)} (angle: {capture_angle})...")
+                print(f"   Image data length: {len(face_image_data)} characters")
+                print(f"   Image data preview: {face_image_data[:50]}...")
+                
                 # Clean base64 data (remove data URL prefix if present)
                 image_base64 = face_image_data
                 if ',' in image_base64:
                     image_base64 = image_base64.split(',')[1]
+                    print(f"   Cleaned base64 prefix")
                 
                 if not image_base64 or len(image_base64) < 100:
                     print(f"⚠️ [DRIVER REGISTRATION] Skipping empty/invalid image for angle {capture_angle}")
-                    upload_errors.append(f"Image {i} is empty or invalid")
+                    upload_errors.append(f"Image {i} is empty or invalid (length: {len(image_base64)})")
                     continue
                 
                 try:
@@ -1838,8 +1923,12 @@ def register_driver():
                     public_id = f"driver_faces/{driver_id}/{capture_angle}_{timestamp}"
                     
                     print(f"📤 [DRIVER REGISTRATION] Uploading image {i} to Cloudinary as {public_id}...")
+                    print(f"   Base64 length: {len(image_base64)}")
+                    print(f"   Estimated size: {len(image_base64) * 3 / 4 / 1024:.1f} KB")
                     
-                    # Upload to Cloudinary
+                    # Upload to Cloudinary with timeout
+                    upload_start = time.time()
+                    
                     upload_result = cloudinary.uploader.upload(
                         f"data:image/jpeg;base64,{image_base64}",
                         public_id=public_id,
@@ -1848,61 +1937,103 @@ def register_driver():
                         overwrite=False,
                         faces=True,  # Enable face detection
                         quality="auto:good",
-                        format="jpg"
+                        format="jpg",
+                        timeout=30  # 30 second timeout
                     )
+                    
+                    upload_time = time.time() - upload_start
+                    print(f"   Upload time: {upload_time:.2f} seconds")
                     
                     # Get the secure URL from Cloudinary response
                     cloudinary_url = upload_result.get('secure_url')
                     public_id = upload_result.get('public_id')
                     
-                    print(f"✅ [DRIVER REGISTRATION] Image {i} uploaded to Cloudinary: {cloudinary_url[:50]}...")
+                    print(f"✅ [DRIVER REGISTRATION] Image {i} uploaded to Cloudinary successfully!")
+                    print(f"   URL: {cloudinary_url[:60]}...")
+                    print(f"   Public ID: {public_id}")
+                    print(f"   Width: {upload_result.get('width')}, Height: {upload_result.get('height')}")
                     
                     # Store Cloudinary URL in database
                     cursor.execute('''
                         INSERT INTO face_images (driver_id, image_path, capture_date)
                         VALUES (%s, %s, %s)
+                        RETURNING image_id
                     ''', (driver_id, cloudinary_url, datetime.now()))
                     
+                    image_result = cursor.fetchone()
+                    image_id = image_result[0] if image_result else None
+                    
                     saved_images.append({
+                        'image_id': image_id,
                         'angle': capture_angle,
                         'public_id': public_id,
                         'url': cloudinary_url,
+                        'upload_time': upload_time,
                         'upload_result': {
                             'asset_id': upload_result.get('asset_id'),
                             'width': upload_result.get('width'),
                             'height': upload_result.get('height'),
                             'format': upload_result.get('format'),
-                            'resource_type': upload_result.get('resource_type')
+                            'resource_type': upload_result.get('resource_type'),
+                            'bytes': upload_result.get('bytes')
                         }
                     })
                     
-                except Exception as upload_error:
-                    error_msg = f"Error uploading image {i} ({capture_angle}): {str(upload_error)}"
+                    # Small delay between uploads to avoid rate limiting
+                    if i < len(face_images):
+                        time.sleep(1)
+                    
+                except cloudinary.api.Error as cloudinary_error:
+                    error_msg = f"Cloudinary API error for image {i} ({capture_angle}): {str(cloudinary_error)}"
                     print(f"❌ [DRIVER REGISTRATION] {error_msg}")
+                    upload_errors.append(error_msg)
+                    
+                except Exception as upload_error:
+                    error_msg = f"General error uploading image {i} ({capture_angle}): {str(upload_error)}"
+                    print(f"❌ [DRIVER REGISTRATION] {error_msg}")
+                    print(f"   Error type: {type(upload_error).__name__}")
                     upload_errors.append(error_msg)
                     continue
             
+            print(f"\n📊 [DRIVER REGISTRATION] Upload summary:")
+            print(f"   Total attempted: {len(face_images[:3])}")
+            print(f"   Successfully uploaded: {len(saved_images)}")
+            print(f"   Upload errors: {len(upload_errors)}")
+            
             if len(saved_images) == 0:
-                print(f"❌ [DRIVER REGISTRATION] No face images were uploaded for driver {driver_id}")
+                print(f"❌ [DRIVER REGISTRATION] NO face images were uploaded for driver {driver_id}")
+                print(f"   Upload errors: {upload_errors}")
+                
                 # Rollback driver registration if no images were saved
                 cursor.execute('DELETE FROM drivers WHERE driver_id = %s', (driver_id,))
+                print(f"   Rolled back driver registration")
+                
                 return jsonify({
                     'success': False,
                     'error': 'Failed to upload any face images. Registration cancelled.',
-                    'upload_errors': upload_errors
+                    'upload_errors': upload_errors,
+                    'details': {
+                        'attempted_uploads': len(face_images[:3]),
+                        'successful_uploads': 0,
+                        'failed_uploads': len(upload_errors)
+                    }
                 }), 500
             
             if len(upload_errors) > 0:
-                print(f"⚠️ [DRIVER REGISTRATION] Some images failed to upload: {upload_errors}")
-            
-            print(f"✅ [DRIVER REGISTRATION] Saved {len(saved_images)} face images to Cloudinary for driver {driver_id}")
+                print(f"⚠️ [DRIVER REGISTRATION] Some images failed to upload:")
+                for error in upload_errors:
+                    print(f"   - {error}")
             
             # Log activity
             cursor.execute('''
                 INSERT INTO activity_log (guardian_id, action, details)
                 VALUES (%s, %s, %s)
+                RETURNING log_id
             ''', (guardian_id, 'DRIVER_REGISTERED', 
-                f'Registered driver: {driver_name} (ID: {driver_id}) with {len(saved_images)} face images uploaded to Cloudinary'))
+                f'Registered driver: {driver_name} (ID: {driver_id}) with {len(saved_images)} face images'))
+            
+            activity_log = cursor.fetchone()
+            print(f"📝 [DRIVER REGISTRATION] Activity logged with ID: {activity_log[0] if activity_log else 'N/A'}")
             
             # Get guardian info for notification
             cursor.execute('SELECT full_name, phone FROM guardians WHERE guardian_id = %s', 
@@ -1911,8 +2042,15 @@ def register_driver():
             
             if isinstance(guardian_info, dict):
                 guardian_name = guardian_info['full_name']
+                guardian_phone = guardian_info['phone']
             else:
                 guardian_name = guardian_info[0] if guardian_info else 'Unknown Guardian'
+                guardian_phone = guardian_info[1] if guardian_info and len(guardian_info) > 1 else 'N/A'
+            
+            print(f"\n✅ [DRIVER REGISTRATION] Registration COMPLETE!")
+            print(f"   Driver: {driver_name} (ID: {driver_id})")
+            print(f"   Guardian: {guardian_name} (ID: {guardian_id})")
+            print(f"   Images saved: {len(saved_images)}")
             
             # Prepare success response
             response_data = {
@@ -1925,8 +2063,16 @@ def register_driver():
                 'cloudinary_urls': [img['url'] for img in saved_images],
                 'registration_date': datetime.now().isoformat(),
                 'guardian_name': guardian_name,
-                'message': 'Driver registered successfully with face images uploaded to Cloudinary'
+                'guardian_phone': guardian_phone,
+                'upload_summary': {
+                    'total_attempted': len(face_images[:3]),
+                    'successful': len(saved_images),
+                    'failed': len(upload_errors)
+                },
+                'message': 'Driver registered successfully with face recognition images'
             }
+            
+            print(f"\n📤 [DRIVER REGISTRATION] Sending response: {response_data}")
             
             # Send real-time notification to guardian
             try:
@@ -1940,24 +2086,93 @@ def register_driver():
                     'message': f'New driver registered: {driver_name}'
                 }
                 
+                print(f"🔔 [DRIVER REGISTRATION] Sending notification to guardian...")
+                
                 # Emit socket event to guardian's connected clients
+                notification_sent = False
                 for client_id, client_info in connected_clients.items():
                     if client_info.get('guardian_id') == guardian_id and client_info.get('authenticated'):
                         socketio.emit('guardian_notification', notification_data, room=client_id)
-                        print(f"✅ [DRIVER REGISTRATION] Sent notification to guardian {guardian_name}")
+                        notification_sent = True
+                        print(f"   ✅ Notification sent to client {client_id}")
+                
+                if not notification_sent:
+                    print(f"   ⚠️ No active guardian clients found for notification")
                 
             except Exception as notify_error:
                 print(f"⚠️ [DRIVER REGISTRATION] Error sending notification: {notify_error}")
             
+            print(f"\n✅ [DRIVER REGISTRATION] ===== REGISTRATION SUCCESSFUL =====")
             return jsonify(response_data)
         
     except Exception as e:
-        print(f"❌ [DRIVER REGISTRATION] Error in register_driver: {e}")
+        print(f"\n❌❌❌ [DRIVER REGISTRATION] UNEXPECTED ERROR: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        import traceback
         traceback.print_exc()
+        print(f"\n❌ [DRIVER REGISTRATION] ===== REGISTRATION FAILED =====")
+        
         return jsonify({
             'success': False,
-            'error': f'Driver registration failed: {str(e)}'
+            'error': f'Driver registration failed: {str(e)}',
+            'traceback': traceback.format_exc() if app.debug else None
         }), 500
+
+@app.route('/api/test-driver-registration', methods=['POST'])
+def test_driver_registration():
+    """Test endpoint for driver registration debugging"""
+    print("\n🧪🧪🧪 TEST DRIVER REGISTRATION ENDPOINT CALLED 🧪🧪🧪")
+    
+    data = request.json
+    headers = dict(request.headers)
+    
+    print("📦 Request Data:")
+    print(f"   Keys: {list(data.keys()) if data else 'No data'}")
+    print(f"   Headers: {headers}")
+    
+    if data:
+        for key, value in data.items():
+            if key == 'face_images' and isinstance(value, list):
+                print(f"   {key}: List with {len(value)} items")
+                if len(value) > 0:
+                    print(f"      First item length: {len(value[0])}")
+                    print(f"      First item preview: {value[0][:50]}...")
+            elif key == 'token' and value:
+                print(f"   {key}: Present ({len(value)} chars) - {value[:20]}...")
+            else:
+                print(f"   {key}: {value}")
+    
+    # Validate guardian session if provided
+    guardian_id = data.get('guardian_id') if data else None
+    token = data.get('token') if data else None
+    
+    session_valid = False
+    if guardian_id and token:
+        print(f"\n🔐 Testing session validation...")
+        print(f"   Guardian ID: {guardian_id}")
+        print(f"   Token: {token[:20]}...")
+        
+        session_valid = validate_session(guardian_id, token)
+        print(f"   Session valid: {session_valid}")
+    
+    # Check Cloudinary
+    print(f"\n☁️ Cloudinary status:")
+    print(f"   Enabled: {CLOUDINARY_ENABLED}")
+    print(f"   Cloud name: {CLOUDINARY_CLOUD_NAME}")
+    
+    return jsonify({
+        'success': True,
+        'message': 'Test endpoint works',
+        'test_data': {
+            'received_keys': list(data.keys()) if data else [],
+            'session_valid': session_valid,
+            'cloudinary_enabled': CLOUDINARY_ENABLED,
+            'cloudinary_configured': bool(CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET),
+            'headers_received': list(headers.keys()),
+            'request_method': request.method,
+            'timestamp': datetime.now().isoformat()
+        }
+    })
 
 @app.route('/api/driver/<driver_id>/face-images', methods=['GET'])
 def get_driver_face_images(driver_id):
