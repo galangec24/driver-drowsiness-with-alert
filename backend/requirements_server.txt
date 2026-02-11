@@ -32,9 +32,9 @@ pyopenssl==23.3.0
 # Image Classification
 retina-face==0.0.14
 
-# DNS Fix for Render
-dnspython==2.4.2
-dnspython3==1.16.0
+# DNS Fix for Render (Python 3.10 compatible)
+dnspython==2.3.0  # Downgraded to support Python 3.10
 
-# Optional: Use for better DNS resolution
-aiodns==3.0.0
+# Remove incompatible packages:
+# dnspython3==1.16.0  # REMOVE THIS - requires Python 3.11+
+# aiodns==3.0.0       # REMOVE THIS - optional
