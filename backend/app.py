@@ -1751,6 +1751,8 @@ def guardian_dashboard():
 @app.route('/api/register-driver', methods=['POST'])
 def register_driver():
     """Register a new driver with face images uploaded to Cloudinary - FIXED VERSION"""
+    global CLOUDINARY_ENABLED 
+
     try:
         data = request.json
         print(f"\n🚗 [DRIVER REGISTRATION] ===== STARTING DRIVER REGISTRATION =====")
@@ -1804,7 +1806,9 @@ def register_driver():
             }), 400
         
         # Check if Cloudinary is configured
-        if not CLOUDINARY_ENABLED:
+        cloudinary_enabled = CLOUDINARY_ENABLED
+
+        if not cloudinary_enabled:
             print("⚠️ [DRIVER REGISTRATION] Cloudinary not enabled, using local storage")
             # Continue with local storage
         
@@ -1884,7 +1888,7 @@ def register_driver():
             saved_images = []
             upload_errors = []
             
-            if CLOUDINARY_ENABLED:
+            if cloudinary_enabled:
                 print(f"\n☁️ [DRIVER REGISTRATION] Cloudinary enabled. Starting upload for {len(face_images)} images...")
                 
                 for i, face_image_data in enumerate(face_images[:3], 1):
@@ -1972,10 +1976,10 @@ def register_driver():
                 
                 if len(saved_images) == 0 and len(upload_errors) > 0:
                     print(f"⚠️ [DRIVER REGISTRATION] All Cloudinary uploads failed, falling back to local storage")
-                    CLOUDINARY_ENABLED = False  # Force fallback
+                    cloudinary_enabled = False  # Force fallback
                     
             # ==================== LOCAL STORAGE FALLBACK ====================
-            if not CLOUDINARY_ENABLED or len(saved_images) == 0:
+            if not cloudinary_enabled or len(saved_images) == 0:
                 print(f"\n💾 [DRIVER REGISTRATION] Using LOCAL storage (Cloudinary disabled or failed)...")
                 
                 # Clear any previous saved images if Cloudinary failed
@@ -2085,7 +2089,7 @@ def register_driver():
             print(f"\n✅ [DRIVER REGISTRATION] Registration COMPLETE!")
             print(f"   Driver: {driver_name} (ID: {driver_id})")
             print(f"   Images saved: {len(saved_images)}")
-            print(f"   Storage method: {'Cloudinary' if CLOUDINARY_ENABLED and saved_images and saved_images[0].get('upload_method') == 'cloudinary' else 'Local'}")
+            print(f"   Storage method: {'Cloudinary' if cloudinary_enabled and saved_images and saved_images[0].get('upload_method') == 'cloudinary' else 'Local'}")
             
             # Prepare success response
             response_data = {
@@ -2098,7 +2102,7 @@ def register_driver():
                 'image_urls': [img['url'] for img in saved_images],
                 'registration_date': datetime.now().isoformat(),
                 'guardian_name': guardian_name,
-                'storage_method': 'cloudinary' if CLOUDINARY_ENABLED and saved_images and saved_images[0].get('upload_method') == 'cloudinary' else 'local',
+                'storage_method': 'cloudinary' if cloudinary_enabled and saved_images and saved_images[0].get('upload_method') == 'cloudinary' else 'local',
                 'message': f'Driver registered successfully with {len(saved_images)} face images'
             }
             
@@ -3153,7 +3157,7 @@ def startup_tasks():
         print(f"   ⚠️  GOOGLE_CLIENT_ID: not configured")
     
     # Check Cloudinary config
-    if CLOUDINARY_ENABLED:
+    if cloudinary_enabled:
         print(f"   ✅ CLOUDINARY: Configured for cloud: {CLOUDINARY_CLOUD_NAME}")
     else:
         print(f"   ⚠️  CLOUDINARY: Not configured")
