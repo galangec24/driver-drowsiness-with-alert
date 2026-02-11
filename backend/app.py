@@ -3157,7 +3157,7 @@ def startup_tasks():
         print(f"   ⚠️  GOOGLE_CLIENT_ID: not configured")
     
     # Check Cloudinary config
-    if cloudinary_enabled:
+    if CLOUDINARY_ENABLED:
         print(f"   ✅ CLOUDINARY: Configured for cloud: {CLOUDINARY_CLOUD_NAME}")
     else:
         print(f"   ⚠️  CLOUDINARY: Not configured")
