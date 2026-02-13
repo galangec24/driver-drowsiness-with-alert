@@ -2848,6 +2848,25 @@ def get_guardian_alerts():
             'error': str(e)
         }), 500
 
+@app.route('/api/guardian/active-drivers', methods=['GET'])
+def get_active_drivers():
+    """Return list of drivers that should be monitored."""
+    # Optionally require an API key for the AI service
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or auth_header != f'Bearer {os.getenv("AI_SERVICE_TOKEN")}':
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT driver_id, name as driver_name, guardian_id
+            FROM drivers
+            WHERE is_active = TRUE
+            ORDER BY registration_date DESC
+        ''')
+        drivers = cursor.fetchall()
+    return jsonify({'success': True, 'drivers': [dict(d) for d in drivers]})
+
 @app.route('/api/guardian/acknowledge-alert', methods=['POST'])
 def acknowledge_alert():
     """Acknowledge an alert"""
