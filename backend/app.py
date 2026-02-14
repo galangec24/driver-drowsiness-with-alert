@@ -682,128 +682,176 @@ def invalidate_session(guardian_id, token=None):
         return False
 
 # ==================== AUTHENTICATION FUNCTIONS ====================
-def verify_guardian_credentials(phone, password):
-    """Verify guardian login credentials using bcrypt - FIXED VERSION"""
+def verify_guardian_credentials(identifier, password):
+    """Verify guardian login credentials using bcrypt - Supports email or phone"""
     try:
         print(f"\n🔍 [LOGIN VERIFY] Starting verification")
-        print(f"   Phone received: '{phone}'")
+        print(f"   Identifier received: '{identifier}'")
         print(f"   Password received: '{password}' (length: {len(password)})")
         
-        # Clean the phone number
-        phone_clean = str(phone).strip()
-        phone_clean = re.sub(r'[\s\-\(\)\+]', '', phone_clean)
-        print(f"   Cleaned phone: '{phone_clean}'")
+        # Check if identifier is email or phone
+        is_email = '@' in identifier and '.' in identifier
         
-        # Check if it's all digits
-        if not phone_clean.isdigit():
-            print(f"❌ [LOGIN VERIFY] Phone contains non-digits")
-            return None
-        
-        # Convert to 09 format - FIXED LOGIC
-        lookup_phone = phone_clean
-        
-        # Check if it's already in 09XXXXXXXXX format (11 digits)
-        if len(lookup_phone) == 11 and lookup_phone.startswith('09'):
-            # Already in correct format, no conversion needed
-            print(f"   Already in 09XXXXXXXXX format, using as-is")
-        elif len(lookup_phone) == 12 and lookup_phone.startswith('639'):
-            # 639XXXXXXXXX -> 09XXXXXXXXX
-            lookup_phone = '09' + lookup_phone[3:]
-            print(f"   Converted 639XXXXXXXXX -> {lookup_phone}")
-        elif len(lookup_phone) == 11 and lookup_phone.startswith('63'):
-            # 63XXXXXXXXX -> 09XXXXXXXXX
-            lookup_phone = '09' + lookup_phone[2:]
-            print(f"   Converted 63XXXXXXXXX -> {lookup_phone}")
-        elif len(lookup_phone) == 10 and lookup_phone.startswith('9'):
-            # 9XXXXXXXXX -> 09XXXXXXXXX
-            lookup_phone = '0' + lookup_phone
-            print(f"   Converted 9XXXXXXXXX -> {lookup_phone}")
-        elif len(lookup_phone) == 10:
-            # XXXXXXXXXX -> 09XXXXXXXXX (assuming missing 09 prefix)
-            lookup_phone = '09' + lookup_phone
-            print(f"   Added 09 prefix -> {lookup_phone}")
+        if is_email:
+            # Email login - use as-is
+            email = identifier.strip().lower()
+            print(f"   Using email login: '{email}'")
+            
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Query by email
+                cursor.execute('''
+                    SELECT guardian_id, full_name, password_hash, is_active, phone
+                    FROM guardians 
+                    WHERE email = %s
+                ''', (email,))
+                
+                result = cursor.fetchone()
+                
+                if not result:
+                    print(f"❌ [LOGIN VERIFY] No user found with email: '{email}'")
+                    
+                    # Debug: Show some emails in DB
+                    cursor.execute('SELECT email, full_name FROM guardians WHERE email IS NOT NULL LIMIT 5')
+                    all_emails = cursor.fetchall()
+                    print(f"   First 5 emails in DB: {[e[0] for e in all_emails]}")
+                    
+                    return None
+                
         else:
-            print(f"❌ [LOGIN VERIFY] Invalid phone length: {len(lookup_phone)} digits")
+            # Phone login - clean and format
+            print(f"   Using phone login")
+            
+            # Clean the phone number
+            phone_clean = str(identifier).strip()
+            phone_clean = re.sub(r'[\s\-\(\)\+]', '', phone_clean)
+            print(f"   Cleaned phone: '{phone_clean}'")
+            
+            # Check if it's all digits
+            if not phone_clean.isdigit():
+                print(f"❌ [LOGIN VERIFY] Phone contains non-digits")
+                return None
+            
+            # Convert to 09 format
+            lookup_phone = phone_clean
+            
+            # Check if it's already in 09XXXXXXXXX format (11 digits)
+            if len(lookup_phone) == 11 and lookup_phone.startswith('09'):
+                # Already in correct format, no conversion needed
+                print(f"   Already in 09XXXXXXXXX format, using as-is")
+            elif len(lookup_phone) == 12 and lookup_phone.startswith('639'):
+                # 639XXXXXXXXX -> 09XXXXXXXXX
+                lookup_phone = '09' + lookup_phone[3:]
+                print(f"   Converted 639XXXXXXXXX -> {lookup_phone}")
+            elif len(lookup_phone) == 11 and lookup_phone.startswith('63'):
+                # 63XXXXXXXXX -> 09XXXXXXXXX
+                lookup_phone = '09' + lookup_phone[2:]
+                print(f"   Converted 63XXXXXXXXX -> {lookup_phone}")
+            elif len(lookup_phone) == 10 and lookup_phone.startswith('9'):
+                # 9XXXXXXXXX -> 09XXXXXXXXX
+                lookup_phone = '0' + lookup_phone
+                print(f"   Converted 9XXXXXXXXX -> {lookup_phone}")
+            elif len(lookup_phone) == 10:
+                # XXXXXXXXXX -> 09XXXXXXXXX (assuming missing 09 prefix)
+                lookup_phone = '09' + lookup_phone
+                print(f"   Added 09 prefix -> {lookup_phone}")
+            else:
+                print(f"❌ [LOGIN VERIFY] Invalid phone length: {len(lookup_phone)} digits")
+                return None
+            
+            # Final validation
+            if not lookup_phone.startswith('09') or len(lookup_phone) != 11:
+                print(f"❌ [LOGIN VERIFY] Invalid final format: '{lookup_phone}' (length: {len(lookup_phone)})")
+                return None
+            
+            print(f"   Looking up in DB as: '{lookup_phone}'")
+            
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Query by phone
+                cursor.execute('''
+                    SELECT guardian_id, full_name, password_hash, is_active, email
+                    FROM guardians 
+                    WHERE phone = %s
+                ''', (lookup_phone,))
+                
+                result = cursor.fetchone()
+                
+                if not result:
+                    print(f"❌ [LOGIN VERIFY] No user found with phone: '{lookup_phone}'")
+                    
+                    # Debug: Show what's in the database
+                    cursor.execute('SELECT phone, full_name FROM guardians WHERE phone IS NOT NULL LIMIT 5')
+                    all_phones = cursor.fetchall()
+                    print(f"   First 5 phones in DB: {[p[0] for p in all_phones]}")
+                    
+                    return None
+        
+        # Handle the result (common for both email and phone paths)
+        print(f"   Result type: {type(result)}")
+        
+        # Handle both dictionary and tuple results
+        if isinstance(result, dict):
+            # Dictionary from RealDictCursor
+            guardian_id = result['guardian_id']
+            full_name = result['full_name']
+            stored_hash = result['password_hash']
+            is_active = result['is_active']
+            email_or_phone = result.get('email') or result.get('phone') or identifier
+            print(f"   Using dictionary access")
+        else:
+            # Tuple from regular cursor
+            # Handle different tuple structures based on which query we ran
+            if is_email:
+                guardian_id, full_name, stored_hash, is_active, phone = result
+                email_or_phone = email
+                print(f"   Using tuple unpacking (email query)")
+            else:
+                guardian_id, full_name, stored_hash, is_active, email = result
+                email_or_phone = lookup_phone
+                print(f"   Using tuple unpacking (phone query)")
+        
+        print(f"✅ [LOGIN VERIFY] User found: {full_name} (ID: {guardian_id})")
+        
+        # Check if account is active
+        if not is_active:
+            print(f"❌ [LOGIN VERIFY] Account is inactive")
             return None
         
-        # Final validation
-        if not lookup_phone.startswith('09') or len(lookup_phone) != 11:
-            print(f"❌ [LOGIN VERIFY] Invalid final format: '{lookup_phone}' (length: {len(lookup_phone)})")
+        # Check if we have a hash
+        if not stored_hash:
+            print(f"❌ [LOGIN VERIFY] No password hash stored for user")
             return None
         
-        print(f"   Looking up in DB as: '{lookup_phone}'")
+        print(f"   Stored hash: {stored_hash[:30]}...")
+        print(f"   Hash length: {len(stored_hash)}")
+        print(f"   Is bcrypt format: {stored_hash.startswith('$2') if stored_hash else False}")
         
-        # Check database
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        # Verify password
+        print(f"   Verifying password...")
+        
+        if verify_password(password, stored_hash):
+            print(f"✅ [LOGIN VERIFY] Password verified successfully!")
             
-            # SIMPLE query - just get the user
-            cursor.execute('''
-                SELECT guardian_id, full_name, password_hash, is_active
-                FROM guardians 
-                WHERE phone = %s AND auth_provider = 'phone'
-            ''', (lookup_phone,))
+            # Update last login
+            try:
+                cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
+                             (datetime.now(), guardian_id))
+                conn.commit()
+            except Exception as update_error:
+                print(f"⚠️ [LOGIN VERIFY] Error updating last login: {update_error}")
             
-            result = cursor.fetchone()
-            
-            if not result:
-                print(f"❌ [LOGIN VERIFY] No user found with phone: '{lookup_phone}'")
-                
-                # Debug: Show what's in the database
-                cursor.execute('SELECT phone, full_name FROM guardians LIMIT 5')
-                all_phones = cursor.fetchall()
-                print(f"   First 5 phones in DB: {[p['phone'] for p in all_phones]}")
-                
-                return None
-            
-            # FIX: Check what type of object result is
-            print(f"   Result type: {type(result)}")
-            
-            # Handle both dictionary and tuple results
-            if isinstance(result, dict):
-                # Dictionary from RealDictCursor
-                guardian_id = result['guardian_id']
-                full_name = result['full_name']
-                stored_hash = result['password_hash']
-                is_active = result['is_active']
-                print(f"   Using dictionary access")
-            else:
-                # Tuple from regular cursor
-                guardian_id, full_name, stored_hash, is_active = result
-                print(f"   Using tuple unpacking")
-            
-            print(f"✅ [LOGIN VERIFY] User found: {full_name} (ID: {guardian_id})")
-            print(f"   Stored hash: {stored_hash[:30]}...")
-            print(f"   Hash length: {len(stored_hash)}")
-            print(f"   Is bcrypt format: {stored_hash.startswith('$2') if stored_hash else False}")
-            
-            # Check if we have a hash
-            if not stored_hash:
-                print(f"❌ [LOGIN VERIFY] No password hash stored for user")
-                return None
-            
-            # Verify password - This will clean the password internally
-            print(f"   Verifying password...")
-            
-            if verify_password(password, stored_hash):
-                print(f"✅ [LOGIN VERIFY] Password verified successfully!")
-                
-                # Update last login
-                try:
-                    cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
-                                 (datetime.now(), guardian_id))
-                    conn.commit()
-                except Exception as update_error:
-                    print(f"⚠️ [LOGIN VERIFY] Error updating last login: {update_error}")
-                
-                return {
-                    'guardian_id': guardian_id, 
-                    'full_name': full_name, 
-                    'phone': lookup_phone
-                }
-            else:
-                print(f"❌ [LOGIN VERIFY] Password does not match")
-                return None
+            return {
+                'guardian_id': guardian_id, 
+                'full_name': full_name,
+                'identifier': email_or_phone,
+                'is_email': is_email
+            }
+        else:
+            print(f"❌ [LOGIN VERIFY] Password does not match")
+            return None
                 
     except Exception as e:
         print(f"❌ [LOGIN VERIFY] Unexpected error: {e}")
@@ -1410,40 +1458,51 @@ def google_login_simple():
 # ==================== GUARDIAN AUTHENTICATION ====================
 @app.route('/api/login', methods=['POST'])
 def login():
-    """Guardian login with bcrypt verification - FIXED VERSION"""
+    """Guardian login with email/phone + password"""
     try:
         data = request.json
-        phone = data.get('phone', '').strip()
+        identifier = data.get('identifier', '').strip()   # could be email or phone
         password = data.get('password', '')
 
-        print(f"\n🔑 [LOGIN API] Attempting login")
-        print(f"   Phone: '{phone}'")
-        print(f"   Password (raw): '{password}' (length: {len(password)})")
+        print(f"\n🔑 [LOGIN API] Attempting login with identifier: '{identifier}'")
 
-        if not phone or not password:
-            return jsonify({'success': False, 'error': 'Phone and password required'}), 400
+        if not identifier or not password:
+            return jsonify({'success': False, 'error': 'Identifier and password required'}), 400
 
+        # Rate limiting
         ip = request.remote_addr
         if rate_limit_exceeded(ip, 'guardian_login', limit=10):
             return jsonify({'success': False, 'error': 'Too many login attempts'}), 429
 
-        guardian = verify_guardian_credentials(phone, password)
-        
+        # Verify credentials (supports email or phone)
+        guardian = verify_guardian_credentials(identifier, password)
+
         if guardian:
             token = create_session(guardian['guardian_id'], request.remote_addr, request.headers.get('User-Agent'))
-            log_activity(guardian['guardian_id'], 'LOGIN', f'Guardian logged in from {request.remote_addr}')
-            
+            log_activity(guardian['guardian_id'], 'LOGIN', f'Logged in from {request.remote_addr}')
+
+            # Get full user details for response
+            with get_db_connection() as conn:
+                cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+                cursor.execute('''
+                    SELECT guardian_id, full_name, email, phone
+                    FROM guardians
+                    WHERE guardian_id = %s
+                ''', (guardian['guardian_id'],))
+                user_details = cursor.fetchone()
+
             return jsonify({
                 'success': True,
                 'guardian_id': guardian['guardian_id'],
                 'full_name': guardian['full_name'],
-                'phone': guardian['phone'],
+                'email': user_details['email'] if user_details else '',
+                'phone': user_details['phone'] if user_details else '',
                 'session_token': token,
                 'message': 'Login successful',
                 'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian["guardian_id"]}&token={token}'
             })
 
-        return jsonify({'success': False, 'error': 'Invalid phone or password'}), 401
+        return jsonify({'success': False, 'error': 'Invalid identifier or password'}), 401
 
     except Exception as e:
         print(f"❌ Login error: {e}")
