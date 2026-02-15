@@ -65,7 +65,7 @@ eventlet.monkey_patch()
 
 # Google OAuth Configuration
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
-
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 # ==================== CLOUDINARY CONFIGURATION ====================
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME', '')
 CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY', '')
@@ -1117,7 +1117,7 @@ def get_google_config():
     return jsonify({
         'success': True,
         'google_client_id': GOOGLE_CLIENT_ID,
-        'firebase_domain': 'guardian-drive.web.app',
+        'firebase_domain': 'guardian-drive-app.web.app',
         'backend_url': 'https://driver-drowsiness-with-alert.onrender.com',
         'websocket_url': 'wss://driver-drowsiness-with-alert.onrender.com',
         'message': 'Google OAuth configuration loaded',
@@ -1129,7 +1129,7 @@ def get_firebase_config():
     """Get Firebase configuration for clients"""
     return jsonify({
         'success': True,
-        'firebase_domain': 'guardian-drive.web.app',
+        'firebase_domain': 'guardian-drive-app.web.app',
         'backend_url': 'https://driver-drowsiness-with-alert.onrender.com',
         'websocket_url': 'wss://driver-drowsiness-with-alert.onrender.com',
         'api_base': 'https://driver-drowsiness-with-alert.onrender.com/api',
@@ -3612,7 +3612,7 @@ def startup_tasks():
     print("  • Admin Password: admin123")
     print("  • Guardian Registration: Open to public")
     print("  • Google OAuth: " + ("Enabled" if google_client_id and google_client_id != 'your-google-client-id-here' else "Disabled"))
-    print("  • Firebase Domain: guardian-drive.web.app")
+    print("  • Firebase Domain: guardian-drive-app.web.app")
     print("  • Cloudinary: " + ("Enabled" if CLOUDINARY_ENABLED else "Disabled"))
     
     # Real-time features
