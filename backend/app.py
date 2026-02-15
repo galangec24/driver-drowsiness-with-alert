@@ -1508,6 +1508,189 @@ def login():
         print(f"❌ Login error: {e}")
         traceback.print_exc()
         return jsonify({'success': False, 'error': 'Login failed. Please try again.'}), 500
+    
+@app.route('/api/troubleshoot-google-auth', methods=['GET'])
+def troubleshoot_google_auth():
+    """Comprehensive Google Auth troubleshooting endpoint"""
+    try:
+        import socket
+        import requests
+        from datetime import datetime
+        
+        # Get request information
+        request_info = {
+            'remote_addr': request.remote_addr,
+            'origin': request.headers.get('Origin', 'Not provided'),
+            'user_agent': request.headers.get('User-Agent', 'Not provided')[:100]
+        }
+        
+        results = {
+            'success': True,
+            'timestamp': datetime.now().isoformat(),
+            'request_info': request_info,
+            'google_client_id': {
+                'value': os.environ.get('GOOGLE_CLIENT_ID', 'NOT SET'),
+                'length': len(os.environ.get('GOOGLE_CLIENT_ID', '')),
+                'format_valid': 'googleusercontent.com' in os.environ.get('GOOGLE_CLIENT_ID', ''),
+                'starts_with_numbers': os.environ.get('GOOGLE_CLIENT_ID', '').split('-')[0].isdigit() if '-' in os.environ.get('GOOGLE_CLIENT_ID', '') else False,
+                'exact_value': os.environ.get('GOOGLE_CLIENT_ID', 'NOT SET')  # Full value for debugging
+            },
+            'google_client_secret': {
+                'present': bool(os.environ.get('GOOGLE_CLIENT_SECRET')),
+                'length': len(os.environ.get('GOOGLE_CLIENT_SECRET', '')) if os.environ.get('GOOGLE_CLIENT_SECRET') else 0,
+                'preview': os.environ.get('GOOGLE_CLIENT_SECRET', '')[:10] + '...' if os.environ.get('GOOGLE_CLIENT_SECRET') else None
+            },
+            'cloudinary': {
+                'enabled': CLOUDINARY_ENABLED,
+                'cloud_name': CLOUDINARY_CLOUD_NAME if CLOUDINARY_CLOUD_NAME else 'Not configured'
+            },
+            'environment': {
+                'render': bool(os.environ.get('RENDER')),
+                'render_service': os.environ.get('RENDER_SERVICE_NAME', 'unknown'),
+                'database_configured': bool(os.environ.get('DATABASE_URL'))
+            },
+            'dns_resolution': [],
+            'google_apis_reachable': False,
+            'token_verification_test': None,
+            'common_issues': [],
+            'recommendations': []
+        }
+        
+        # Test DNS resolution for Google APIs
+        google_hosts = ['accounts.google.com', 'www.googleapis.com', 'oauth2.googleapis.com']
+        for host in google_hosts:
+            try:
+                ip = socket.gethostbyname(host)
+                results['dns_resolution'].append(f"✅ {host} resolved to {ip}")
+            except Exception as e:
+                results['dns_resolution'].append(f"❌ {host} DNS failed: {str(e)}")
+                results['common_issues'].append(f"DNS issue with {host}")
+        
+        # Test connectivity to Google APIs
+        try:
+            response = requests.get('https://accounts.google.com/.well-known/openid-configuration', timeout=5)
+            if response.status_code == 200:
+                results['google_apis_reachable'] = True
+                results['dns_resolution'].append("✅ Google APIs are reachable")
+            else:
+                results['google_apis_reachable'] = False
+                results['dns_resolution'].append(f"⚠️ Google APIs returned status {response.status_code}")
+        except Exception as e:
+            results['google_apis_reachable'] = False
+            results['dns_resolution'].append(f"❌ Cannot reach Google APIs: {str(e)}")
+        
+        # Test if we can import Google libraries
+        try:
+            from google.oauth2 import id_token
+            from google.auth.transport import requests as google_requests
+            results['token_verification_test'] = "✅ Google libraries are importable"
+            
+            # Test if GOOGLE_CLIENT_ID is valid format
+            client_id = os.environ.get('GOOGLE_CLIENT_ID', '')
+            if client_id and 'googleusercontent.com' in client_id:
+                # Try a mock verification (without actual token) to check library
+                results['token_verification_test'] += " - Libraries ready for verification"
+            else:
+                results['token_verification_test'] += " - Libraries OK, but client ID missing/invalid"
+                
+        except ImportError as e:
+            results['token_verification_test'] = f"❌ Missing Google libraries: {str(e)}"
+            results['common_issues'].append("Google Auth libraries not installed")
+            results['recommendations'].append("Run: pip install google-auth")
+        
+        # Check for common configuration issues
+        client_id = os.environ.get('GOOGLE_CLIENT_ID', '')
+        
+        if not client_id:
+            results['common_issues'].append("❌ GOOGLE_CLIENT_ID environment variable is not set")
+            results['recommendations'].append("Add GOOGLE_CLIENT_ID to your environment variables in Render")
+        elif client_id == 'your-google-client-id-here':
+            results['common_issues'].append("❌ GOOGLE_CLIENT_ID is still set to placeholder value")
+            results['recommendations'].append("Replace with your actual Google Client ID from Google Cloud Console")
+        elif len(client_id) < 50:
+            results['common_issues'].append(f"⚠️ GOOGLE_CLIENT_ID seems too short ({len(client_id)} chars) - may be truncated")
+            results['recommendations'].append("Check if the full client ID is copied correctly (should be ~72 chars)")
+        elif not client_id.endswith('.apps.googleusercontent.com'):
+            results['common_issues'].append("❌ GOOGLE_CLIENT_ID has incorrect format")
+            results['recommendations'].append("Client ID should end with .apps.googleusercontent.com")
+        else:
+            results['google_client_id']['valid_format'] = True
+            results['google_client_id']['preview'] = client_id[:30] + '...' + client_id[-20:]
+        
+        # Check client secret
+        if not os.environ.get('GOOGLE_CLIENT_SECRET'):
+            results['common_issues'].append("⚠️ GOOGLE_CLIENT_SECRET is not set (may be needed for some operations)")
+            results['recommendations'].append("Add GOOGLE_CLIENT_SECRET to environment variables in Render")
+        elif len(os.environ.get('GOOGLE_CLIENT_SECRET', '')) < 20:
+            results['common_issues'].append("⚠️ GOOGLE_CLIENT_SECRET seems too short - may be invalid")
+            results['recommendations'].append("Verify your client secret in Google Cloud Console")
+        
+        # Check if the exact client ID from your screenshot is being used
+        expected_client_id = "164210458784-d9025r5nmdcjoo7enpa64b5aphdljras.apps.googleusercontent.com"
+        if client_id and client_id != expected_client_id and '164210458784' in client_id:
+            results['common_issues'].append("⚠️ Client ID starts correctly but doesn't match the exact one from your screenshot")
+            results['recommendations'].append(f"Update to exact client ID: {expected_client_id}")
+        
+        # Check CORS/origins
+        results['allowed_origins'] = ALLOWED_ORIGINS
+        
+        # Check if the request origin is allowed
+        request_origin = request.headers.get('Origin')
+        if request_origin:
+            if request_origin in ALLOWED_ORIGINS:
+                results['cors_status'] = f"✅ Origin '{request_origin}' is allowed"
+            else:
+                results['cors_status'] = f"⚠️ Origin '{request_origin}' is NOT in allowed origins"
+                results['recommendations'].append(f"Add '{request_origin}' to ALLOWED_ORIGINS if this is your frontend")
+        else:
+            results['cors_status'] = "No Origin header in request"
+        
+        # Test database connection (basic)
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT COUNT(*) FROM guardians')
+                count_result = cursor.fetchone()
+                guardian_count = count_result[0] if count_result else 0
+                results['database'] = {
+                    'connected': True,
+                    'guardian_count': guardian_count
+                }
+        except Exception as db_error:
+            results['database'] = {
+                'connected': False,
+                'error': str(db_error)
+            }
+            results['common_issues'].append(f"Database connection issue: {str(db_error)}")
+        
+        # Provide overall assessment
+        if len(results['common_issues']) == 0:
+            results['assessment'] = "✅ All checks passed! Google Auth should work properly."
+            results['status_emoji'] = "✅"
+        else:
+            results['assessment'] = f"⚠️ Found {len(results['common_issues'])} potential issue(s):"
+            for issue in results['common_issues']:
+                results['assessment'] += f"\n   • {issue}"
+            results['status_emoji'] = "⚠️"
+        
+        # Add specific recommendation based on your screenshot
+        if '164210458784' in client_id and 'joo' not in client_id:
+            results['specific_fix'] = {
+                'issue': "Missing 'o' in client ID",
+                'current': client_id,
+                'correct': "164210458784-d9025r5nmdcjoo7enpa64b5aphdljras.apps.googleusercontent.com",
+                'action': "Update your GOOGLE_CLIENT_ID to include the missing 'o' (should be 'joo' not 'jo')"
+            }
+        
+        return jsonify(results)
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc(),
+            'timestamp': datetime.now().isoformat()
+        }), 500
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
