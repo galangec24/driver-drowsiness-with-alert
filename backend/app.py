@@ -1,13 +1,9 @@
-﻿"""
-CAPSTONE PROJECT - DRIVER ALERT SYSTEM
-Firebase Hosting + Render Backend - Pure API Server
-Updated for Firebase Hosting Deployment
-"""
-
-import os
+﻿import os
 from pathlib import Path
 import sys
-
+import dns.resolver
+dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
+dns.resolver.default_resolver.nameservers = ['8.8.8.8', '8.8.4.4'] 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 project_root = Path(__file__).parent.parent
@@ -149,14 +145,29 @@ CORS(app,
      max_age=3600)
 
 # Initialize SocketIO for real-time alerts with Firebase CORS
-socketio = SocketIO(app, 
-                   cors_allowed_origins=ALLOWED_ORIGINS,
-                   async_mode='eventlet',
-                   ping_timeout=60,
-                   ping_interval=25,
-                   async_handlers=True,
-                   logger=False,
-                   engineio_logger=False)
+socketio = SocketIO(
+    app,
+    cors_allowed_origins=ALLOWED_ORIGINS,
+    async_mode='eventlet',
+    ping_timeout=60,           
+    ping_interval=25,         
+    max_http_buffer_size=1e6,  
+
+    transports=['polling', 'websocket'],  
+    allow_upgrades=True,
+    
+    # Connection management
+    manage_session=False,  
+    cookie=None,              
+    always_connect=True,      
+    
+    # Logging - enable for debugging (disable in production)
+    logger=True,
+    engineio_logger=True,
+    
+    # Path configuration (important for Render)
+    path='socket.io'
+)
 
 # ==================== SECURITY CONFIGURATION ====================
 # Generate bcrypt hash for admin password (admin123)
@@ -1019,51 +1030,104 @@ def add_security_headers(response):
 # ==================== SOCKET.IO HANDLERS ====================
 @socketio.on('connect')
 def handle_connect():
-    """Handle client connection"""
+    """Handle client connection with better error handling"""
     client_id = request.sid
     connected_clients[client_id] = {
         'connected_at': datetime.now(),
         'ip': request.remote_addr,
         'type': None,
         'guardian_id': None,
-        'authenticated': False
+        'authenticated': False,
+        'last_ping': datetime.now(),
+        'user_agent': request.headers.get('User-Agent', 'Unknown')
     }
-    print(f"✅ WebSocket client connected: {client_id} from {request.remote_addr}")
-    emit('connected', {'status': 'connected', 'client_id': client_id})
+    
+    print(f"✅ WebSocket client connected: {client_id}")
+    print(f"   IP: {request.remote_addr}")
+    print(f"   Transport: {request.environ.get('HTTP_UPGRADE', 'polling')}")
+    
+    # Send immediate acknowledgment with connection details
+    emit('connected', {
+        'status': 'connected',
+        'client_id': client_id,
+        'timestamp': datetime.now().isoformat(),
+        'transport': 'websocket' if request.environ.get('HTTP_UPGRADE') == 'websocket' else 'polling'
+    })
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    """Handle client disconnection"""
+    """Handle client disconnection with cleanup"""
     client_id = request.sid
     if client_id in connected_clients:
-        print(f"⚠️  WebSocket client disconnected: {client_id}")
+        guardian_info = connected_clients[client_id]
+        if guardian_info.get('guardian_id'):
+            print(f"Guardian {guardian_info['guardian_id']} disconnected")
+        
+        # Log disconnection
+        print(f"⚠️ WebSocket client disconnected: {client_id}")
+        print(f"   Connected for: {datetime.now() - guardian_info['connected_at']}")
+        print(f"   Reason: {request.args.get('reason', 'unknown')}")
+        
+        # Clean up
         del connected_clients[client_id]
 
 @socketio.on('guardian_authenticate')
 def handle_guardian_auth(data):
-    """Guardian authentication via WebSocket"""
+    """Guardian authentication via WebSocket - FIXED"""
     client_id = request.sid
     guardian_id = data.get('guardian_id')
     token = data.get('token')
     
-    if guardian_id and token and validate_session(guardian_id, token):
+    print(f"🔐 WebSocket auth attempt for guardian {guardian_id}")
+    
+    if not guardian_id or not token:
+        print(f"❌ Missing credentials from client {client_id}")
+        emit('auth_failed', {'error': 'Missing guardian_id or token'})
+        return
+    
+    # Validate session
+    if validate_session(guardian_id, token):
+        # Check for existing connection and disconnect it
+        for existing_id, client_info in list(connected_clients.items()):
+            if (client_info.get('guardian_id') == guardian_id and 
+                client_info.get('authenticated') and 
+                existing_id != client_id):
+                print(f"   Disconnecting old connection: {existing_id}")
+                socketio.disconnect(existing_id, silent=True)
+                if existing_id in connected_clients:
+                    del connected_clients[existing_id]
+        
+        # Update client info
         connected_clients[client_id]['type'] = 'guardian'
         connected_clients[client_id]['guardian_id'] = guardian_id
         connected_clients[client_id]['authenticated'] = True
+        connected_clients[client_id]['auth_time'] = datetime.now()
+        
+        # Join guardian room for targeted messages
+        socketio.room(f"guardian_{guardian_id}")
         
         guardian = get_guardian_by_id(guardian_id)
         if guardian:
-            print(f"✅ Guardian authenticated via WebSocket: {guardian['full_name']} ({guardian_id})")
+            print(f"✅ Guardian authenticated: {guardian['full_name']}")
             emit('auth_confirmed', {
+                'success': True,
                 'guardian_id': guardian_id,
                 'full_name': guardian['full_name'],
-                'phone': guardian['phone']
+                'phone': guardian.get('phone', ''),
+                'timestamp': datetime.now().isoformat()
             })
             return
     
-    print(f"❌ WebSocket authentication failed for client: {client_id}")
+    print(f"❌ WebSocket auth failed for client: {client_id}")
     emit('auth_failed', {'error': 'Authentication failed'})
-    socketio.disconnect(client_id)
+ 
+@socketio.on('ping')
+def handle_ping():
+    """Handle ping from client to keep connection alive"""
+    client_id = request.sid
+    if client_id in connected_clients:
+        connected_clients[client_id]['last_ping'] = datetime.now()
+        emit('pong', {'timestamp': datetime.now().isoformat()})
 
 # ==================== MAIN ROUTES ====================
 @app.route('/')
@@ -1109,6 +1173,21 @@ def health_check():
             'status': 'running_with_errors',
             'error': str(e)
         }), 200
+
+# =================== WEBSOCKET CHECKER ======================
+@app.route('/api/websocket-status', methods=['GET'])
+def websocket_status():
+    """Check WebSocket server status"""
+    return jsonify({
+        'success': True,
+        'websocket_enabled': True,
+        'connected_clients': len(connected_clients),
+        'authenticated_clients': sum(1 for c in connected_clients.values() if c.get('authenticated')),
+        'transports': ['polling', 'websocket'],
+        'socketio_path': '/socket.io/',
+        'websocket_url': 'wss://driver-drowsiness-with-alert.onrender.com/socket.io/',
+        'timestamp': datetime.now().isoformat()
+    })
 
 # ==================== GOOGLE AUTH CONFIG ====================
 @app.route('/api/config/google', methods=['GET'])
@@ -3873,18 +3952,148 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     host = '0.0.0.0'
     
-    print(f"🚀 Starting server on {host}:{port}")
-    print(f"🌐 WebSocket endpoint: ws://{host}:{port}")
-    print(f"📡 Alert endpoint: http://{host}:{port}/api/send-alert")
+    print(f"\n{'='*70}")
+    print("🚀 STARTING DRIVER ALERT SYSTEM BACKEND")
+    print(f"{'='*70}")
+    print(f"📡 REST API: https://driver-drowsiness-with-alert.onrender.com/api/")
+    print(f"🔌 WebSocket: wss://driver-drowsiness-with-alert.onrender.com/socket.io/")
     print(f"🔥 Firebase Frontend: https://guardian-drive-app.web.app")
+    print(f"🐍 Python Version: 3.10.11")
+    print(f"📦 Flask Version: 2.3.3")
+    print(f"📦 Flask-SocketIO: 5.3.4")
+    print(f"📦 Eventlet: 0.33.3")
+    print(f"📦 Gunicorn: 21.2.0")
+    print(f"📦 dnspython: 2.3.0 (Python 3.10 compatible)")
+    print(f"🌐 Host: {host}")
+    print(f"🔌 Port: {port}")
     print(f"🔐 Google OAuth: {'Enabled' if GOOGLE_CLIENT_ID else 'Disabled'}")
     print(f"☁️  Cloudinary: {'Enabled' if CLOUDINARY_ENABLED else 'Disabled'}")
+    print(f"📊 Database: PostgreSQL")
+    print(f"⚡ Async Mode: eventlet")
+    print(f"📡 WebSocket Transports: polling → websocket")
+    print(f"📡 WebSocket Path: /socket.io/")
+    print(f"🔌 Allowed Origins: {len(ALLOWED_ORIGINS)} domains")
+    print(f"{'='*70}\n")
     
-    # Run the application
-    socketio.run(app, 
-                host=host, 
-                port=port, 
+    # Force DNS resolution for Render - FIX for Python 3.10
+    try:
+        import dns.resolver
+        dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
+        dns.resolver.default_resolver.nameservers = ['8.8.8.8', '8.8.4.4']  # Google DNS
+        print("✅ DNS resolver configured for Render")
+    except Exception as e:
+        print(f"⚠️ DNS resolver configuration warning: {e}")
+    
+    # IMPORTANT: Use eventlet WSGI server for WebSocket support
+    try:
+        import eventlet
+        import eventlet.wsgi
+        from eventlet import listen
+        
+        print("✅ Eventlet imported successfully")
+        print(f"   Eventlet version: {eventlet.__version__}")
+        
+        # Monkey patch for Python 3.10 compatibility
+        eventlet.monkey_patch(
+            socket=True,
+            select=True,
+            time=True,
+            os=True,
+            thread=True,
+            subprocess=True
+        )
+        print("✅ Eventlet monkey patching applied")
+        
+        # Create socket with proper configuration
+        listen_socket = eventlet.listen((host, port))
+        
+        # Set socket options for better performance
+        listen_socket.setsockopt(eventlet.socket.SOL_SOCKET, eventlet.socket.SO_REUSEADDR, 1)
+        
+        # Configure connection pooling for Python 3.10
+        eventlet.wsgi.MAX_HEADER_LINE = 16384
+        eventlet.wsgi.MAX_REQUEST_LINE = 32768
+        eventlet.wsgi.MAX_READ_BYTES = 65536
+        eventlet.wsgi.DEFAULT_MAX_SIMULTANEOUS_REQUESTS = 1000
+        
+        print(f"✅ Server socket created on {host}:{port}")
+        print(f"✅ WebSocket support enabled with eventlet")
+        print(f"✅ Ready to accept connections...\n")
+        
+        # Add connection tracking
+        def connection_count_middleware(environ, start_response):
+            """Middleware to track connections"""
+            client_id = environ.get('REMOTE_ADDR', 'unknown')
+            print(f"📡 New connection from {client_id} at {datetime.now().strftime('%H:%M:%S')}")
+            return app(environ, start_response)
+        
+        # Start the server with proper configuration
+        eventlet.wsgi.server(
+            listen_socket,
+            connection_count_middleware,  # Wrap app with middleware
+            log_output=True,               # Enable logging
+            keepalive=True,                 # Enable keepalive
+            max_size=8096,                   # Maximum number of concurrent connections
+            protocol=eventlet.wsgi.HttpProtocol,
+            timeout=60,                      # Socket timeout
+            max_http_version="HTTP/1.1",
+            debug=False,                      # Disable debug mode in production
+            log_format='%(client_ip)s - "%(request_line)s" %(status_code)s %(body_length)s'
+        )
+        
+    except ImportError as e:
+        print(f"❌ Error importing eventlet: {e}")
+        print("⚠️ Falling back to gunicorn with eventlet worker")
+        
+        # Instructions for gunicorn fallback
+        print("\n📋 To run with gunicorn instead, use:")
+        print("   gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT server:app")
+        print("   OR")
+        print("   gunicorn --worker-class eventlet -w 1 -k eventlet --bind 0.0.0.0:$PORT server:app")
+        
+        # Try socketio.run as last resort
+        print("\n⚠️ Attempting fallback with socketio.run()")
+        print(f"   Starting server on {host}:{port}...\n")
+        
+        try:
+            socketio.run(
+                app,
+                host=host,
+                port=port,
                 debug=False,
                 use_reloader=False,
-                log_output=False,
-                allow_unsafe_werkzeug=False)
+                log_output=True,
+                allow_unsafe_werkzeug=False
+            )
+        except Exception as fallback_error:
+            print(f"❌ Fallback also failed: {fallback_error}")
+            print("\n💡 SUGGESTION: Try running with gunicorn:")
+            print("   gunicorn --worker-class eventlet -w 1 -k eventlet --bind 0.0.0.0:$PORT server:app")
+            sys.exit(1)
+        
+    except Exception as e:
+        print(f"❌ Fatal error starting server: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Try socketio.run as last resort
+        print("\n⚠️ Attempting emergency fallback with socketio.run()")
+        print(f"   Starting server on {host}:{port}...\n")
+        
+        try:
+            socketio.run(
+                app,
+                host=host,
+                port=port,
+                debug=False,
+                use_reloader=False,
+                log_output=True
+            )
+        except Exception as emergency_error:
+            print(f"❌ Emergency fallback also failed: {emergency_error}")
+            print("\n💡 CRITICAL: Check your deployment configuration on Render")
+            print("   Make sure the following environment variables are set:")
+            print("   - PYTHON_VERSION=3.10.11")
+            print("   - PORT=5000")
+            print("   - WEBSOCKET_ENABLED=true")
+            sys.exit(1)
