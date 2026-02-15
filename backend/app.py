@@ -1140,7 +1140,7 @@ def get_firebase_config():
 # ==================== GOOGLE LOGIN ENDPOINT ====================
 @app.route('/api/google-login', methods=['POST'])
 def google_login():
-    """Handle Google OAuth login"""
+    """Handle Google OAuth login - FIXED VERSION"""
     try:
         data = request.json
         google_token = data.get('token')
@@ -1152,16 +1152,28 @@ def google_login():
             }), 400
         
         print(f"🔐 [GOOGLE LOGIN] Received Google token")
+        print(f"   Token preview: {google_token[:30]}...")
         
         email = None
         name = None
         google_id = None
         
+        # Check if GOOGLE_CLIENT_ID is set
+        if not GOOGLE_CLIENT_ID:
+            print(f"❌ [GOOGLE LOGIN] GOOGLE_CLIENT_ID not set in environment")
+            return jsonify({
+                'success': False,
+                'error': 'Google authentication not configured on server'
+            }), 500
+        
         try:
             # Try to verify the Google token
+            from google.oauth2 import id_token
+            from google.auth.transport import requests
+            
             idinfo = id_token.verify_oauth2_token(
                 google_token, 
-                google_requests.Request(),
+                requests.Request(),
                 GOOGLE_CLIENT_ID
             )
             
@@ -1170,12 +1182,16 @@ def google_login():
             google_id = idinfo.get('sub')
             
             print(f"✅ Google token verified: {email}")
+            print(f"   Name: {name}")
+            print(f"   Google ID: {google_id}")
             
-        except Exception as verify_error:
-            print(f"❌ Google token verification failed: {verify_error}")
+        except ValueError as e:
+            # Invalid token
+            print(f"❌ Google token verification failed: {e}")
             
-            # Try to decode without verification
+            # Try to decode without verification as fallback
             try:
+                import jwt
                 unverified_payload = jwt.decode(
                     google_token, 
                     options={"verify_signature": False}
@@ -1191,6 +1207,12 @@ def google_login():
                     'success': False,
                     'error': 'Invalid Google token'
                 }), 401
+        except Exception as verify_error:
+            print(f"❌ Unexpected error during token verification: {verify_error}")
+            return jsonify({
+                'success': False,
+                'error': f'Token verification failed: {str(verify_error)}'
+            }), 401
         
         if not email:
             return jsonify({
@@ -1198,92 +1220,118 @@ def google_login():
                 'error': 'Email not found in token'
             }), 400
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Check if user exists by Google ID or email
-            cursor.execute('''
-                SELECT guardian_id, full_name, email, phone, auth_provider, google_id
-                FROM guardians 
-                WHERE google_id = %s OR email = %s
-                LIMIT 1
-            ''', (google_id, email))
-            
-            result = cursor.fetchone()
-            
-            if result:
-                # User exists - login
-                if isinstance(result, dict):
-                    guardian_id = result['guardian_id']
-                    full_name = result['full_name']
-                    stored_email = result['email']
-                    stored_google_id = result['google_id']
-                else:
-                    guardian_id, full_name, stored_email, phone, auth_provider, stored_google_id = result
+        # Database operations
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
                 
-                print(f"✅ Existing user found: {full_name} ({stored_email})")
-                
-                # Update Google ID if not set
-                if not stored_google_id and google_id:
-                    cursor.execute('UPDATE guardians SET google_id = %s WHERE guardian_id = %s', 
-                                 (google_id, guardian_id))
-                    conn.commit()
-                    print(f"   Updated Google ID for user: {google_id}")
-                
-                # Update last login
-                cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
-                             (datetime.now(), guardian_id))
-                conn.commit()
-                
-            else:
-                # Create new user with Google data
-                import random
-                phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
-                
+                # Check if user exists by Google ID or email
                 cursor.execute('''
-                    INSERT INTO guardians (
-                        full_name, 
-                        email, 
-                        phone, 
-                        password_hash, 
-                        is_active,
-                        registration_date,
-                        last_login,
-                        google_id,
-                        auth_provider
-                    )
-                    VALUES (%s, %s, %s, %s, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, %s, 'google')
-                    RETURNING guardian_id
-                ''', (name, email, phone, hash_password(secrets.token_urlsafe(16)), google_id))
+                    SELECT guardian_id, full_name, email, phone, auth_provider, google_id
+                    FROM guardians 
+                    WHERE google_id = %s OR email = %s
+                    LIMIT 1
+                ''', (google_id, email))
                 
                 result = cursor.fetchone()
-                guardian_id = result[0] if result else None
-                full_name = name
-                conn.commit()
                 
-                print(f"✅ New Google user created: {full_name} (ID: {guardian_id})")
-        
-        # Create session
-        token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
-        log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google login from {request.remote_addr}')
-        
-        return jsonify({
-            'success': True,
-            'guardian_id': guardian_id,
-            'full_name': full_name,
-            'email': email,
-            'session_token': token,
-            'message': 'Google login successful',
-            'is_google_user': True,
-            'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
-        })
+                if result:
+                    # User exists - login
+                    if isinstance(result, dict):
+                        guardian_id = result['guardian_id']
+                        full_name = result['full_name']
+                        stored_email = result['email']
+                        stored_google_id = result['google_id']
+                    else:
+                        # Handle tuple result
+                        guardian_id, full_name, stored_email, phone, auth_provider, stored_google_id = result
+                    
+                    print(f"✅ Existing user found: {full_name} ({stored_email})")
+                    
+                    # Update Google ID if not set
+                    if not stored_google_id and google_id:
+                        cursor.execute('UPDATE guardians SET google_id = %s WHERE guardian_id = %s', 
+                                     (google_id, guardian_id))
+                        conn.commit()
+                        print(f"   Updated Google ID for user: {google_id}")
+                    
+                    # Update last login
+                    cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
+                                 (datetime.now(), guardian_id))
+                    conn.commit()
+                    
+                else:
+                    # Create new user with Google data
+                    import random
+                    import secrets
+                    
+                    # Generate a unique phone number
+                    phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
+                    
+                    # Generate a random password hash
+                    temp_password = secrets.token_urlsafe(16)
+                    password_hash = hash_password(temp_password)
+                    
+                    cursor.execute('''
+                        INSERT INTO guardians (
+                            full_name, 
+                            email, 
+                            phone, 
+                            password_hash, 
+                            is_active,
+                            registration_date,
+                            last_login,
+                            google_id,
+                            auth_provider
+                        )
+                        VALUES (%s, %s, %s, %s, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, %s, 'google')
+                        RETURNING guardian_id
+                    ''', (name, email, phone, password_hash, google_id))
+                    
+                    result = cursor.fetchone()
+                    if isinstance(result, dict):
+                        guardian_id = result['guardian_id']
+                    else:
+                        guardian_id = result[0] if result else None
+                    
+                    full_name = name
+                    conn.commit()
+                    
+                    print(f"✅ New Google user created: {full_name} (ID: {guardian_id})")
+                
+                # Create session
+                token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
+                
+                # Log activity
+                log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google login from {request.remote_addr}')
+                
+                return jsonify({
+                    'success': True,
+                    'guardian_id': guardian_id,
+                    'full_name': full_name,
+                    'email': email,
+                    'session_token': token,
+                    'message': 'Google login successful',
+                    'is_google_user': True,
+                    'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
+                })
+                
+        except Exception as db_error:
+            print(f"❌ Database error in google_login: {db_error}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({
+                'success': False,
+                'error': f'Database error: {str(db_error)}'
+            }), 500
         
     except Exception as e:
         print(f"❌ Google login error: {e}")
+        import traceback
         traceback.print_exc()
         return jsonify({
             'success': False,
-            'error': 'Google login failed. Please try again.'
+            'error': f'Google login failed: {str(e)}'
         }), 500
 
 @app.route('/api/google-login-with-email', methods=['POST'])
