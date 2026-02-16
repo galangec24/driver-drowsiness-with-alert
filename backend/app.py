@@ -2212,6 +2212,75 @@ def guardian_dashboard():
             'error': str(e)
         }), 500
 
+# ==================== GET GUARDIAN DETAILS ENDPOINT ====================
+@app.route('/api/guardian/<int:guardian_id>', methods=['GET'])
+def get_guardian_details(guardian_id):
+    """Get guardian information by ID"""
+    try:
+        token = request.args.get('token')
+        
+        if not token:
+            return jsonify({
+                'success': False,
+                'error': 'Authentication token required'
+            }), 401
+        
+        # Validate session
+        if not validate_session(guardian_id, token):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid or expired session'
+            }), 401
+        
+        # Get guardian from database
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT guardian_id, full_name, phone, email, address, 
+                       registration_date, last_login, auth_provider, is_active
+                FROM guardians 
+                WHERE guardian_id = %s
+            ''', (guardian_id,))
+            
+            result = cursor.fetchone()
+            
+            if not result:
+                return jsonify({
+                    'success': False,
+                    'error': 'Guardian not found'
+                }), 404
+            
+            # Convert to dictionary
+            if isinstance(result, dict):
+                guardian = result
+            else:
+                # Handle tuple result
+                guardian = {
+                    'guardian_id': result[0],
+                    'full_name': result[1],
+                    'phone': result[2],
+                    'email': result[3],
+                    'address': result[4],
+                    'registration_date': result[5].isoformat() if result[5] else None,
+                    'last_login': result[6].isoformat() if result[6] else None,
+                    'auth_provider': result[7],
+                    'is_active': result[8]
+                }
+            
+            return jsonify({
+                'success': True,
+                'guardian': guardian
+            })
+            
+    except Exception as e:
+        print(f"❌ Error in get_guardian_details: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 # ==================== DRIVER REGISTRATION WITH CLOUDINARY ====================
 @app.route('/api/register-driver', methods=['POST'])
 def register_driver():
