@@ -2215,7 +2215,6 @@ def guardian_dashboard():
 # ==================== GET GUARDIAN DETAILS ENDPOINT ====================
 @app.route('/api/guardian/<int:guardian_id>', methods=['GET'])
 def get_guardian_details(guardian_id):
-    """Get guardian information by ID"""
     try:
         token = request.args.get('token')
         
@@ -2232,7 +2231,6 @@ def get_guardian_details(guardian_id):
                 'error': 'Invalid or expired session'
             }), 401
         
-        # Get guardian from database
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -2289,15 +2287,12 @@ def register_driver():
 
     try:
         data = request.json
-        print(f"\n🚗 [DRIVER REGISTRATION] ===== STARTING DRIVER REGISTRATION =====")
         print(f"   Received data keys: {list(data.keys())}")
-        
-        # Extract required fields - MATCHING FRONTEND FIELD NAMES EXACTLY
         driver_name = data.get('driver_name')
         driver_phone = data.get('driver_phone')
         guardian_id = data.get('guardian_id')
         token = data.get('token')
-        face_images = data.get('face_images', [])  # Array of base64 images
+        face_images = data.get('face_images', [])  
         
         print(f"\n🔍 [DRIVER REGISTRATION] Extracted data:")
         print(f"   Driver Name: {driver_name}")
@@ -2488,18 +2483,17 @@ def register_driver():
                             'upload_method': 'cloudinary'
                         })
                         
-                        # Small delay between uploads
                         if i < len(face_images):
                             time.sleep(1)
                         
-                    except cloudinary.exceptions.Error as cloudinary_error:  # FIXED: cloudinary.exceptions.Error
+                    except cloudinary.exceptions.Error as cloudinary_error:  
                         error_msg = f"Cloudinary API error for image {i} ({capture_angle}): {str(cloudinary_error)}"
-                        print(f"❌ [DRIVER REGISTRATION] {error_msg}")
+                        print(f"Cloudinary is not available: {error_msg}")
                         upload_errors.append(error_msg)
                         
                     except Exception as upload_error:
                         error_msg = f"Error uploading image {i} ({capture_angle}): {str(upload_error)}"
-                        print(f"❌ [DRIVER REGISTRATION] {error_msg}")
+                        print(f" DRIVER REGISTRATION not successful: {error_msg}")
                         print(f"   Error type: {type(upload_error).__name__}")
                         upload_errors.append(error_msg)
                         continue
@@ -2735,7 +2729,6 @@ def test_driver_registration():
 
 @app.route('/api/driver/<driver_id>/face-images', methods=['GET'])
 def get_driver_face_images(driver_id):
-    """Get face images for a specific driver from Cloudinary"""
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -2876,6 +2869,92 @@ def get_driver_details(driver_id):
             
     except Exception as e:
         print(f"❌ Error in get_driver_details: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# ==================== Driver Monitoring (WEBRTc) ==================
+
+@app.route('/api/driver/<driver_id>/guardian', methods=['GET'])
+def get_driver_guardian(driver_id):
+    """Get guardian ID for a driver (for WebRTC connection)"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT guardian_id, name 
+                FROM drivers 
+                WHERE driver_id = %s AND is_active = TRUE
+            ''', (driver_id,))
+            
+            result = cursor.fetchone()
+            
+            if not result:
+                return jsonify({
+                    'success': False,
+                    'error': 'Driver not found'
+                }), 404
+            
+            if isinstance(result, dict):
+                guardian_id = result['guardian_id']
+                driver_name = result['name']
+            else:
+                guardian_id = result[0]
+                driver_name = result[1]
+            
+            return jsonify({
+                'success': True,
+                'guardian_id': guardian_id,
+                'driver_name': driver_name,
+                'driver_id': driver_id
+            })
+            
+    except Exception as e:
+        print(f"❌ Error getting driver guardian: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/driver/<driver_id>/verify', methods=['POST'])
+def verify_driver_access(driver_id):
+    """Verify driver has access to stream"""
+    try:
+        data = request.json
+        provided_guardian_id = data.get('guardian_id')
+        
+        if not provided_guardian_id:
+            return jsonify({
+                'success': False,
+                'error': 'Guardian ID required'
+            }), 400
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT guardian_id, name 
+                FROM drivers 
+                WHERE driver_id = %s AND guardian_id = %s AND is_active = TRUE
+            ''', (driver_id, provided_guardian_id))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                return jsonify({
+                    'success': True,
+                    'verified': True,
+                    'message': 'Driver verified'
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'verified': False,
+                    'error': 'Driver not associated with this guardian'
+                }), 403
+                
+    except Exception as e:
+        print(f"❌ Error verifying driver: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
