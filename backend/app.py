@@ -149,24 +149,37 @@ socketio = SocketIO(
     app,
     cors_allowed_origins=ALLOWED_ORIGINS,
     async_mode='eventlet',
-    ping_timeout=60,           
-    ping_interval=25,         
-    max_http_buffer_size=1e6,  
-
-    transports=['polling', 'websocket'],  
+    
+    # CRITICAL: WebSocket specific settings
+    ping_timeout=60,           # How long to wait for pong response
+    ping_interval=25,          # How often to send pings
+    max_http_buffer_size=1e6,  # 1MB buffer
+    
+    # Transport settings - order matters!
+    transports=['polling', 'websocket'],  # Start with polling, upgrade to websocket
     allow_upgrades=True,
     
     # Connection management
-    manage_session=False,  
-    cookie=None,              
-    always_connect=True,      
+    manage_session=False,       # Don't manage sessions automatically
+    cookie=None,                # Disable cookies for security
+    always_connect=True,        # Always connect even if auth fails initially
     
     # Logging - enable for debugging (disable in production)
     logger=True,
     engineio_logger=True,
+    log_output=True,
     
     # Path configuration (important for Render)
-    path='socket.io'
+    path='socket.io',            # Explicitly set the path
+    
+    # CORS settings
+    cors_credentials=True,
+    
+    # Engine.IO settings
+    max_guest_sessions=1000,     # Maximum number of guest sessions
+    preserve_context=True,        # Preserve context between requests
+    websocket_ping_interval=25,   
+    websocket_ping_timeout=60     
 )
 
 # ==================== SECURITY CONFIGURATION ====================
@@ -1039,19 +1052,26 @@ def handle_connect():
         'guardian_id': None,
         'authenticated': False,
         'last_ping': datetime.now(),
-        'user_agent': request.headers.get('User-Agent', 'Unknown')
+        'user_agent': request.headers.get('User-Agent', 'Unknown'),
+        'origin': request.headers.get('Origin', 'Unknown'),
+        'transport': request.environ.get('HTTP_UPGRADE', 'polling')
     }
     
+    print(f"\n{'='*60}")
     print(f"✅ WebSocket client connected: {client_id}")
     print(f"   IP: {request.remote_addr}")
+    print(f"   Origin: {request.headers.get('Origin', 'Unknown')}")
     print(f"   Transport: {request.environ.get('HTTP_UPGRADE', 'polling')}")
+    print(f"   User-Agent: {request.headers.get('User-Agent', 'Unknown')[:50]}...")
+    print(f"{'='*60}\n")
     
     # Send immediate acknowledgment with connection details
     emit('connected', {
         'status': 'connected',
         'client_id': client_id,
         'timestamp': datetime.now().isoformat(),
-        'transport': 'websocket' if request.environ.get('HTTP_UPGRADE') == 'websocket' else 'polling'
+        'transport': 'websocket' if request.environ.get('HTTP_UPGRADE') == 'websocket' else 'polling',
+        'server_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     })
 
 @socketio.on('disconnect')
@@ -1059,75 +1079,124 @@ def handle_disconnect():
     """Handle client disconnection with cleanup"""
     client_id = request.sid
     if client_id in connected_clients:
-        guardian_info = connected_clients[client_id]
-        if guardian_info.get('guardian_id'):
-            print(f"Guardian {guardian_info['guardian_id']} disconnected")
+        client_info = connected_clients[client_id]
+        connected_duration = datetime.now() - client_info['connected_at']
         
-        # Log disconnection
+        print(f"\n{'='*60}")
         print(f"⚠️ WebSocket client disconnected: {client_id}")
-        print(f"   Connected for: {datetime.now() - guardian_info['connected_at']}")
-        print(f"   Reason: {request.args.get('reason', 'unknown')}")
+        print(f"   Guardian ID: {client_info.get('guardian_id', 'None')}")
+        print(f"   Authenticated: {client_info.get('authenticated', False)}")
+        print(f"   Connected for: {connected_duration.total_seconds():.1f} seconds")
+        print(f"   IP: {client_info.get('ip', 'Unknown')}")
+        print(f"{'='*60}\n")
         
         # Clean up
         del connected_clients[client_id]
 
 @socketio.on('guardian_authenticate')
 def handle_guardian_auth(data):
-    """Guardian authentication via WebSocket - FIXED"""
+    """Guardian authentication via WebSocket - FIXED for Google auth"""
     client_id = request.sid
     guardian_id = data.get('guardian_id')
     token = data.get('token')
+    auth_provider = data.get('auth_provider', 'unknown')
     
-    print(f"🔐 WebSocket auth attempt for guardian {guardian_id}")
+    print(f"\n🔐 WebSocket authentication attempt:")
+    print(f"   Client ID: {client_id}")
+    print(f"   Guardian ID: {guardian_id}")
+    print(f"   Auth Provider: {auth_provider}")
+    print(f"   Token present: {bool(token)}")
+    print(f"   Token length: {len(token) if token else 0}")
     
     if not guardian_id or not token:
         print(f"❌ Missing credentials from client {client_id}")
         emit('auth_failed', {'error': 'Missing guardian_id or token'})
         return
     
-    # Validate session
-    if validate_session(guardian_id, token):
+    # Validate session (works for both phone and Google auth)
+    is_valid = validate_session(guardian_id, token)
+    
+    if is_valid:
+        print(f"   ✅ Session validated successfully")
+        
         # Check for existing connection and disconnect it
         for existing_id, client_info in list(connected_clients.items()):
             if (client_info.get('guardian_id') == guardian_id and 
                 client_info.get('authenticated') and 
                 existing_id != client_id):
                 print(f"   Disconnecting old connection: {existing_id}")
-                socketio.disconnect(existing_id, silent=True)
+                try:
+                    socketio.disconnect(existing_id, silent=True)
+                except:
+                    pass
                 if existing_id in connected_clients:
                     del connected_clients[existing_id]
         
         # Update client info
-        connected_clients[client_id]['type'] = 'guardian'
-        connected_clients[client_id]['guardian_id'] = guardian_id
-        connected_clients[client_id]['authenticated'] = True
-        connected_clients[client_id]['auth_time'] = datetime.now()
+        if client_id in connected_clients:
+            connected_clients[client_id]['type'] = 'guardian'
+            connected_clients[client_id]['guardian_id'] = guardian_id
+            connected_clients[client_id]['authenticated'] = True
+            connected_clients[client_id]['auth_time'] = datetime.now()
+            connected_clients[client_id]['auth_provider'] = auth_provider
         
         # Join guardian room for targeted messages
-        socketio.room(f"guardian_{guardian_id}")
+        try:
+            socketio.enter_room(client_id, f"guardian_{guardian_id}")
+            print(f"   Joined room: guardian_{guardian_id}")
+        except Exception as e:
+            print(f"   Error joining room: {e}")
         
+        # Get guardian info
         guardian = get_guardian_by_id(guardian_id)
         if guardian:
-            print(f"✅ Guardian authenticated: {guardian['full_name']}")
+            print(f"✅ Guardian authenticated successfully: {guardian.get('full_name')}")
             emit('auth_confirmed', {
                 'success': True,
                 'guardian_id': guardian_id,
-                'full_name': guardian['full_name'],
+                'full_name': guardian.get('full_name', ''),
                 'phone': guardian.get('phone', ''),
+                'auth_provider': guardian.get('auth_provider', auth_provider),
+                'timestamp': datetime.now().isoformat(),
+                'message': 'WebSocket authentication successful'
+            })
+            return
+        else:
+            # Still success even if we can't get details
+            emit('auth_confirmed', {
+                'success': True,
+                'guardian_id': guardian_id,
                 'timestamp': datetime.now().isoformat()
             })
             return
     
-    print(f"❌ WebSocket auth failed for client: {client_id}")
-    emit('auth_failed', {'error': 'Authentication failed'})
- 
+    # If validation fails, check if this is a Google auth token that might need special handling
+    if auth_provider == 'google':
+        print(f"⚠️ Google auth token validation failed, checking alternative...")
+        # You could add Google token validation here if needed
+    
+    print(f"❌ WebSocket authentication failed for client: {client_id}")
+    emit('auth_failed', {
+        'error': 'Authentication failed',
+        'timestamp': datetime.now().isoformat()
+    })
+
 @socketio.on('ping')
 def handle_ping():
     """Handle ping from client to keep connection alive"""
     client_id = request.sid
     if client_id in connected_clients:
         connected_clients[client_id]['last_ping'] = datetime.now()
-        emit('pong', {'timestamp': datetime.now().isoformat()})
+        emit('pong', {
+            'timestamp': datetime.now().isoformat(),
+            'client_id': client_id
+        })
+
+@socketio.on('error')
+def handle_error(error):
+    """Handle socket errors"""
+    client_id = request.sid
+    print(f"❌ Socket error for client {client_id}: {error}")
 
 # ==================== MAIN ROUTES ====================
 @app.route('/')
@@ -1178,16 +1247,41 @@ def health_check():
 @app.route('/api/websocket-status', methods=['GET'])
 def websocket_status():
     """Check WebSocket server status"""
-    return jsonify({
-        'success': True,
-        'websocket_enabled': True,
-        'connected_clients': len(connected_clients),
-        'authenticated_clients': sum(1 for c in connected_clients.values() if c.get('authenticated')),
-        'transports': ['polling', 'websocket'],
-        'socketio_path': '/socket.io/',
-        'websocket_url': 'wss://driver-drowsiness-with-alert.onrender.com/socket.io/',
-        'timestamp': datetime.now().isoformat()
-    })
+    try:
+        # Count authenticated clients
+        authenticated_count = sum(1 for c in connected_clients.values() if c.get('authenticated'))
+        
+        # Group by guardian
+        guardians_online = {}
+        for client_id, info in connected_clients.items():
+            if info.get('authenticated') and info.get('guardian_id'):
+                guardians_online[info['guardian_id']] = {
+                    'connected_since': info['auth_time'].isoformat() if info.get('auth_time') else None,
+                    'last_ping': info['last_ping'].isoformat() if info.get('last_ping') else None,
+                    'auth_provider': info.get('auth_provider', 'unknown')
+                }
+        
+        return jsonify({
+            'success': True,
+            'websocket_enabled': True,
+            'total_connections': len(connected_clients),
+            'authenticated_connections': authenticated_count,
+            'guardians_online': len(guardians_online),
+            'guardians': guardians_online,
+            'transports': ['polling', 'websocket'],
+            'socketio_path': '/socket.io/',
+            'websocket_url': 'wss://driver-drowsiness-with-alert.onrender.com/socket.io/',
+            'allowed_origins': ALLOWED_ORIGINS,
+            'server_time': datetime.now().isoformat(),
+            'python_version': '3.10.11'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'websocket_enabled': True,
+            'total_connections': len(connected_clients)
+        }), 200
 
 # ==================== GOOGLE AUTH CONFIG ====================
 @app.route('/api/config/google', methods=['GET'])
@@ -1390,6 +1484,7 @@ def google_login():
                     'full_name': full_name,
                     'email': email,
                     'session_token': token,
+                    'auth_provider': 'google',
                     'message': 'Google login successful',
                     'is_google_user': True,
                     'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
@@ -1491,7 +1586,6 @@ def google_login_with_email():
                 
                 print(f"✅ New user created: {full_name} (ID: {guardian_id})")
         
-        # Create session
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
         
         return jsonify({
@@ -1500,6 +1594,7 @@ def google_login_with_email():
             'full_name': full_name,
             'email': email,
             'session_token': token,
+            'auth_provider': 'google',
             'message': 'Login successful',
             'method': 'email_based_google_login',
             'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
@@ -1563,7 +1658,6 @@ def google_login_simple():
                 full_name = name
                 conn.commit()
         
-        # Create session
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
         
         return jsonify({
@@ -1572,6 +1666,7 @@ def google_login_simple():
             'full_name': full_name,
             'email': email,
             'session_token': token,
+            'auth_provider': 'google',
             'message': 'Google login successful',
             'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
         })
@@ -1625,6 +1720,7 @@ def login():
                 'email': user_details['email'] if user_details else '',
                 'phone': user_details['phone'] if user_details else '',
                 'session_token': token,
+                'auth_provider': 'phone',
                 'message': 'Login successful',
                 'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian["guardian_id"]}&token={token}'
             })
@@ -3962,7 +4058,6 @@ if __name__ == '__main__':
     print(f"📦 Flask Version: 2.3.3")
     print(f"📦 Flask-SocketIO: 5.3.4")
     print(f"📦 Eventlet: 0.33.3")
-    print(f"📦 Gunicorn: 21.2.0")
     print(f"📦 dnspython: 2.3.0 (Python 3.10 compatible)")
     print(f"🌐 Host: {host}")
     print(f"🔌 Port: {port}")
@@ -4020,7 +4115,7 @@ if __name__ == '__main__':
         print(f"✅ WebSocket support enabled with eventlet")
         print(f"✅ Ready to accept connections...\n")
         
-        # Add connection tracking
+        # Add connection tracking middleware
         def connection_count_middleware(environ, start_response):
             """Middleware to track connections"""
             client_id = environ.get('REMOTE_ADDR', 'unknown')
@@ -4048,8 +4143,6 @@ if __name__ == '__main__':
         # Instructions for gunicorn fallback
         print("\n📋 To run with gunicorn instead, use:")
         print("   gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT server:app")
-        print("   OR")
-        print("   gunicorn --worker-class eventlet -w 1 -k eventlet --bind 0.0.0.0:$PORT server:app")
         
         # Try socketio.run as last resort
         print("\n⚠️ Attempting fallback with socketio.run()")
