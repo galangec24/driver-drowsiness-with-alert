@@ -28,8 +28,9 @@ pytest==7.4.0
 pyopenssl==23.3.0
 dnspython==2.3.0
 
-# ===== FACE RECOGNITION (No compilation needed!) =====
-# Use pre-compiled dlib-bin instead of dlib
-dlib-bin==19.24.2
-face-recognition==1.3.0
-opencv-python-headless==4.8.1.78
+# ===== FACE RECOGNITION (ULTRA LIGHT) =====
+# Use TensorFlow Lite runtime (much smaller)
+tflite-runtime==2.14.0
+# DeepFace with minimal dependencies
+deepface==0.0.79
+# Remove face-recognition and dlib completely
