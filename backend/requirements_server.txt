@@ -35,5 +35,6 @@ retina-face==0.0.14
 # DNS Fix for Render (Python 3.10 compatible)
 dnspython==2.3.0  # Downgraded to support Python 3.10
 
-# Remove incompatible packages:
-# aiodns==3.0.0       # REMOVE THIS - optional  
+# ===== NEW: Face Recognition for Driver Identification =====
+face-recognition==1.3.0
+opencv-python-headless==4.8.1.78
