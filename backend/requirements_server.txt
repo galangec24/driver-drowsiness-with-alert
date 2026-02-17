@@ -23,14 +23,15 @@ google-auth-oauthlib==1.1.0
 google-auth-httplib2>=0.1.0
 google-api-python-client==2.108.0
 
-# Testing
+# Testing & Cert
 pytest==7.4.0
 pyopenssl==23.3.0
 dnspython==2.3.0
 
-# ===== FACE RECOGNITION (ULTRA LIGHT) =====
-# Use TensorFlow Lite runtime (much smaller)
-tflite-runtime==2.14.0
-# DeepFace with minimal dependencies
-deepface==0.0.79
-# Remove face-recognition and dlib completely
+# ===== FACE RECOGNITION (NO TENSORFLOW!) =====
+# Using dlib-bin which is pre-compiled for Render
+dlib-bin==19.24.2
+face-recognition==1.3.0
+opencv-python-headless==4.8.1.78
+
+# REMOVED: deepface and tflite-runtime (they cause TensorFlow dependency)

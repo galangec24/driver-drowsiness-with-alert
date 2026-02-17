@@ -41,7 +41,7 @@ import io
 import cv2
 import numpy as np
 from PIL import Image
-from deepface import DeepFace
+import face_recognition
 # Google OAuth imports
 import jwt
 from google.oauth2 import id_token
@@ -189,7 +189,6 @@ socketio = SocketIO(
     websocket_ping_interval=25,   
     websocket_ping_timeout=60     
 )
-_face_model = None
 
 # ==================== SECURITY CONFIGURATION ====================
 # Generate bcrypt hash for admin password (admin123)
@@ -957,7 +956,7 @@ def get_guardian_drivers(guardian_id):
 
 #region Facial Recognition 
 def get_face_embedding_from_base64(image_base64):
-    """Extract face embedding using DeepFace (lightweight)"""
+    """Extract face embedding using face_recognition (no TensorFlow)"""
     try:
         # Remove header if present
         if ',' in image_base64:
@@ -965,23 +964,24 @@ def get_face_embedding_from_base64(image_base64):
         
         # Decode base64 to image
         image_data = base64.b64decode(image_base64)
-        nparr = np.frombuffer(image_data, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        image = Image.open(io.BytesIO(image_data))
+        image = np.array(image.convert('RGB'))
         
-        if img is None:
+        # Detect faces
+        face_locations = face_recognition.face_locations(image)
+        if not face_locations:
+            print("   No face detected in image")
             return None
-            
-        # Convert BGR to RGB
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        # Get embedding using Facenet model (lightweight)
-        embedding = DeepFace.represent(
-            img_path=img_rgb,
-            model_name="Facenet",
-            enforce_detection=False,
-            detector_backend="opencv"  # Use OpenCV for detection (no extra deps)
-        )[0]["embedding"]
+        # Get face encodings (128-dimensional vectors)
+        face_encodings = face_recognition.face_encodings(image, face_locations)
+        if not face_encodings:
+            print("   Could not encode face")
+            return None
         
+        # Return first face encoding as list (for JSON serialization)
+        embedding = face_encodings[0].tolist()
+        print(f"   ✅ Face embedding generated (length: {len(embedding)})")
         return embedding
         
     except Exception as e:
