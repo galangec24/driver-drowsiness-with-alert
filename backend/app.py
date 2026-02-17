@@ -37,7 +37,8 @@ import cloudinary.exceptions
 from cloudinary.utils import cloudinary_url
 
 #Facial Recognition
-import face_recognition
+from deepface import DeepFace
+import cv2
 import numpy as np
 from io import BytesIO
 from PIL import Image
@@ -957,7 +958,7 @@ def get_guardian_drivers(guardian_id):
 
 #region Facial Recognition 
 def get_face_embedding_from_base64(image_base64):
-    """Extract face embedding from base64 image using face_recognition"""
+    """Extract face embedding using DeepFace (no compilation needed)"""
     try:
         # Remove header if present
         if ',' in image_base64:
@@ -965,22 +966,27 @@ def get_face_embedding_from_base64(image_base64):
         
         # Decode base64 to image
         image_data = base64.b64decode(image_base64)
-        image = Image.open(BytesIO(image_data))
-        image = np.array(image.convert('RGB'))
+        nparr = np.frombuffer(image_data, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
-        # Detect faces and get encodings
-        face_locations = face_recognition.face_locations(image)
-        if not face_locations:
+        if img is None:
             return None
+            
+        # Convert BGR to RGB
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
-        face_encodings = face_recognition.face_encodings(image, face_locations)
-        if not face_encodings:
-            return None
+        # Get embedding using Facenet model (lightweight)
+        embedding = DeepFace.represent(
+            img_path=img_rgb,
+            model_name="Facenet",
+            enforce_detection=False,
+            detector_backend="opencv"  # Use OpenCV for detection (no extra deps)
+        )[0]["embedding"]
         
-        # Return first face encoding as list
-        return face_encodings[0].tolist()
+        return embedding
+        
     except Exception as e:
-        print(f"❌ Error extracting embedding: {e}")
+        print(f"❌ Error extracting embedding with DeepFace: {e}")
         return None
 
 #end Region Facial Recognition
@@ -3277,7 +3283,7 @@ def update_guardian():
 
 @app.route('/api/driver/identify', methods=['POST'])
 def identify_driver():
-    """Identify driver from a live face image"""
+    """Identify driver from a live face image using DeepFace"""
     try:
         data = request.json
         image_base64 = data.get('image')
@@ -3301,10 +3307,10 @@ def identify_driver():
         if not drivers:
             return jsonify({'success': False, 'error': 'No enrolled drivers found'}), 404
         
-        # Find best match by Euclidean distance
+        # Find best match by cosine distance (DeepFace uses cosine)
         best_match = None
         best_distance = float('inf')
-        threshold = 0.6  # typical face_recognition threshold
+        threshold = 0.4  # Facenet threshold
         
         for driver in drivers:
             if isinstance(driver, dict):
@@ -3316,7 +3322,13 @@ def identify_driver():
                 driver_id = driver[0]
                 driver_name = driver[1]
             
-            distance = np.linalg.norm(np.array(embedding) - np.array(stored_emb))
+            # Cosine distance
+            dot_product = np.dot(embedding, stored_emb)
+            norm_a = np.linalg.norm(embedding)
+            norm_b = np.linalg.norm(stored_emb)
+            cosine_similarity = dot_product / (norm_a * norm_b)
+            distance = 1 - cosine_similarity  # Convert to distance
+            
             if distance < best_distance:
                 best_distance = distance
                 best_match = (driver_id, driver_name)
@@ -3326,7 +3338,8 @@ def identify_driver():
                 'success': True,
                 'driver_id': best_match[0],
                 'driver_name': best_match[1],
-                'confidence': 1 - (best_distance / 2)  # normalized
+                'confidence': 1 - best_distance,
+                'distance': best_distance
             })
         else:
             return jsonify({
