@@ -5,7 +5,7 @@
     buildCommand: |
       pip install --upgrade pip
       pip install -r backend/requirements_server.txt
-    startCommand: cd backend && gunicorn wsgi:application --bind 0.0.0.0:$PORT --workers 1 --timeout 180 --worker-class eventlet --log-level debug
+    startCommand: cd backend && gunicorn wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --worker-class eventlet
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.11
@@ -19,25 +19,11 @@
         fromDatabase:
           name: driver-drowsiness-db
           property: connectionString
-      - key: CLOUDINARY_CLOUD_NAME
-        sync: false  # You'll set this manually in Render dashboard
-      - key: CLOUDINARY_API_KEY
-        sync: false  # You'll set this manually in Render dashboard
-      - key: CLOUDINARY_API_SECRET
-        sync: false  # You'll set this manually in Render dashboard
-      - key: GOOGLE_CLIENT_ID
-        sync: false  # You'll set this manually in Render dashboard
-      - key: GOOGLE_CLIENT_SECRET
-        sync: false  # You'll set this manually in Render dashboard
-      - key: SECRET_KEY
-        generateValue: true  # Auto-generate a secure secret key
     healthCheckPath: /api/health
     autoDeploy: true
-    region: oregon  # Choose the region closest to you
 
 databases:
   - name: driver-drowsiness-db
     plan: free
     databaseName: driverdrowsiness
     user: driverdrowsiness_user
-    region: oregon  # Must match your service region
