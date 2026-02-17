@@ -1509,6 +1509,103 @@ def google_login():
             'success': False,
             'error': f'Google login failed: {str(e)}'
         }), 500
+    
+@app.route('/api/google-login-direct', methods=['POST'])
+def google_login_direct():
+    """Direct Google login using email from Google (bypasses token verification)"""
+    try:
+        data = request.json
+        email = data.get('email')
+        name = data.get('name', email.split('@')[0] if email else 'Google User')
+        
+        if not email:
+            return jsonify({
+                'success': False,
+                'error': 'Email required'
+            }), 400
+        
+        print(f"🔐 [GOOGLE LOGIN DIRECT] Email: {email}")
+        
+        # Generate consistent Google ID
+        import hashlib
+        google_id = f"google_{hashlib.md5(email.encode()).hexdigest()[:12]}"
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if user exists
+            cursor.execute('''
+                SELECT guardian_id, full_name, email
+                FROM guardians 
+                WHERE email = %s
+                LIMIT 1
+            ''', (email,))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                # Existing user
+                if isinstance(result, dict):
+                    guardian_id = result['guardian_id']
+                    full_name = result['full_name']
+                else:
+                    guardian_id, full_name, _ = result
+                
+                # Update Google info
+                cursor.execute('''
+                    UPDATE guardians 
+                    SET google_id = %s, auth_provider = 'google', last_login = %s 
+                    WHERE guardian_id = %s
+                ''', (google_id, datetime.now(), guardian_id))
+                conn.commit()
+                
+                print(f"✅ Existing user logged in: {full_name}")
+                
+            else:
+                # Create new user
+                import random, secrets
+                phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
+                temp_password = secrets.token_urlsafe(16)
+                password_hash = hash_password(temp_password)
+                
+                cursor.execute('''
+                    INSERT INTO guardians (
+                        full_name, email, phone, password_hash, 
+                        is_active, google_id, auth_provider, registration_date, last_login
+                    )
+                    VALUES (%s, %s, %s, %s, TRUE, %s, 'google', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING guardian_id
+                ''', (name, email, phone, password_hash, google_id))
+                
+                result = cursor.fetchone()
+                guardian_id = result[0] if result else None
+                full_name = name
+                conn.commit()
+                
+                print(f"✅ New user created: {full_name}")
+        
+        # Create session
+        token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
+        
+        return jsonify({
+            'success': True,
+            'guardian_id': guardian_id,
+            'full_name': full_name,
+            'email': email,
+            'session_token': token,
+            'auth_provider': 'google',
+            'message': 'Google login successful',
+            'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
+        })
+        
+    except Exception as e:
+        print(f"❌ Google login direct error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 @app.route('/api/google-login-with-email', methods=['POST'])
 def google_login_with_email():
