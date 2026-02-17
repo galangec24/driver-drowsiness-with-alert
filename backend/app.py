@@ -956,7 +956,7 @@ def get_guardian_drivers(guardian_id):
 
 #region Facial Recognition 
 def get_face_embedding_from_base64(image_base64):
-    """Extract face features using OpenCV (lighter than dlib)"""
+    """Extract face features using OpenCV only (no dlib/tensorflow)"""
     try:
         # Remove header if present
         if ',' in image_base64:
@@ -967,30 +967,57 @@ def get_face_embedding_from_base64(image_base64):
         nparr = np.frombuffer(image_data, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
-        # Use Haar Cascade for face detection (lighter than dlib)
-        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        # Convert to grayscale
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # Load Haar Cascade for face detection
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        
+        # Detect faces
         faces = face_cascade.detectMultiScale(gray, 1.1, 4)
         
         if len(faces) == 0:
             print("   No face detected in image")
             return None
         
-        # Generate a simple hash-based "embedding" (not real facial recognition)
-        # For a production app, you'd use a proper model, but this is just to reduce memory
-        face_features = []
-        for (x, y, w, h) in faces[:1]:
-            face_roi = gray[y:y+h, x:x+w]
-            face_resized = cv2.resize(face_roi, (100, 100))
-            # Create a simple feature vector from the resized face
-            face_features = face_resized.flatten().tolist()[:128]  # Take first 128 pixels as "features"
+        print(f"   ✅ Face detected using OpenCV Haar Cascade")
         
-        print(f"   ✅ Face detected using OpenCV (length: {len(face_features)})")
-        return face_features
+        # Extract the first face
+        (x, y, w, h) = faces[0]
+        face_roi = gray[y:y+h, x:x+w]
+        
+        # Resize to standard size
+        face_resized = cv2.resize(face_roi, (100, 100))
+        
+        # Create a simple histogram-based feature vector
+        # This is NOT real face recognition, but a placeholder
+        hist = cv2.calcHist([face_resized], [0], None, [32], [0, 256])
+        hist = cv2.normalize(hist, hist).flatten()
+        
+        # Return as list for JSON serialization
+        return hist.tolist()
         
     except Exception as e:
         print(f"❌ Error extracting face features: {e}")
         return None
+
+def compare_faces(embedding1, embedding2, threshold=0.7):
+    """Compare two face embeddings using correlation"""
+    try:
+        # Convert to numpy arrays
+        emb1 = np.array(embedding1)
+        emb2 = np.array(embedding2)
+        
+        # Calculate correlation
+        correlation = np.corrcoef(emb1, emb2)[0, 1]
+        
+        # Normalize to 0-1 range
+        similarity = (correlation + 1) / 2
+        
+        return similarity > threshold, similarity
+    except Exception as e:
+        print(f"❌ Error comparing faces: {e}")
+        return False, 0
 
 #end Region Facial Recognition
 
