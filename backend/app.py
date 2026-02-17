@@ -36,12 +36,6 @@ import cloudinary.api
 import cloudinary.exceptions  
 from cloudinary.utils import cloudinary_url
 
-#Facial Recognition
-import io
-import cv2
-import numpy as np
-from PIL import Image
-import face_recognition
 # Google OAuth imports
 import jwt
 from google.oauth2 import id_token
@@ -101,7 +95,7 @@ if all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
     adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=10)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
-
+    
 #region Cloudinary Configuration    
     # Configure Cloudinary to use our session
     import cloudinary
@@ -930,7 +924,6 @@ def log_activity(guardian_id=None, admin_username=None, action=None, details=Non
     except Exception as e:
         print(f"⚠️ Error logging activity: {e}")
 
-#region Drivers
 # ==================== UTILITY FUNCTIONS ====================
 def get_guardian_drivers(guardian_id):
     """Get all drivers registered by a guardian"""
@@ -951,75 +944,6 @@ def get_guardian_drivers(guardian_id):
     except Exception as e:
         print(f"❌ Error in get_guardian_drivers: {e}")
         return []
-
-#end Region Drivers
-
-#region Facial Recognition 
-def get_face_embedding_from_base64(image_base64):
-    """Extract face features using OpenCV only (no dlib/tensorflow)"""
-    try:
-        # Remove header if present
-        if ',' in image_base64:
-            image_base64 = image_base64.split(',')[1]
-        
-        # Decode base64 to image
-        image_data = base64.b64decode(image_base64)
-        nparr = np.frombuffer(image_data, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        # Convert to grayscale
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        # Load Haar Cascade for face detection
-        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        
-        # Detect faces
-        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-        
-        if len(faces) == 0:
-            print("   No face detected in image")
-            return None
-        
-        print(f"   ✅ Face detected using OpenCV Haar Cascade")
-        
-        # Extract the first face
-        (x, y, w, h) = faces[0]
-        face_roi = gray[y:y+h, x:x+w]
-        
-        # Resize to standard size
-        face_resized = cv2.resize(face_roi, (100, 100))
-        
-        # Create a simple histogram-based feature vector
-        # This is NOT real face recognition, but a placeholder
-        hist = cv2.calcHist([face_resized], [0], None, [32], [0, 256])
-        hist = cv2.normalize(hist, hist).flatten()
-        
-        # Return as list for JSON serialization
-        return hist.tolist()
-        
-    except Exception as e:
-        print(f"❌ Error extracting face features: {e}")
-        return None
-
-def compare_faces(embedding1, embedding2, threshold=0.7):
-    """Compare two face embeddings using correlation"""
-    try:
-        # Convert to numpy arrays
-        emb1 = np.array(embedding1)
-        emb2 = np.array(embedding2)
-        
-        # Calculate correlation
-        correlation = np.corrcoef(emb1, emb2)[0, 1]
-        
-        # Normalize to 0-1 range
-        similarity = (correlation + 1) / 2
-        
-        return similarity > threshold, similarity
-    except Exception as e:
-        print(f"❌ Error comparing faces: {e}")
-        return False, 0
-
-#end Region Facial Recognition
 
 def get_recent_alerts(guardian_id, limit=10):
     """Get recent alerts for a guardian"""
@@ -2360,7 +2284,7 @@ def get_guardian_details(guardian_id):
 # ==================== DRIVER REGISTRATION WITH CLOUDINARY ====================
 @app.route('/api/register-driver', methods=['POST'])
 def register_driver():
-    """Register a new driver with face images uploaded to Cloudinary - FIXED VERSION with embeddings"""
+    """Register a new driver with face images uploaded to Cloudinary - FIXED VERSION"""
     global CLOUDINARY_ENABLED 
 
     try:
@@ -2561,10 +2485,6 @@ def register_driver():
                             'upload_method': 'cloudinary'
                         })
                         
-                        # Save the first image for embedding computation
-                        if i == 1:
-                            first_image_base64 = image_base64
-                        
                         if i < len(face_images):
                             time.sleep(1)
                         
@@ -2650,10 +2570,6 @@ def register_driver():
                             'upload_method': 'local'
                         })
                         
-                        # Save the first image for embedding computation
-                        if i == 1:
-                            first_image_base64 = image_base64
-                        
                     except Exception as save_error:
                         error_msg = f"Error saving image {i} locally: {str(save_error)}"
                         print(f"❌ [DRIVER REGISTRATION] {error_msg}")
@@ -2662,33 +2578,6 @@ def register_driver():
                 print(f"\n📊 [DRIVER REGISTRATION] Local storage summary:")
                 print(f"   Successfully saved: {len(saved_images)}")
                 print(f"   Save errors: {len(upload_errors)}")
-            
-            # ==================== FACE EMBEDDING COMPUTATION ====================
-            embedding_stored = False
-            if saved_images and len(saved_images) > 0:
-                try:
-                    print(f"\n🧠 [DRIVER REGISTRATION] Computing face embedding from first image...")
-                    
-                    # Use the first image base64 we saved
-                    if 'first_image_base64' in locals():
-                        embedding = get_face_embedding_from_base64(first_image_base64)
-                        
-                        if embedding:
-                            # Store embedding in database
-                            cursor.execute('''
-                                UPDATE drivers SET face_embedding = %s WHERE driver_id = %s
-                            ''', (json.dumps(embedding), driver_id))
-                            embedding_stored = True
-                            print(f"✅ [DRIVER REGISTRATION] Face embedding stored successfully!")
-                            print(f"   Embedding vector length: {len(embedding)}")
-                        else:
-                            print(f"⚠️ [DRIVER REGISTRATION] Could not compute face embedding - no face detected in image")
-                    else:
-                        print(f"⚠️ [DRIVER REGISTRATION] No image data available for embedding computation")
-                except Exception as embed_error:
-                    print(f"❌ [DRIVER REGISTRATION] Error computing face embedding: {embed_error}")
-                    import traceback
-                    traceback.print_exc()
             
             # ==================== REGISTRATION COMPLETION ====================
             if len(saved_images) == 0:
@@ -2715,7 +2604,7 @@ def register_driver():
                 INSERT INTO activity_log (guardian_id, action, details)
                 VALUES (%s, %s, %s)
             ''', (guardian_id, 'DRIVER_REGISTERED', 
-                f'Registered driver: {driver_name} (ID: {driver_id}) with {len(saved_images)} face images. Embedding stored: {embedding_stored}'))
+                f'Registered driver: {driver_name} (ID: {driver_id}) with {len(saved_images)} face images'))
             
             # Get guardian info
             cursor.execute('SELECT full_name FROM guardians WHERE guardian_id = %s', 
@@ -2730,7 +2619,6 @@ def register_driver():
             print(f"\n✅ [DRIVER REGISTRATION] Registration COMPLETE!")
             print(f"   Driver: {driver_name} (ID: {driver_id})")
             print(f"   Images saved: {len(saved_images)}")
-            print(f"   Embedding stored: {embedding_stored}")
             print(f"   Storage method: {'Cloudinary' if cloudinary_enabled and saved_images and saved_images[0].get('upload_method') == 'cloudinary' else 'Local'}")
             
             # Prepare success response
@@ -2745,8 +2633,7 @@ def register_driver():
                 'registration_date': datetime.now().isoformat(),
                 'guardian_name': guardian_name,
                 'storage_method': 'cloudinary' if cloudinary_enabled and saved_images and saved_images[0].get('upload_method') == 'cloudinary' else 'local',
-                'embedding_stored': embedding_stored,
-                'message': f'Driver registered successfully with {len(saved_images)} face images' + (' and face embedding' if embedding_stored else ' (warning: no face embedding)')
+                'message': f'Driver registered successfully with {len(saved_images)} face images'
             }
             
             # Send real-time notification to guardian
@@ -2757,7 +2644,6 @@ def register_driver():
                     'driver_name': driver_name,
                     'guardian_id': guardian_id,
                     'face_images_count': len(saved_images),
-                    'embedding_stored': embedding_stored,
                     'timestamp': datetime.now().isoformat(),
                     'message': f'New driver registered: {driver_name}'
                 }
@@ -3311,77 +3197,6 @@ def update_guardian():
             'error': str(e)
         }), 500
 
-@app.route('/api/driver/identify', methods=['POST'])
-def identify_driver():
-    """Identify driver from a live face image using DeepFace"""
-    try:
-        data = request.json
-        image_base64 = data.get('image')
-        if not image_base64:
-            return jsonify({'success': False, 'error': 'No image provided'}), 400
-        
-        # Compute embedding from incoming image
-        embedding = get_face_embedding_from_base64(image_base64)
-        if embedding is None:
-            return jsonify({'success': False, 'error': 'No face detected in image'}), 400
-        
-        # Fetch all drivers with stored embeddings
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT driver_id, name, face_embedding FROM drivers 
-                WHERE face_embedding IS NOT NULL
-            ''')
-            drivers = cursor.fetchall()
-        
-        if not drivers:
-            return jsonify({'success': False, 'error': 'No enrolled drivers found'}), 404
-        
-        # Find best match by cosine distance (DeepFace uses cosine)
-        best_match = None
-        best_distance = float('inf')
-        threshold = 0.4  # Facenet threshold
-        
-        for driver in drivers:
-            if isinstance(driver, dict):
-                stored_emb = json.loads(driver['face_embedding'])
-                driver_id = driver['driver_id']
-                driver_name = driver['name']
-            else:
-                stored_emb = json.loads(driver[2])
-                driver_id = driver[0]
-                driver_name = driver[1]
-            
-            # Cosine distance
-            dot_product = np.dot(embedding, stored_emb)
-            norm_a = np.linalg.norm(embedding)
-            norm_b = np.linalg.norm(stored_emb)
-            cosine_similarity = dot_product / (norm_a * norm_b)
-            distance = 1 - cosine_similarity  # Convert to distance
-            
-            if distance < best_distance:
-                best_distance = distance
-                best_match = (driver_id, driver_name)
-        
-        if best_distance < threshold:
-            return jsonify({
-                'success': True,
-                'driver_id': best_match[0],
-                'driver_name': best_match[1],
-                'confidence': 1 - best_distance,
-                'distance': best_distance
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'No matching driver found',
-                'distance': best_distance
-            }), 404
-            
-    except Exception as e:
-        print(f"❌ Error in identify_driver: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-    
 # ==================== GET DRIVER DETAILS ENDPOINT ====================
 
 @app.route('/api/driver/<driver_id>/details', methods=['GET'])
@@ -4525,7 +4340,3 @@ if __name__ == '__main__':
             print("   - PORT=5000")
             print("   - WEBSOCKET_ENABLED=true")
             sys.exit(1)
-
-if __name__ != '__main__':
-
-    print("✅ App loaded by Gunicorn, ready to accept connections on port", os.environ.get('PORT', 10000))
