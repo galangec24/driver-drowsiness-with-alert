@@ -4494,3 +4494,7 @@ if __name__ == '__main__':
             print("   - PORT=5000")
             print("   - WEBSOCKET_ENABLED=true")
             sys.exit(1)
+
+if __name__ != '__main__':
+
+    print("✅ App loaded by Gunicorn, ready to accept connections on port", os.environ.get('PORT', 10000))
