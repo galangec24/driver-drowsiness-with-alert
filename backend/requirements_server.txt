@@ -34,6 +34,9 @@ pyopenssl==23.3.0
 dnspython==2.3.0
 
 # ===== FACE RECOGNITION & IDENTIFICATION =====
-# Using deepface (no compilation needed for Render)
+# Explicitly pin compatible TensorFlow and Keras versions first
+tensorflow-cpu==2.15.0
+keras==2.15.0
+# Then install deepface (it will use the already installed TensorFlow)
 deepface==0.0.79
 opencv-python-headless==4.8.1.78
