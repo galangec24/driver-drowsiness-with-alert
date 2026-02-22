@@ -963,12 +963,9 @@ def verify_guardian_credentials(identifier, password):
                     
                     return None
         
-        # Handle the result (common for both email and phone paths)
         print(f"   Result type: {type(result)}")
         
-        # Handle both dictionary and tuple results
         if isinstance(result, dict):
-            # Dictionary from RealDictCursor
             guardian_id = result['guardian_id']
             full_name = result['full_name']
             stored_hash = result['password_hash']
