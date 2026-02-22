@@ -28,7 +28,7 @@ import bcrypt
 from contextlib import contextmanager
 import urllib.parse
 import traceback
-import requests   # <-- NEW: added for fetching Google certs
+import requests
 
 # Cloudinary imports
 import cloudinary
@@ -41,6 +41,7 @@ from cloudinary.utils import cloudinary_url
 import jwt
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
+import google.auth.transport.requests
 
 # ==================== POSTGRESQL CONFIGURATION ====================
 import psycopg2
@@ -605,34 +606,59 @@ def update_db_schema():
         print(f"❌ Database schema update failed: {e}")
         return False
 
-# ==================== NEW: GOOGLE CERTIFICATE CACHE ====================
-GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v1/certs"
+# ==================== CUSTOM HTTP SESSION FOR GOOGLE AUTH (with retries) ====================
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# Create a custom session with retries for Google API calls
+google_session = requests.Session()
+retry_strategy = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"]
+)
+adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=10)
+google_session.mount("https://", adapter)
+google_session.mount("http://", adapter)
+
+# Custom request class for google-auth library
+class CustomRequest(google.auth.transport.requests.Request):
+    def __init__(self, session=None):
+        super().__init__(session=session or google_session)
+
+# ==================== GOOGLE TOKEN VERIFICATION (HYBRID APPROACH) ====================
 _certs_cache = None
 _certs_cache_time = 0
 CERTS_REFRESH_INTERVAL = 6 * 3600  # refresh every 6 hours
 
-def get_google_certs(force_refresh=False):
-    """Fetch and cache Google public certificates."""
-    global _certs_cache, _certs_cache_time
-    now = time.time()
-    if force_refresh or _certs_cache is None or (now - _certs_cache_time) > CERTS_REFRESH_INTERVAL:
-        try:
-            response = requests.get(GOOGLE_CERTS_URL, timeout=5)
-            response.raise_for_status()
-            _certs_cache = response.json()
-            _certs_cache_time = now
-            print("✅ Google certificates refreshed")
-        except Exception as e:
-            print(f"⚠️ Failed to refresh Google certs: {e}")
-            # If we have no cache at all, re-raise
-            if _certs_cache is None:
-                raise Exception("Unable to fetch Google certificates at startup") from e
-    return _certs_cache
-
-def verify_google_token(token, client_id):
+def verify_google_token_hybrid(token, client_id):
     """
-    Verify a Google ID token locally using cached certificates.
-    Returns the decoded payload if valid, otherwise raises an exception.
+    Verify Google token using Google's library but with custom HTTP transport.
+    This avoids DNS issues while still using Google's reliable verification.
+    """
+    try:
+        # Use Google's library with our custom session
+        request = CustomRequest()
+        
+        # This will use our custom session with retries and proper DNS
+        idinfo = id_token.verify_oauth2_token(
+            token, 
+            request,
+            client_id,
+            clock_skew_in_seconds=10  # Allow 10 seconds clock skew
+        )
+        
+        return idinfo
+        
+    except Exception as e:
+        print(f"❌ Google token verification failed with hybrid approach: {e}")
+        # Fall back to manual verification with cached certs
+        return verify_google_token_manual_fallback(token, client_id)
+
+def verify_google_token_manual_fallback(token, client_id):
+    """
+    Manual verification with cached certificates as fallback.
     """
     try:
         # Get unverified header to find the key ID (kid)
@@ -640,12 +666,9 @@ def verify_google_token(token, client_id):
         kid = unverified_header['kid']
         
         # Fetch current certs (from cache)
-        certs = get_google_certs()
+        certs = get_certs_with_retry()
         if kid not in certs:
-            # Key ID not found – maybe cache is stale? Force refresh once.
-            certs = get_google_certs(force_refresh=True)
-            if kid not in certs:
-                raise jwt.InvalidTokenError(f"Key ID {kid} not found in Google certs")
+            raise Exception(f"Key ID {kid} not found in Google certs")
         
         public_key = certs[kid]
         
@@ -655,12 +678,62 @@ def verify_google_token(token, client_id):
             public_key,
             algorithms=['RS256'],
             audience=client_id,
-            issuer=['accounts.google.com', 'https://accounts.google.com']
+            issuer=['accounts.google.com', 'https://accounts.google.com'],
+            options={
+                'verify_signature': True,
+                'verify_exp': True,
+                'verify_aud': True,
+                'verify_iss': True
+            }
         )
         return decoded
-    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, jwt.InvalidAudienceError, KeyError) as e:
-        raise Exception(f"Token verification failed: {str(e)}") from e
-# ==================== END OF NEW SECTION ====================
+        
+    except jwt.ExpiredSignatureError:
+        raise Exception("Token has expired")
+    except jwt.InvalidAudienceError:
+        raise Exception("Token audience doesn't match")
+    except jwt.InvalidIssuerError:
+        raise Exception("Token issuer doesn't match")
+    except Exception as e:
+        raise Exception(f"Manual verification failed: {str(e)}")
+
+def get_certs_with_retry(force_refresh=False):
+    """Fetch Google certs with retry logic from multiple endpoints"""
+    global _certs_cache, _certs_cache_time
+    now = time.time()
+    
+    if force_refresh or _certs_cache is None or (now - _certs_cache_time) > CERTS_REFRESH_INTERVAL:
+        # Try multiple cert endpoints
+        cert_urls = [
+            "https://www.googleapis.com/oauth2/v1/certs",
+            "https://www.googleapis.com/oauth2/v3/certs",
+            "https://oauth2.googleapis.com/certs"
+        ]
+        
+        for url in cert_urls:
+            try:
+                print(f"🔄 Fetching Google certs from {url}")
+                response = google_session.get(url, timeout=10)
+                response.raise_for_status()
+                _certs_cache = response.json()
+                _certs_cache_time = now
+                print(f"✅ Google certificates fetched successfully from {url}")
+                return _certs_cache
+            except Exception as e:
+                print(f"⚠️ Failed to fetch from {url}: {e}")
+                continue
+        
+        if _certs_cache is None:
+            raise Exception("Unable to fetch Google certificates from any endpoint")
+    
+    return _certs_cache
+
+# Pre-fetch certificates at startup
+try:
+    get_certs_with_retry()
+    print("✅ Google certificates pre-fetched at startup")
+except Exception as e:
+    print(f"⚠️ Could not pre-fetch Google certificates: {e}")
 
 # ==================== SESSION FUNCTIONS ====================
 def generate_session_token():
@@ -1368,10 +1441,10 @@ def get_firebase_config():
         'cloudinary_enabled': CLOUDINARY_ENABLED
     })
 
-# ==================== GOOGLE LOGIN ENDPOINT - UPDATED WITH LOCAL VERIFICATION ====================
+# ==================== GOOGLE LOGIN ENDPOINT - UPDATED WITH HYBRID VERIFICATION ====================
 @app.route('/api/google-login', methods=['POST'])
 def google_login():
-    """Handle Google OAuth login - using local certificate verification"""
+    """Handle Google OAuth login - using hybrid verification approach"""
     try:
         data = request.json
         google_token = data.get('token')
@@ -1398,14 +1471,14 @@ def google_login():
             }), 500
         
         try:
-            # Use local verification with cached certificates
-            idinfo = verify_google_token(google_token, GOOGLE_CLIENT_ID)
+            # Use hybrid verification (Google library + custom HTTP + fallback)
+            idinfo = verify_google_token_hybrid(google_token, GOOGLE_CLIENT_ID)
             
             email = idinfo.get('email')
             name = idinfo.get('name', '')
             google_id = idinfo.get('sub')
             
-            print(f"✅ Google token verified locally: {email}")
+            print(f"✅ Google token verified successfully: {email}")
             print(f"   Name: {name}")
             print(f"   Google ID: {google_id}")
             
@@ -1422,7 +1495,7 @@ def google_login():
                 'error': 'Email not found in token'
             }), 400
         
-        # Database operations (same as before)
+        # Database operations
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
@@ -1769,6 +1842,33 @@ def google_login_simple():
             'success': False,
             'error': str(e)
         }), 500
+
+# ==================== DEBUG ENDPOINT FOR GOOGLE CERTS ====================
+@app.route('/api/debug-google-certs', methods=['GET'])
+def debug_google_certs():
+    """Debug endpoint to check Google certificates"""
+    try:
+        result = {
+            'google_client_id': GOOGLE_CLIENT_ID,
+            'google_client_id_valid': bool(GOOGLE_CLIENT_ID and 'googleusercontent.com' in GOOGLE_CLIENT_ID),
+            'certs_cache_exists': _certs_cache is not None,
+            'certs_cache_age': time.time() - _certs_cache_time if _certs_cache_time else None,
+            'certs_count': len(_certs_cache) if _certs_cache else 0,
+        }
+        
+        # Test certificate fetch
+        try:
+            certs = get_certs_with_retry(force_refresh=True)
+            result['fetch_success'] = True
+            result['certs_count_after_fetch'] = len(certs)
+        except Exception as e:
+            result['fetch_success'] = False
+            result['fetch_error'] = str(e)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # ==================== GUARDIAN AUTHENTICATION ====================
 @app.route('/api/login', methods=['POST'])
