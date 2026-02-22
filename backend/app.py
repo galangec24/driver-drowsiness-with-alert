@@ -28,6 +28,7 @@ import bcrypt
 from contextlib import contextmanager
 import urllib.parse
 import traceback
+import requests   # <-- NEW: added for fetching Google certs
 
 # Cloudinary imports
 import cloudinary
@@ -62,6 +63,7 @@ eventlet.monkey_patch()
 # Google OAuth Configuration
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+
 # ==================== CLOUDINARY CONFIGURATION ====================
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME', '')
 CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY', '')
@@ -80,7 +82,6 @@ if all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
     )
     
     # Set up custom HTTP adapter with retries for Render's DNS issues
-    import requests
     from requests.adapters import HTTPAdapter
     from urllib3.util.retry import Retry
     
@@ -96,7 +97,6 @@ if all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     
-#region Cloudinary Configuration    
     # Configure Cloudinary to use our session
     import cloudinary
     cloudinary.config(
@@ -116,7 +116,6 @@ if all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
 else:
     CLOUDINARY_ENABLED = False
     print("⚠️  Cloudinary not configured. Check environment variables.")
-#End Region
 
 # ==================== FIREBASE HOSTING INTEGRATION ====================
 # List of allowed origins (Firebase domains + localhost for development)
@@ -606,19 +605,74 @@ def update_db_schema():
         print(f"❌ Database schema update failed: {e}")
         return False
 
-# ==================== SESSION MANAGEMENT ====================
+# ==================== NEW: GOOGLE CERTIFICATE CACHE ====================
+GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v1/certs"
+_certs_cache = None
+_certs_cache_time = 0
+CERTS_REFRESH_INTERVAL = 6 * 3600  # refresh every 6 hours
+
+def get_google_certs(force_refresh=False):
+    """Fetch and cache Google public certificates."""
+    global _certs_cache, _certs_cache_time
+    now = time.time()
+    if force_refresh or _certs_cache is None or (now - _certs_cache_time) > CERTS_REFRESH_INTERVAL:
+        try:
+            response = requests.get(GOOGLE_CERTS_URL, timeout=5)
+            response.raise_for_status()
+            _certs_cache = response.json()
+            _certs_cache_time = now
+            print("✅ Google certificates refreshed")
+        except Exception as e:
+            print(f"⚠️ Failed to refresh Google certs: {e}")
+            # If we have no cache at all, re-raise
+            if _certs_cache is None:
+                raise Exception("Unable to fetch Google certificates at startup") from e
+    return _certs_cache
+
+def verify_google_token(token, client_id):
+    """
+    Verify a Google ID token locally using cached certificates.
+    Returns the decoded payload if valid, otherwise raises an exception.
+    """
+    try:
+        # Get unverified header to find the key ID (kid)
+        unverified_header = jwt.get_unverified_header(token)
+        kid = unverified_header['kid']
+        
+        # Fetch current certs (from cache)
+        certs = get_google_certs()
+        if kid not in certs:
+            # Key ID not found – maybe cache is stale? Force refresh once.
+            certs = get_google_certs(force_refresh=True)
+            if kid not in certs:
+                raise jwt.InvalidTokenError(f"Key ID {kid} not found in Google certs")
+        
+        public_key = certs[kid]
+        
+        # Verify the token
+        decoded = jwt.decode(
+            token,
+            public_key,
+            algorithms=['RS256'],
+            audience=client_id,
+            issuer=['accounts.google.com', 'https://accounts.google.com']
+        )
+        return decoded
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, jwt.InvalidAudienceError, KeyError) as e:
+        raise Exception(f"Token verification failed: {str(e)}") from e
+# ==================== END OF NEW SECTION ====================
+
+# ==================== SESSION FUNCTIONS ====================
 def generate_session_token():
-    """Generate a secure session token"""
     return secrets.token_urlsafe(32)
 
 def create_session(guardian_id, ip_address=None, user_agent=None):
-    """Create a new session for guardian"""
     token = generate_session_token()
     expires_at = datetime.now() + timedelta(hours=24)
     
     try:
         with get_db_cursor() as cursor:
-            # Invalidate any existing sessions for this guardian
+            # Existing sessions gets nulled
             cursor.execute('UPDATE session_tokens SET is_valid = FALSE WHERE guardian_id = %s AND is_valid = TRUE', (guardian_id,))
             
             # Create new session
@@ -926,7 +980,7 @@ def log_activity(guardian_id=None, admin_username=None, action=None, details=Non
     except Exception as e:
         print(f"⚠️ Error logging activity: {e}")
 
-# ==================== UTILITY FUNCTIONS ====================
+# ==================== HELPER FUNCTIONS ====================
 def get_guardian_drivers(guardian_id):
     """Get all drivers registered by a guardian"""
     try:
@@ -1314,10 +1368,10 @@ def get_firebase_config():
         'cloudinary_enabled': CLOUDINARY_ENABLED
     })
 
-# ==================== GOOGLE LOGIN ENDPOINT ====================
+# ==================== GOOGLE LOGIN ENDPOINT - UPDATED WITH LOCAL VERIFICATION ====================
 @app.route('/api/google-login', methods=['POST'])
 def google_login():
-    """Handle Google OAuth login - FIXED VERSION"""
+    """Handle Google OAuth login - using local certificate verification"""
     try:
         data = request.json
         google_token = data.get('token')
@@ -1344,51 +1398,22 @@ def google_login():
             }), 500
         
         try:
-            # Try to verify the Google token
-            from google.oauth2 import id_token
-            from google.auth.transport import requests
-            
-            idinfo = id_token.verify_oauth2_token(
-                google_token, 
-                requests.Request(),
-                GOOGLE_CLIENT_ID
-            )
+            # Use local verification with cached certificates
+            idinfo = verify_google_token(google_token, GOOGLE_CLIENT_ID)
             
             email = idinfo.get('email')
             name = idinfo.get('name', '')
             google_id = idinfo.get('sub')
             
-            print(f"✅ Google token verified: {email}")
+            print(f"✅ Google token verified locally: {email}")
             print(f"   Name: {name}")
             print(f"   Google ID: {google_id}")
             
-        except ValueError as e:
-            # Invalid token
+        except Exception as e:
             print(f"❌ Google token verification failed: {e}")
-            
-            # Try to decode without verification as fallback
-            try:
-                import jwt
-                unverified_payload = jwt.decode(
-                    google_token, 
-                    options={"verify_signature": False}
-                )
-                email = unverified_payload.get('email')
-                name = unverified_payload.get('name', '')
-                google_id = unverified_payload.get('sub')
-                
-                print(f"⚠️ Using unverified token data: {email}")
-            except Exception as decode_error:
-                print(f"❌ Could not decode token: {decode_error}")
-                return jsonify({
-                    'success': False,
-                    'error': 'Invalid Google token'
-                }), 401
-        except Exception as verify_error:
-            print(f"❌ Unexpected error during token verification: {verify_error}")
             return jsonify({
                 'success': False,
-                'error': f'Token verification failed: {str(verify_error)}'
+                'error': f'Token verification failed: {str(e)}'
             }), 401
         
         if not email:
@@ -1397,7 +1422,7 @@ def google_login():
                 'error': 'Email not found in token'
             }), 400
         
-        # Database operations
+        # Database operations (same as before)
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
@@ -1511,7 +1536,8 @@ def google_login():
             'success': False,
             'error': f'Google login failed: {str(e)}'
         }), 500
-    
+
+# ==================== OTHER GOOGLE LOGIN ENDPOINTS (keep as fallback) ====================
 @app.route('/api/google-login-direct', methods=['POST'])
 def google_login_direct():
     """Direct Google login that bypasses token verification"""

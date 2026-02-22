@@ -11,7 +11,7 @@ Pillow==10.0.0
 numpy==1.24.3
 
 # Security & Utilities
-pyjwt==2.8.0  # Optional for enhanced auth
+pyjwt==2.8.0  # For JWT token handling (now required for Google auth)
 requests==2.31.0
 PyYAML==6.0.1
 bcrypt==4.1.2
@@ -23,11 +23,15 @@ google-auth-oauthlib==1.1.0
 google-auth-httplib2==0.1.1
 google-api-python-client==2.108.0
 
+# DNS Resolution (for Render)
+dnspython==2.3.0  # Added for better DNS control
+
 # Testing
 pytest==7.4.0
 
 # CERTIFICATION
 pyopenssl==23.3.0
+cryptography==41.0.7  
 
 #Image Classification 
 # retina-face==0.0.14
