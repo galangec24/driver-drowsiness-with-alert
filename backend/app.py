@@ -155,18 +155,18 @@ socketio = SocketIO(
     async_mode='eventlet',
     
     # CRITICAL: WebSocket specific settings
-    ping_timeout=60,           # How long to wait for pong response
-    ping_interval=25,          # How often to send pings
-    max_http_buffer_size=1e6,  # 1MB buffer
+    ping_timeout=30,           
+    ping_interval=15,          
+    max_http_buffer_size=1e6,  
     
     # Transport settings - order matters!
-    transports=['polling', 'websocket'],  # Start with polling, upgrade to websocket
+    transports=['polling', 'websocket'],  
     allow_upgrades=True,
     
     # Connection management
-    manage_session=False,       # Don't manage sessions automatically
-    cookie=None,                # Disable cookies for security
-    always_connect=True,        # Always connect even if auth fails initially
+    manage_session=False,      
+    cookie=None,                
+    always_connect=True,        
     
     # Logging - enable for debugging (disable in production)
     logger=True,
@@ -174,14 +174,14 @@ socketio = SocketIO(
     log_output=True,
     
     # Path configuration (important for Render)
-    path='socket.io',            # Explicitly set the path
+    path='socket.io',         
     
     # CORS settings
     cors_credentials=True,
     
     # Engine.IO settings
-    max_guest_sessions=1000,     # Maximum number of guest sessions
-    preserve_context=True,        # Preserve context between requests
+    max_guest_sessions=1000,    
+    preserve_context=True,    
     websocket_ping_interval=25,   
     websocket_ping_timeout=60     
 )
@@ -414,6 +414,25 @@ def get_db_cursor():
 # Store connected clients and active sessions
 connected_clients = {}
 active_sessions = {}
+
+def cleanup_stale_clients():
+    """Remove clients that haven't sent a ping in 2 minutes."""
+    while True:
+        time.sleep(300)  # run every 5 minutes
+        now = datetime.now()
+        stale_sids = []
+        for sid, info in list(connected_clients.items()):
+            last_ping = info.get('last_ping')
+            if last_ping and (now - last_ping) > timedelta(minutes=2):
+                print(f"🧹 Cleaning up stale client {sid} (last ping {last_ping})")
+                stale_sids.append(sid)
+        for sid in stale_sids:
+            connected_clients.pop(sid, None)
+        if stale_sids:
+            print(f"   Removed {len(stale_sids)} stale clients")
+
+# Start the thread (daemon so it exits when main process ends)
+threading.Thread(target=cleanup_stale_clients, daemon=True).start()
 
 # ==================== DATABASE INITIALIZATION ====================
 def init_db():
