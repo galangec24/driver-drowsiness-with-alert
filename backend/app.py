@@ -1455,7 +1455,7 @@ def get_firebase_config():
         'cloudinary_enabled': CLOUDINARY_ENABLED
     })
 
-# ==================== GOOGLE LOGIN ENDPOINT - UPDATED WITH HYBRID VERIFICATION ====================
+#region Gmail Auth
 @app.route('/api/google-login', methods=['POST'])
 def google_login():
     """Handle Google OAuth login - using hybrid verification approach"""
@@ -1591,7 +1591,14 @@ def google_login():
                 token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
                 
                 # Log activity
-                log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google login from {request.remote_addr}')
+                cursor.execute('''
+                    INSERT INTO activity_log (guardian_id, action, details)
+                    VALUES (%s, %s, %s)
+                ''', (
+                    guardian_id,
+                    'GOOGLE_LOGIN',
+                    f'Google login from {request.remote_addr}'
+                ))
                 
                 return jsonify({
                     'success': True,
@@ -1604,6 +1611,7 @@ def google_login():
                     'is_google_user': True,
                     'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
                 })
+        
                 
         except Exception as db_error:
             print(f"❌ Database error in google_login: {db_error}")
@@ -1673,7 +1681,14 @@ def google_login_direct():
         # Create session
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
         
-        log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google login from {request.remote_addr}')
+        cursor.execute('''
+            INSERT INTO activity_log (guardian_id, action, details)
+            VALUES (%s, %s, %s)
+        ''', (
+            guardian_id,
+            'GOOGLE_LOGIN',
+            f'Google login from {request.remote_addr}'
+        ))
         
         return jsonify({
             'success': True,
@@ -1769,7 +1784,14 @@ def google_login_with_email():
         
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
        
-        log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google login from {request.remote_addr}')
+        cursor.execute('''
+            INSERT INTO activity_log (guardian_id, action, details)
+            VALUES (%s, %s, %s)
+        ''', (
+            guardian_id,
+            'GOOGLE_LOGIN',
+            f'Google login from {request.remote_addr}'
+        ))
         
         return jsonify({
             'success': True,
@@ -1843,7 +1865,14 @@ def google_login_simple():
         
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
        
-        log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google login from {request.remote_addr}')
+        cursor.execute('''
+            INSERT INTO activity_log (guardian_id, action, details)
+            VALUES (%s, %s, %s)
+        ''', (
+            guardian_id,
+            'GOOGLE_LOGIN',
+            f'Google login from {request.remote_addr}'
+        ))
         
         return jsonify({
             'success': True,
@@ -1862,7 +1891,8 @@ def google_login_simple():
             'error': str(e)
         }), 500
 
-# ==================== DEBUG ENDPOINT FOR GOOGLE CERTS ====================
+#end Region Gmail Auth
+
 @app.route('/api/debug-google-certs', methods=['GET'])
 def debug_google_certs():
     """Debug endpoint to check Google certificates"""
@@ -2006,10 +2036,10 @@ def troubleshoot_google_auth():
             response = requests.get('https://accounts.google.com/.well-known/openid-configuration', timeout=5)
             if response.status_code == 200:
                 results['google_apis_reachable'] = True
-                results['dns_resolution'].append("✅ Google APIs are reachable")
+                results['dns_resolution'].append("Google APIs are reachable")
             else:
                 results['google_apis_reachable'] = False
-                results['dns_resolution'].append(f"⚠️ Google APIs returned status {response.status_code}")
+                results['dns_resolution'].append(f"Google APIs returned status {response.status_code}")
         except Exception as e:
             results['google_apis_reachable'] = False
             results['dns_resolution'].append(f"❌ Cannot reach Google APIs: {str(e)}")
@@ -2151,6 +2181,7 @@ def logout():
         # Invalidate session
         invalidate_session(guardian_id, token)
         log_activity(guardian_id, 'LOGOUT', 'Guardian logged out')
+
         
         return jsonify({
             'success': True,
@@ -2708,7 +2739,14 @@ def register_driver():
                     True
                 ))
                 
-                print(f"✅ [DRIVER REGISTRATION] Driver registered: {driver_name} (ID: {driver_id})")
+                cursor.execute('''
+                    INSERT INTO activity_log (guardian_id, action, details)
+                    VALUES (%s, %s, %s)
+                ''', (
+                    guardian_id,
+                    'DRIVER_REGISTERED',
+                    f'Registered driver: {driver_name} (ID: {driver_id}) with {len(saved_images)} face images'
+                ))
                 
             except Exception as db_error:
                 print(f"❌ [DRIVER REGISTRATION] Database insertion failed: {db_error}")
@@ -3782,6 +3820,15 @@ def acknowledge_alert():
                 'guardian_id': guardian_id,
                 'timestamp': datetime.now().isoformat()
             })
+            
+            cursor.execute('''
+                INSERT INTO activity_log (guardian_id, action, details)
+                VALUES (%s, %s, %s)
+            ''', (
+                guardian_id,
+                'ALERT_ACKNOWLEDGED',
+                f'Acknowledged alert #{alert_id} for driver {alert["driver_name"]}'
+            ))
             
             return jsonify({
                 'success': True,
