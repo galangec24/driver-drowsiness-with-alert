@@ -2354,7 +2354,7 @@ def register_guardian():
             'error': 'Registration failed. Please try again.'
         }), 500
 
-# ==================== GUARDIAN DASHBOARD ====================
+#region Guardian Data
 @app.route('/api/guardian/dashboard', methods=['GET'])
 def guardian_dashboard():
     """Get guardian dashboard data"""
@@ -2421,7 +2421,54 @@ def guardian_dashboard():
             'error': str(e)
         }), 500
 
-# ==================== GET GUARDIAN DETAILS ENDPOINT ====================
+@app.route('/api/guardian/<guardian_id>/drivers', methods=['GET'])
+def get_guardian_drivers_endpoint(guardian_id):
+    """Get all drivers for a specific guardian"""
+    try:
+        token = request.args.get('token')
+        
+        if not token:
+            return jsonify({
+                'success': False,
+                'error': 'Authentication token required'
+            }), 401
+        
+        # Validate session
+        if not validate_session(guardian_id, token):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid or expired session'
+            }), 401
+        
+        drivers = get_guardian_drivers(guardian_id)
+        
+        # Add face image count for each driver
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            for driver in drivers:
+                cursor.execute('SELECT COUNT(*) FROM face_images WHERE driver_id = %s', 
+                             (driver['driver_id'],))
+                result = cursor.fetchone()
+                if isinstance(result, dict):
+                    driver['face_image_count'] = result['count']
+                else:
+                    driver['face_image_count'] = result[0]
+        
+        return jsonify({
+            'success': True,
+            'session_valid': True,
+            'guardian_id': guardian_id,
+            'count': len(drivers),
+            'drivers': drivers
+        })
+        
+    except Exception as e:
+        print(f"❌ Error in get_guardian_drivers_endpoint: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @app.route('/api/guardian/<int:guardian_id>', methods=['GET'])
 def get_guardian_details(guardian_id):
     try:
@@ -2457,7 +2504,6 @@ def get_guardian_details(guardian_id):
                     'error': 'Guardian not found'
                 }), 404
             
-            # Convert to dictionary
             if isinstance(result, dict):
                 guardian = result
             else:
@@ -2488,7 +2534,59 @@ def get_guardian_details(guardian_id):
             'error': str(e)
         }), 500
 
-# ==================== DRIVER REGISTRATION WITH CLOUDINARY ====================
+@app.route('/api/guardian/activity', methods=['GET'])
+def get_guardian_activity():
+    """Get activity log for a guardian"""
+    try:
+        guardian_id = request.args.get('guardian_id')
+        token = request.args.get('token')
+        limit = request.args.get('limit', 20, type=int)
+
+        if not guardian_id or not token:
+            return jsonify({'success': False, 'error': 'Authentication required'}), 401
+
+        # Validate session
+        if not validate_session(guardian_id, token):
+            return jsonify({'success': False, 'error': 'Invalid or expired session'}), 401
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT log_id, action, details, ip_address, user_agent, timestamp
+                FROM activity_log
+                WHERE guardian_id = %s
+                ORDER BY timestamp DESC
+                LIMIT %s
+            ''', (guardian_id, limit))
+
+            logs = cursor.fetchall()
+            logs_list = []
+            for log in logs:
+                if isinstance(log, dict):
+                    logs_list.append(log)
+                else:
+                    logs_list.append({
+                        'log_id': log[0],
+                        'action': log[1],
+                        'details': log[2],
+                        'ip_address': log[3],
+                        'user_agent': log[4],
+                        'timestamp': log[5].isoformat() if log[5] else None
+                    })
+
+        return jsonify({
+            'success': True,
+            'count': len(logs_list),
+            'activities': logs_list
+        })
+
+    except Exception as e:
+        print(f"❌ Error in get_guardian_activity: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+#end Region
+
+#region Driver Management
 @app.route('/api/register-driver', methods=['POST'])
 def register_driver():
     """Register a new driver with face images uploaded to Cloudinary - FIXED VERSION"""
@@ -2506,9 +2604,6 @@ def register_driver():
         print(f"\n🔍 [DRIVER REGISTRATION] Extracted data:")
         print(f"   Driver Name: {driver_name}")
         print(f"   Driver Phone: {driver_phone}")
-        print(f"   Guardian ID: {guardian_id}")
-        print(f"   Token present: {bool(token)}")
-        print(f"   Token length: {len(token) if token else 0}")
         print(f"   Face images count: {len(face_images)}")
         
         # Validate required fields
@@ -2517,24 +2612,21 @@ def register_driver():
             print(f"   driver_name: {bool(driver_name)}")
             print(f"   driver_phone: {bool(driver_phone)}")
             print(f"   guardian_id: {bool(guardian_id)}")
-            print(f"   token: {bool(token)}")
+
             return jsonify({
                 'success': False,
                 'error': 'Missing required fields: driver_name, driver_phone, guardian_id, or token'
             }), 400
         
-        print(f"\n🔐 [DRIVER REGISTRATION] Validating session for guardian_id: {guardian_id}")
         
         # Validate guardian session
         if not validate_session(guardian_id, token):
-            print(f"❌ [DRIVER REGISTRATION] Session validation failed for guardian_id: {guardian_id}")
+
             return jsonify({
                 'success': False,
                 'error': 'Invalid or expired guardian session. Please login again.'
             }), 401
-        
-        print("✅ [DRIVER REGISTRATION] Session validated successfully")
-        
+                
         # Validate face images - need at least 3 for different angles
         if len(face_images) < 3:
             print(f"❌ [DRIVER REGISTRATION] Not enough face images: {len(face_images)} (need at least 3)")
@@ -2643,20 +2735,13 @@ def register_driver():
                         image_base64 = image_base64.split(',')[1]
                     
                     if not image_base64 or len(image_base64) < 100:
-                        print(f"⚠️ [DRIVER REGISTRATION] Skipping empty/invalid image")
                         upload_errors.append(f"Image {i} is empty or invalid")
                         continue
                     
                     try:
-                        # Generate unique public ID for Cloudinary
                         timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
                         public_id = f"driver_faces/{driver_id}/{capture_angle}_{timestamp_str}"
-                        
-                        print(f"📤 Uploading to Cloudinary...")
-                        
-                        # Upload to Cloudinary with timeout
                         upload_start = time.time()
-                        
                         upload_result = cloudinary.uploader.upload(
                             f"data:image/jpeg;base64,{image_base64}",
                             public_id=public_id,
@@ -2702,14 +2787,8 @@ def register_driver():
                         
                     except Exception as upload_error:
                         error_msg = f"Error uploading image {i} ({capture_angle}): {str(upload_error)}"
-                        print(f" DRIVER REGISTRATION not successful: {error_msg}")
-                        print(f"   Error type: {type(upload_error).__name__}")
                         upload_errors.append(error_msg)
                         continue
-                
-                print(f"\n📊 [DRIVER REGISTRATION] Cloudinary upload summary:")
-                print(f"   Successfully uploaded: {len(saved_images)}")
-                print(f"   Upload errors: {len(upload_errors)}")
                 
                 if len(saved_images) == 0 and len(upload_errors) > 0:
                     print(f"⚠️ [DRIVER REGISTRATION] All Cloudinary uploads failed, falling back to local storage")
@@ -2977,54 +3056,6 @@ def get_driver_face_images(driver_id):
             
     except Exception as e:
         print(f"❌ Error in get_driver_face_images: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/guardian/<guardian_id>/drivers', methods=['GET'])
-def get_guardian_drivers_endpoint(guardian_id):
-    """Get all drivers for a specific guardian"""
-    try:
-        token = request.args.get('token')
-        
-        if not token:
-            return jsonify({
-                'success': False,
-                'error': 'Authentication token required'
-            }), 401
-        
-        # Validate session
-        if not validate_session(guardian_id, token):
-            return jsonify({
-                'success': False,
-                'error': 'Invalid or expired session'
-            }), 401
-        
-        drivers = get_guardian_drivers(guardian_id)
-        
-        # Add face image count for each driver
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            for driver in drivers:
-                cursor.execute('SELECT COUNT(*) FROM face_images WHERE driver_id = %s', 
-                             (driver['driver_id'],))
-                result = cursor.fetchone()
-                if isinstance(result, dict):
-                    driver['face_image_count'] = result['count']
-                else:
-                    driver['face_image_count'] = result[0]
-        
-        return jsonify({
-            'success': True,
-            'session_valid': True,
-            'guardian_id': guardian_id,
-            'count': len(drivers),
-            'drivers': drivers
-        })
-        
-    except Exception as e:
-        print(f"❌ Error in get_guardian_drivers_endpoint: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
@@ -4369,32 +4400,6 @@ def startup_tasks():
     for method, path, desc in endpoints:
         print(f"   • {method:6} {path:30} - {desc}")
     
-    # Authentication info
-    print(f"\n🔐 Authentication Info:")
-    print("  • Admin Username: admin")
-    print("  • Admin Password: admin123")
-    print("  • Guardian Registration: Open to public")
-    print("  • Google OAuth: " + ("Enabled" if google_client_id and google_client_id != 'your-google-client-id-here' else "Disabled"))
-    print("  • Firebase Domain: guardian-drive-app.web.app")
-    print("  • Cloudinary: " + ("Enabled" if CLOUDINARY_ENABLED else "Disabled"))
-    
-    # Real-time features
-    print(f"\n⚡ Real-time Features:")
-    print(f"  • WebSocket Alerts: Enabled")
-    print(f"  • Active Clients: {len(connected_clients)}")
-    print(f"  • Active Sessions: {len(active_sessions)}")
-    print(f"  • Firebase CORS: Configured")
-    
-    # Startup completion
-    print(f"\n✅ Startup Tasks Complete")
-    print(f"   Server Time: {datetime.now().strftime('%Y-%m-d %H:%M:%S')}")
-    
-    print(f"\n🚀 Ready to accept connections")
-    print(f"   Render Backend: https://driver-drowsiness-with-alert.onrender.com")
-    print(f"   Firebase Frontend: https://guardian-drive-app.web.app")
-    print(f"   Health Check: https://driver-drowsiness-with-alert.onrender.com/api/health")
-    print(f"   WebSocket: wss://driver-drowsiness-with-alert.onrender.com/socket.io/")
-    print(f"{'='*70}\n")
 
 # ==================== MAIN ENTRY POINT ====================
 if __name__ == '__main__':
