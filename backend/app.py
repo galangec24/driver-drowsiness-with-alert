@@ -1050,11 +1050,9 @@ def get_guardian_by_id(guardian_id):
         return None
 
 def log_activity(guardian_id=None, admin_username=None, action=None, details=None):
-    """Log guardian or admin activity"""
     try:
         ip_address = request.remote_addr if request else None
         user_agent = request.headers.get('User-Agent') if request else None
-        
         with get_db_cursor() as cursor:
             if admin_username:
                 cursor.execute('''
@@ -1496,7 +1494,6 @@ def google_login():
             
             print(f"✅ Google token verified successfully: {email}")
             print(f"   Name: {name}")
-            print(f"   Google ID: {google_id}")
             
         except Exception as e:
             print(f"❌ Google token verification failed: {e}")
@@ -1676,6 +1673,8 @@ def google_login_direct():
         # Create session
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
         
+        log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google login from {request.remote_addr}')
+        
         return jsonify({
             'success': True,
             'guardian_id': guardian_id,
@@ -1769,6 +1768,8 @@ def google_login_with_email():
                 print(f"✅ New user created: {full_name} (ID: {guardian_id})")
         
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
+       
+        log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google login from {request.remote_addr}')
         
         return jsonify({
             'success': True,
@@ -1841,6 +1842,8 @@ def google_login_simple():
                 conn.commit()
         
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
+       
+        log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google login from {request.remote_addr}')
         
         return jsonify({
             'success': True,
