@@ -1050,22 +1050,29 @@ def get_guardian_by_id(guardian_id):
         return None
 
 def log_activity(guardian_id=None, admin_username=None, action=None, details=None):
+    """Log guardian or admin activity with debug output"""
     try:
         ip_address = request.remote_addr if request else None
         user_agent = request.headers.get('User-Agent') if request else None
+        
+        print(f"🔍 [LOG_ACTIVITY] Attempting to log: action={action}, guardian={guardian_id}, admin={admin_username}")
+        
         with get_db_cursor() as cursor:
             if admin_username:
                 cursor.execute('''
                     INSERT INTO admin_activity_log (admin_username, action, details, ip_address, user_agent)
                     VALUES (%s, %s, %s, %s, %s)
                 ''', (admin_username, action, details, ip_address, user_agent))
+                print(f"✅ [LOG_ACTIVITY] Admin log inserted for {admin_username}")
             else:
                 cursor.execute('''
                     INSERT INTO activity_log (guardian_id, action, details, ip_address, user_agent)
                     VALUES (%s, %s, %s, %s, %s)
                 ''', (guardian_id, action, details, ip_address, user_agent))
+                print(f"✅ [LOG_ACTIVITY] Guardian log inserted for {guardian_id}")
     except Exception as e:
-        print(f"⚠️ Error logging activity: {e}")
+        print(f"⚠️ [LOG_ACTIVITY] Error: {e}")
+        traceback.print_exc()
 
 # ==================== HELPER FUNCTIONS ====================
 def get_guardian_drivers(guardian_id):
@@ -1591,14 +1598,8 @@ def google_login():
                 token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
                 
                 # Log activity
-                cursor.execute('''
-                    INSERT INTO activity_log (guardian_id, action, details)
-                    VALUES (%s, %s, %s)
-                ''', (
-                    guardian_id,
-                    'GOOGLE_LOGIN',
-                    f'Google login from {request.remote_addr}'
-                ))
+                log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google login from {request.remote_addr}')
+                conn.commit()
                 
                 return jsonify({
                     'success': True,
@@ -1681,15 +1682,10 @@ def google_login_direct():
         # Create session
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
         
-        cursor.execute('''
-            INSERT INTO activity_log (guardian_id, action, details)
-            VALUES (%s, %s, %s)
-        ''', (
-            guardian_id,
-            'GOOGLE_LOGIN',
-            f'Google login from {request.remote_addr}'
-        ))
+        log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google direct login from {request.remote_addr}')
         
+        conn.commit()
+
         return jsonify({
             'success': True,
             'guardian_id': guardian_id,
@@ -1784,14 +1780,9 @@ def google_login_with_email():
         
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
        
-        cursor.execute('''
-            INSERT INTO activity_log (guardian_id, action, details)
-            VALUES (%s, %s, %s)
-        ''', (
-            guardian_id,
-            'GOOGLE_LOGIN',
-            f'Google login from {request.remote_addr}'
-        ))
+        log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google email login from {request.remote_addr}')
+        
+        conn.commit()
         
         return jsonify({
             'success': True,
@@ -1865,14 +1856,9 @@ def google_login_simple():
         
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
        
-        cursor.execute('''
-            INSERT INTO activity_log (guardian_id, action, details)
-            VALUES (%s, %s, %s)
-        ''', (
-            guardian_id,
-            'GOOGLE_LOGIN',
-            f'Google login from {request.remote_addr}'
-        ))
+        log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google simple login from {request.remote_addr}')
+        
+        conn.commit()
         
         return jsonify({
             'success': True,
@@ -2685,12 +2671,8 @@ def register_driver():
         reference_number = data.get('reference_number', f"REF{str(timestamp)[-8:].upper()}")
         
         # Get additional driver info
-        driver_email = data.get('driver_email', '')
-        driver_address = data.get('driver_address', '')
         license_number = data.get('license_number', '')
         capture_angles = data.get('capture_angles', ['front', 'left', 'right'])
-        
-        print(f"\n📝 [DRIVER REGISTRATION] Processing registration for driver: {driver_name}")
         print(f"   Driver ID: {driver_id}")
         print(f"   Reference Number: {reference_number}")
         
@@ -2748,6 +2730,8 @@ def register_driver():
                     f'Registered driver: {driver_name} (ID: {driver_id}) with {len(saved_images)} face images'
                 ))
                 
+                conn.commit()
+
             except Exception as db_error:
                 print(f"❌ [DRIVER REGISTRATION] Database insertion failed: {db_error}")
                 return jsonify({
@@ -3873,6 +3857,7 @@ def admin_login():
             
             log_activity(admin_username=username, action='ADMIN_LOGIN', 
                         details=f'Admin logged in from {request.remote_addr}')
+            
             
             return jsonify({
                 'success': True,
