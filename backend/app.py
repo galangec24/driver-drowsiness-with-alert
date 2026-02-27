@@ -29,6 +29,9 @@ from contextlib import contextmanager
 import urllib.parse
 import traceback
 import requests
+import face_recognition
+from PIL import Image
+import io
 
 # Cloudinary imports
 import cloudinary
@@ -625,11 +628,24 @@ def update_db_schema():
         print(f"❌ Database schema update failed: {e}")
         return False
 
-# ==================== CUSTOM HTTP SESSION FOR GOOGLE AUTH (with retries) ====================
+def get_guardian_for_driver(driver_id):
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT guardian_id FROM drivers WHERE driver_id = %s AND is_active = TRUE', (driver_id,))
+            result = cursor.fetchone()
+            if result:
+                return result['guardian_id'] if isinstance(result, dict) else result[0]
+            return None
+    except Exception as e:
+        print(f"❌ Error getting guardian for driver {driver_id}: {e}")
+        return None
+
+
+#region Session AUTH
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# Create a custom session with retries for Google API calls
 google_session = requests.Session()
 retry_strategy = Retry(
     total=3,
@@ -646,7 +662,6 @@ class CustomRequest(google.auth.transport.requests.Request):
     def __init__(self, session=None):
         super().__init__(session=session or google_session)
 
-# ==================== GOOGLE TOKEN VERIFICATION (HYBRID APPROACH) ====================
 _certs_cache = None
 _certs_cache_time = 0
 CERTS_REFRESH_INTERVAL = 6 * 3600  # refresh every 6 hours
@@ -855,7 +870,9 @@ def invalidate_session(guardian_id, token=None):
         print(f"❌ Error invalidating session: {e}")
         return False
 
-# ==================== AUTHENTICATION FUNCTIONS ====================
+#End Region
+
+#region Guardian Auth
 def verify_guardian_credentials(identifier, password):
     """Verify guardian login credentials using bcrypt - Supports email or phone"""
     try:
@@ -1074,7 +1091,9 @@ def log_activity(guardian_id=None, admin_username=None, action=None, details=Non
         print(f"⚠️ [LOG_ACTIVITY] Error: {e}")
         traceback.print_exc()
 
-# ==================== HELPER FUNCTIONS ====================
+#end Region
+
+#region Global Funct
 def get_guardian_drivers(guardian_id):
     """Get all drivers registered by a guardian"""
     try:
@@ -1156,8 +1175,9 @@ def get_driver_by_name_or_id(identifier):
     except Exception as e:
         print(f"❌ Error getting driver: {e}")
         return None
+#end Region
 
-# ==================== SECURITY MIDDLEWARE ====================
+#region Security
 @app.after_request
 def add_security_headers(response):
     """Add security headers to all responses"""
@@ -1228,7 +1248,7 @@ def handle_connect():
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    """Handle client disconnection with cleanup"""
+    """Handle client disconnection with cleanup and notify guardian if driver"""
     client_id = request.sid
     if client_id in connected_clients:
         client_info = connected_clients[client_id]
@@ -1236,11 +1256,25 @@ def handle_disconnect():
         
         print(f"\n{'='*60}")
         print(f"⚠️ WebSocket client disconnected: {client_id}")
+        print(f"   Type: {client_info.get('type', 'unknown')}")
         print(f"   Guardian ID: {client_info.get('guardian_id', 'None')}")
+        print(f"   Driver ID: {client_info.get('driver_id', 'None')}")
         print(f"   Authenticated: {client_info.get('authenticated', False)}")
         print(f"   Connected for: {connected_duration.total_seconds():.1f} seconds")
         print(f"   IP: {client_info.get('ip', 'Unknown')}")
         print(f"{'='*60}\n")
+        
+        # If it was a driver, notify its guardian
+        if client_info.get('type') == 'driver':
+            guardian_id = client_info.get('guardian_id')
+            driver_id = client_info.get('driver_id')
+            driver_name = client_info.get('driver_name', 'Unknown')
+            if guardian_id:
+                socketio.emit('driver_disconnected', {
+                    'driver_id': driver_id,
+                    'driver_name': driver_name
+                }, room=f'guardian_{guardian_id}')
+                print(f"   Notified guardian {guardian_id} that driver {driver_id} ({driver_name}) disconnected")
         
         # Clean up
         del connected_clients[client_id]
@@ -1314,24 +1348,210 @@ def handle_guardian_auth(data):
             })
             return
         else:
-            # Still success even if we can't get details
             emit('auth_confirmed', {
                 'success': True,
                 'guardian_id': guardian_id,
                 'timestamp': datetime.now().isoformat()
             })
             return
-    
-    # If validation fails, check if this is a Google auth token that might need special handling
+
     if auth_provider == 'google':
-        print(f"⚠️ Google auth token validation failed, checking alternative...")
-        # You could add Google token validation here if needed
-    
-    print(f"❌ WebSocket authentication failed for client: {client_id}")
-    emit('auth_failed', {
-        'error': 'Authentication failed',
-        'timestamp': datetime.now().isoformat()
+   
+        emit('auth_failed', {
+            'error': 'Authentication failed',
+            'timestamp': datetime.now().isoformat()
+        })
+
+@socketio.on('driver_authenticate')
+def handle_driver_auth(data):
+    """Driver authentication via WebSocket"""
+    client_id = request.sid
+    driver_id = data.get('driver_id')
+    # Optional: api_key = data.get('api_key') – can be added for extra security
+
+    print(f"\n🔐 Driver authentication attempt: {driver_id}")
+
+    if not driver_id:
+        emit('auth_failed', {'error': 'Missing driver_id'})
+        return
+
+    # Verify driver exists and is active, get guardian_id
+    guardian_id = get_guardian_for_driver(driver_id)
+    if not guardian_id:
+        emit('auth_failed', {'error': 'Driver not found or inactive'})
+        return
+
+    # Fetch driver name for better notifications
+    driver_name = 'Unknown'
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT name FROM drivers WHERE driver_id = %s', (driver_id,))
+            result = cursor.fetchone()
+            if result:
+                driver_name = result['name'] if isinstance(result, dict) else result[0]
+    except Exception as e:
+        print(f"⚠️ Could not fetch driver name: {e}")
+
+    # Update client info
+    if client_id in connected_clients:
+        connected_clients[client_id]['type'] = 'driver'
+        connected_clients[client_id]['driver_id'] = driver_id
+        connected_clients[client_id]['guardian_id'] = guardian_id
+        connected_clients[client_id]['driver_name'] = driver_name
+        connected_clients[client_id]['authenticated'] = True
+        connected_clients[client_id]['auth_time'] = datetime.now()
+
+    # Join driver's personal room (for targeted messages)
+    socketio.enter_room(client_id, f'driver_{driver_id}')
+    print(f"   Joined room driver_{driver_id}")
+
+    emit('auth_confirmed', {
+        'success': True,
+        'driver_id': driver_id,
+        'guardian_id': guardian_id,
+        'driver_name': driver_name,
+        'message': 'Driver authenticated'
     })
+
+@socketio.on('webrtc_offer')
+def handle_webrtc_offer(data):
+    """Forward a WebRTC offer from driver to its guardian, or from guardian to driver."""
+    client_id = request.sid
+    client_info = connected_clients.get(client_id, {})
+    client_type = client_info.get('type')
+
+    if client_type == 'driver':
+        # Driver is offering to its guardian
+        guardian_id = client_info.get('guardian_id')
+        if not guardian_id:
+            emit('error', {'error': 'Unknown guardian'})
+            return
+        # Forward to guardian's room
+        data['from_driver'] = client_info.get('driver_id')
+        socketio.emit('webrtc_offer', data, room=f'guardian_{guardian_id}')
+        print(f"📤 Forwarded offer from driver {client_info.get('driver_id')} to guardian {guardian_id}")
+
+    elif client_type == 'guardian':
+        driver_id = data.get('driver_id')
+        if not driver_id:
+            emit('error', {'error': 'Missing driver_id'})
+            return
+        socketio.emit('webrtc_offer', data, room=f'driver_{driver_id}')
+        print(f"📤 Forwarded offer from guardian to driver {driver_id}")
+
+    else:
+        emit('error', {'error': 'Unauthenticated client'})
+
+@socketio.on('webrtc_answer')
+def handle_webrtc_answer(data):
+    """Forward a WebRTC answer from guardian to driver."""
+    client_id = request.sid
+    client_info = connected_clients.get(client_id, {})
+    client_type = client_info.get('type')
+
+    if client_type == 'guardian':
+        # Guardian answering a driver's offer
+        driver_id = data.get('driver_id')
+        if not driver_id:
+            emit('error', {'error': 'Missing driver_id'})
+            return
+        socketio.emit('webrtc_answer', data, room=f'driver_{driver_id}')
+        print(f"📤 Forwarded answer from guardian to driver {driver_id}")
+
+    elif client_type == 'driver':
+        # Driver answering a guardian's offer (rare, but symmetric)
+        guardian_id = client_info.get('guardian_id')
+        if not guardian_id:
+            emit('error', {'error': 'Unknown guardian'})
+            return
+        socketio.emit('webrtc_answer', data, room=f'guardian_{guardian_id}')
+        print(f"📤 Forwarded answer from driver to guardian {guardian_id}")
+
+    else:
+        emit('error', {'error': 'Unauthenticated client'})
+        
+@socketio.on('webrtc_ice_candidate')
+def handle_webrtc_ice(data):
+    """Forward ICE candidates between driver and guardian."""
+    client_id = request.sid
+    client_info = connected_clients.get(client_id, {})
+    client_type = client_info.get('type')
+    target = data.get('target')  # 'driver' or 'guardian'
+
+    if not target:
+        emit('error', {'error': 'Missing target'})
+        return
+
+    if target == 'driver':
+        # Candidate should go to the driver
+        driver_id = data.get('driver_id')
+        if not driver_id:
+            emit('error', {'error': 'Missing driver_id'})
+            return
+        socketio.emit('webrtc_ice_candidate', data, room=f'driver_{driver_id}')
+        print(f"📤 Forwarded ICE candidate to driver {driver_id}")
+
+    elif target == 'guardian':
+        # Candidate should go to the guardian
+        guardian_id = data.get('guardian_id') or client_info.get('guardian_id')
+        if not guardian_id:
+            emit('error', {'error': 'Missing guardian_id'})
+            return
+        socketio.emit('webrtc_ice_candidate', data, room=f'guardian_{guardian_id}')
+        print(f"📤 Forwarded ICE candidate to guardian {guardian_id}")
+
+    else:
+        emit('error', {'error': 'Invalid target'})
+
+@socketio.on('driver_alert')
+def handle_driver_alert(data):
+    """Receive a drowsiness alert from a driver, save it, and forward to guardian."""
+    client_id = request.sid
+    client_info = connected_clients.get(client_id, {})
+    driver_id = client_info.get('driver_id') or data.get('driver_id')
+
+    if not driver_id:
+        emit('error', {'error': 'Unknown driver'})
+        return
+
+    guardian_id = client_info.get('guardian_id') or get_guardian_for_driver(driver_id)
+    if not guardian_id:
+        emit('error', {'error': 'Cannot determine guardian'})
+        return
+
+    alert_data = {
+        'driver_id': driver_id,
+        'driver_name': data.get('driver_name', 'Unknown'),
+        'guardian_id': guardian_id,
+        'severity': data.get('severity', 'high'),
+        'message': data.get('message', 'Drowsiness detected'),
+        'confidence': data.get('confidence', 0.0),
+        'timestamp': datetime.now().isoformat(),
+        'detection_details': data.get('detection_details', {})
+    }
+
+    # Save to database (reuse your existing send_alert logic, or call it via requests)
+    # For simplicity, we can directly insert into the alerts table here.
+    try:
+        with get_db_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO alerts (driver_id, guardian_id, severity, message, detection_details, source)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            ''', (
+                driver_id,
+                guardian_id,
+                alert_data['severity'],
+                alert_data['message'],
+                json.dumps(alert_data['detection_details']),
+                'drowsiness_detection'
+            ))
+    except Exception as e:
+        print(f"❌ Error saving alert: {e}")
+
+    # Forward to guardian
+    socketio.emit('guardian_alert', alert_data, room=f'guardian_{guardian_id}')
+    print(f"🚨 Alert forwarded to guardian {guardian_id}")
 
 @socketio.on('ping')
 def handle_ping():
@@ -1905,16 +2125,15 @@ def debug_google_certs():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ==================== GUARDIAN AUTHENTICATION ====================
+#region Guardian Auth
 @app.route('/api/login', methods=['POST'])
 def login():
     """Guardian login with email/phone + password"""
     try:
         data = request.json
-        identifier = data.get('identifier', '').strip()   # could be email or phone
+        identifier = data.get('identifier', '').strip()  
         password = data.get('password', '')
 
-        print(f"\n🔑 [LOGIN API] Attempting login with identifier: '{identifier}'")
 
         if not identifier or not password:
             return jsonify({'success': False, 'error': 'Identifier and password required'}), 400
@@ -1984,7 +2203,7 @@ def troubleshoot_google_auth():
                 'length': len(os.environ.get('GOOGLE_CLIENT_ID', '')),
                 'format_valid': 'googleusercontent.com' in os.environ.get('GOOGLE_CLIENT_ID', ''),
                 'starts_with_numbers': os.environ.get('GOOGLE_CLIENT_ID', '').split('-')[0].isdigit() if '-' in os.environ.get('GOOGLE_CLIENT_ID', '') else False,
-                'exact_value': os.environ.get('GOOGLE_CLIENT_ID', 'NOT SET')  # Full value for debugging
+                'exact_value': os.environ.get('GOOGLE_CLIENT_ID', 'NOT SET')  
             },
             'google_client_secret': {
                 'present': bool(os.environ.get('GOOGLE_CLIENT_SECRET')),
@@ -2142,6 +2361,7 @@ def troubleshoot_google_auth():
             'traceback': traceback.format_exc(),
             'timestamp': datetime.now().isoformat()
         }), 500
+#end Region
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
@@ -2164,7 +2384,6 @@ def logout():
                 'error': 'Invalid or expired session'
             }), 401
         
-        # Invalidate session
         invalidate_session(guardian_id, token)
         log_activity(guardian_id, 'LOGOUT', 'Guardian logged out')
 
@@ -2620,11 +2839,8 @@ def register_driver():
         guardian_id = data.get('guardian_id')
         token = data.get('token')
         face_images = data.get('face_images', [])  
-        
-        print(f"\n🔍 [DRIVER REGISTRATION] Extracted data:")
-        print(f"   Driver Name: {driver_name}")
-        print(f"   Driver Phone: {driver_phone}")
-        print(f"   Face images count: {len(face_images)}")
+        driver_email = data.get('driver_email')
+        driver_address = data.get('driver_address')
         
         # Validate required fields
         if not all([driver_name, driver_phone, guardian_id, token]):
@@ -2784,11 +3000,6 @@ def register_driver():
                         cloudinary_url = upload_result.get('secure_url')
                         public_id = upload_result.get('public_id')
                         
-                        print(f"✅ Image {i} uploaded to Cloudinary successfully!")
-                        print(f"   URL: {cloudinary_url[:60]}...")
-                        print(f"   Upload time: {upload_time:.2f} seconds")
-                        
-                        # Store Cloudinary URL in database
                         cursor.execute('''
                             INSERT INTO face_images (driver_id, image_path, capture_date)
                             VALUES (%s, %s, %s)
@@ -3140,6 +3351,95 @@ def get_driver_details(driver_id):
         }), 500
 
 # ==================== Driver Monitoring (WEBRTc) ==================
+@app.route('/api/identify-driver', methods=['POST'])
+def identify_driver():
+    data = request.json
+    if not data or 'image' not in data:
+        return jsonify({'success': False, 'error': 'No image provided'}), 400
+
+    # Decode base64 image
+    try:
+        image_data = base64.b64decode(data['image'].split(',')[-1])
+        pil_image = Image.open(io.BytesIO(image_data)).convert('RGB')
+        img_np = np.array(pil_image)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Invalid image: {str(e)}'}), 400
+
+    # Find face in the uploaded image
+    face_locations = face_recognition.face_locations(img_np)
+    if not face_locations:
+        return jsonify({'success': False, 'error': 'No face detected in image'}), 400
+
+    unknown_encoding = face_recognition.face_encodings(img_np, face_locations)[0]
+
+    # Fetch all drivers from database (only those with face images)
+    drivers = []
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT d.driver_id, d.name, d.guardian_id, f.image_path
+            FROM drivers d
+            JOIN face_images f ON d.driver_id = f.driver_id
+            WHERE d.is_active = TRUE
+        ''')
+        rows = cursor.fetchall()
+        # Group by driver – we'll keep one encoding per driver (use first face image)
+        driver_encodings = {}
+        for row in rows:
+            if isinstance(row, dict):
+                driver_id = row['driver_id']
+                guardian_id = row['guardian_id']
+                image_url = row['image_path']
+            else:
+                driver_id, name, guardian_id, image_url = row
+            if driver_id not in driver_encodings:
+                # Download the image and get encoding
+                try:
+                    resp = requests.get(image_url, timeout=5)
+                    resp.raise_for_status()
+                    img_pil = Image.open(io.BytesIO(resp.content)).convert('RGB')
+                    img_arr = np.array(img_pil)
+                    locs = face_recognition.face_locations(img_arr)
+                    if locs:
+                        enc = face_recognition.face_encodings(img_arr, locs)[0]
+                        driver_encodings[driver_id] = {
+                            'encoding': enc,
+                            'name': name,
+                            'guardian_id': guardian_id
+                        }
+                except Exception as e:
+                    print(f"⚠️ Error processing driver {driver_id}: {e}")
+
+    if not driver_encodings:
+        return jsonify({'success': False, 'error': 'No registered drivers with face data'}), 404
+
+    # Compare unknown encoding with all stored encodings
+    best_match = None
+    best_distance = 1.0
+    for driver_id, data in driver_encodings.items():
+        distance = face_recognition.face_distance([data['encoding']], unknown_encoding)[0]
+        if distance < best_distance:
+            best_distance = distance
+            best_match = (driver_id, data['name'], data['guardian_id'])
+
+    threshold = 0.5  # adjust as needed
+    if best_match and best_distance < threshold:
+        driver_id, driver_name, guardian_id = best_match
+        return jsonify({
+            'success': True,
+            'driver_id': driver_id,
+            'driver_name': driver_name,
+            'guardian_id': guardian_id,
+            'confidence': 1 - best_distance,
+            'message': 'Driver identified'
+        })
+    else:
+        return jsonify({
+            'success': False,
+            'error': 'No matching driver found',
+            'best_distance': best_distance if best_match else None
+        }), 404
+
 
 @app.route('/api/driver/<driver_id>/guardian', methods=['GET'])
 def get_driver_guardian(driver_id):
