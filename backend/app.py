@@ -3463,6 +3463,22 @@ def store_embedding(driver_id):
         conn.commit()
     return jsonify({'success': True, 'message': 'Embedding stored'})
 
+@app.route('/api/driver/<driver_id>/name', methods=['GET'])
+def get_driver_name(driver_id):
+    # Optional: simple API key check for security
+    api_key = request.args.get('api_key')
+    if api_key != os.getenv('CLIENT_API_KEY', 'your_secret_key'):
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cursor.execute('SELECT name, guardian_id FROM drivers WHERE driver_id = %s', (driver_id,))
+        driver = cursor.fetchone()
+        if driver:
+            return jsonify({'success': True, 'name': driver['name'], 'guardian_id': driver['guardian_id']})
+        else:
+            return jsonify({'success': False, 'error': 'Driver not found'}), 404
+
 @app.route('/api/driver/<driver_id>/guardian', methods=['GET'])
 def get_driver_guardian(driver_id):
     """Get guardian ID for a driver (for WebRTC connection)"""
