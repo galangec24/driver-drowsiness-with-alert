@@ -8,7 +8,6 @@ gunicorn==21.2.0
 python-dotenv==1.0.0
 psycopg2-binary==2.9.7
 Pillow==10.0.0
-numpy==1.24.3
 
 # Security & Utilities
 pyjwt==2.8.0
@@ -29,9 +28,3 @@ dnspython==2.3.0
 # Certification
 pyopenssl==23.3.0
 cryptography==41.0.7
-
-# Face Recognition (Render-compatible)
-deepface==0.0.79
-tensorflow-cpu==2.10.0
-scipy==1.10.1
-opencv-python-headless==4.8.1.78

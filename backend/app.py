@@ -4,7 +4,7 @@ import sys
 import dns.resolver
 dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
 dns.resolver.default_resolver.nameservers = ['8.8.8.8', '8.8.4.4'] 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -47,17 +47,15 @@ import google.auth.transport.requests
 import numpy as np
 from PIL import Image
 import io
-from deepface import DeepFace
 import psycopg2.extras
 
-# ==================== POSTGRESQL CONFIGURATION ====================
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
 
 
 
-# ==================== APP SETUP ====================
+#region Backend Setup
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
@@ -127,9 +125,9 @@ if all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
 else:
     CLOUDINARY_ENABLED = False
     print("⚠️  Cloudinary not configured. Check environment variables.")
+#end Region
 
-# ==================== FIREBASE HOSTING INTEGRATION ====================
-# List of allowed origins (Firebase domains + localhost for development)
+#region Firebase CORS
 ALLOWED_ORIGINS = [
     'https://guardian-drive-app.web.app',
     'https://guardian-drive-app.firebaseapp.com',
@@ -195,9 +193,9 @@ socketio = SocketIO(
     websocket_ping_interval=25,   
     websocket_ping_timeout=60     
 )
+#end Region
 
-# ==================== SECURITY CONFIGURATION ====================
-# Generate bcrypt hash for admin password (admin123)
+#region Admin (Initial)
 ADMIN_PASSWORD_HASH = bcrypt.hashpw(b'admin123', bcrypt.gensalt(rounds=12)).decode('utf-8')
 
 ADMIN_CREDENTIALS = {
@@ -212,6 +210,7 @@ ADMIN_CREDENTIALS = {
 
 admin_rate_limit = {}
 admin_sessions = {}
+#end Region
 
 #region Clean Password
 def clean_password(password):
@@ -256,7 +255,7 @@ def verify_password(password, hashed_password):
 
 #end Region
 
-#region Admin Cred
+#region Admin Data
 def verify_admin_credentials(username, password):
     """Verify admin login credentials"""
     if username not in ADMIN_CREDENTIALS:
@@ -1624,16 +1623,7 @@ def health_check():
     """Health check endpoint with face recognition status"""
     try:
         # Test DeepFace availability
-        deepface_available = False
-        deepface_version = None
-        try:
-            import deepface
-            deepface_available = True
-            deepface_version = deepface.__version__
-        except ImportError:
-            pass
-        except Exception as e:
-            print(f"⚠️ DeepFace import error: {e}")
+       
         
         # Count drivers with face embeddings
         drivers_with_embeddings = 0
@@ -1657,14 +1647,6 @@ def health_check():
             'database': 'postgresql',
             'google_auth': bool(GOOGLE_CLIENT_ID),
             'cloudinary_enabled': CLOUDINARY_ENABLED,
-            # NEW: Face recognition info
-            'face_recognition': {
-                'enabled': deepface_available,
-                'version': deepface_version,
-                'backend': 'DeepFace with Facenet',
-                'drivers_with_embeddings': drivers_with_embeddings,
-                'models_loaded': ['Facenet'] if deepface_available else []
-            },
             'firebase_integration': True,
             'allowed_origins': ALLOWED_ORIGINS,
             'websocket_connections': len(connected_clients),
@@ -1700,17 +1682,6 @@ def websocket_status():
                     'client_type': info.get('type', 'unknown')  # 'guardian' or 'driver'
                 }
         
-        # Count drivers with face embeddings
-        drivers_with_embeddings = 0
-        try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM drivers WHERE face_embedding IS NOT NULL")
-                result = cursor.fetchone()
-                drivers_with_embeddings = result[0] if result else 0
-        except:
-            pass
-        
         return jsonify({
             'success': True,
             'websocket_enabled': True,
@@ -1723,11 +1694,7 @@ def websocket_status():
             'websocket_url': 'wss://driver-drowsiness-with-alert.onrender.com/socket.io/',
             'allowed_origins': ALLOWED_ORIGINS,
             'server_time': datetime.now().isoformat(),
-            'python_version': '3.10.11',
-            'face_recognition': {
-                'enabled': True,
-                'drivers_with_embeddings': drivers_with_embeddings
-            }
+            'python_version': '3.10.11'
         })
     except Exception as e:
         return jsonify({
@@ -3452,186 +3419,53 @@ def get_driver_details(driver_id):
             'error': str(e)
         }), 500
 
-# ==================== Driver Monitoring (WEBRTc) ==================
-@app.route('/api/identify-driver', methods=['POST'])
-def identify_driver():
-    """Identify driver by face image using DeepFace"""
-    try:
-        data = request.json
-        if not data or 'image' not in data:
-            return jsonify({'success': False, 'error': 'No image provided'}), 400
+@app.route('/api/guardian/drivers-with-embeddings', methods=['GET'])
+def get_drivers_with_embeddings():
+    guardian_id = request.args.get('guardian_id')
+    token = request.args.get('token')
+    if not guardian_id or not token:
+        return jsonify({'success': False, 'error': 'Missing credentials'}), 401
+    if not validate_session(guardian_id, token):
+        return jsonify({'success': False, 'error': 'Invalid session'}), 401
 
-        # Decode base64 image
-        image_data = base64.b64decode(data['image'].split(',')[-1])
-        
-        # Save temporarily (DeepFace needs file path)
-        temp_path = '/tmp/temp_face_identification.jpg'
-        with open(temp_path, 'wb') as f:
-            f.write(image_data)
-        
-        try:
-            # Extract face embedding using Facenet
-            embedding_result = DeepFace.represent(
-                img_path=temp_path,
-                model_name='Facenet',
-                detector_backend='opencv',
-                enforce_detection=True
-            )
-            
-            if not embedding_result:
-                return jsonify({'success': False, 'error': 'No face detected'}), 400
-                
-            unknown_embedding = np.array(embedding_result[0]['embedding'])
-            
-        except Exception as e:
-            print(f"❌ DeepFace error: {e}")
-            return jsonify({'success': False, 'error': f'Face detection failed: {str(e)}'}), 400
-        finally:
-            # Clean up temp file
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-        
-        # Fetch all drivers with their face embeddings
-        with get_db_connection() as conn:
-            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-            
-            # Get all drivers with embeddings
-            cursor.execute("""
-                SELECT driver_id, name, guardian_id, face_embedding 
-                FROM drivers 
-                WHERE face_embedding IS NOT NULL AND is_active = TRUE
-            """)
-            
-            drivers = cursor.fetchall()
-            
-            if not drivers:
-                return jsonify({
-                    'success': False, 
-                    'error': 'No registered drivers with face data'
-                }), 404
-            
-            # Find best match
-            best_match = None
-            best_distance = float('inf')
-            
-            for driver in drivers:
-                try:
-                    stored_embedding = np.array(json.loads(driver['face_embedding']))
-                    # Calculate Euclidean distance
-                    distance = np.linalg.norm(unknown_embedding - stored_embedding)
-                    
-                    if distance < best_distance:
-                        best_distance = distance
-                        best_match = driver
-                except Exception as e:
-                    print(f"⚠️ Error processing driver {driver['driver_id']}: {e}")
-                    continue
-            
-            # Threshold for Facenet embeddings
-            threshold = 0.8
-            
-            if best_match and best_distance < threshold:
-                confidence = 1.0 - (best_distance / 2.0)  # Normalize to 0-1
-                
-                return jsonify({
-                    'success': True,
-                    'driver_id': best_match['driver_id'],
-                    'driver_name': best_match['name'],
-                    'guardian_id': best_match['guardian_id'],
-                    'confidence': float(confidence),
-                    'distance': float(best_distance)
-                })
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': 'No matching driver found',
-                    'best_distance': float(best_distance) if best_match else None
-                }), 404
-                
-    except Exception as e:
-        print(f"❌ Error in identify_driver: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    with get_db_connection() as conn:
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cursor.execute('''
+            SELECT driver_id, name, face_embedding
+            FROM drivers
+            WHERE guardian_id = %s AND face_embedding IS NOT NULL
+        ''', (guardian_id,))
+        drivers = cursor.fetchall()
+        # Convert embedding from JSON string to Python list
+        for d in drivers:
+            if d['face_embedding']:
+                d['face_embedding'] = json.loads(d['face_embedding'])
+    return jsonify({'success': True, 'drivers': drivers})
 
-@app.route('/api/driver/<driver_id>/generate-embedding', methods=['POST'])
-def generate_driver_embedding(driver_id):
-    """Generate face embedding for an existing driver"""
-    try:
-        guardian_id = request.args.get('guardian_id')
-        token = request.args.get('token')
-        
-        if not guardian_id or not token:
-            return jsonify({'success': False, 'error': 'Authentication required'}), 401
-        
-        if not validate_session(guardian_id, token):
-            return jsonify({'success': False, 'error': 'Invalid session'}), 401
-        
-        with get_db_connection() as conn:
-            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-            
-            # Verify driver belongs to guardian
-            cursor.execute("""
-                SELECT driver_id FROM drivers 
-                WHERE driver_id = %s AND guardian_id = %s
-            """, (driver_id, guardian_id))
-            
-            if not cursor.fetchone():
-                return jsonify({'success': False, 'error': 'Driver not found'}), 404
-            
-            # Get face images
-            cursor.execute("""
-                SELECT image_path FROM face_images 
-                WHERE driver_id = %s 
-                ORDER BY capture_date DESC LIMIT 1
-            """, (driver_id,))
-            
-            images = cursor.fetchall()
-            if not images:
-                return jsonify({'success': False, 'error': 'No face images found'}), 404
-            
-            # Download image
-            image_url = images[0]['image_path']
-            response = requests.get(image_url, timeout=10)
-            response.raise_for_status()
-            
-            # Save temporarily
-            temp_path = f'/tmp/temp_embedding_{driver_id}.jpg'
-            with open(temp_path, 'wb') as f:
-                f.write(response.content)
-            
-            try:
-                # Generate embedding
-                embedding_result = DeepFace.represent(
-                    img_path=temp_path,
-                    model_name='Facenet',
-                    detector_backend='opencv',
-                    enforce_detection=False
-                )
-                
-                if embedding_result:
-                    embedding = embedding_result[0]['embedding']
-                    embedding_json = json.dumps(embedding)
-                    
-                    cursor.execute("""
-                        UPDATE drivers 
-                        SET face_embedding = %s 
-                        WHERE driver_id = %s
-                    """, (embedding_json, driver_id))
-                    conn.commit()
-                    
-                    return jsonify({'success': True, 'message': 'Embedding generated'})
-                    
-            finally:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-                    
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+@app.route('/api/driver/<driver_id>/store-embedding', methods=['POST'])
+def store_embedding(driver_id):
+    data = request.json
+    guardian_id = data.get('guardian_id')
+    token = data.get('token')
+    embedding = data.get('embedding')   # list of floats
+    if not all([guardian_id, token, embedding]):
+        return jsonify({'success': False, 'error': 'Missing data'}), 400
+    if not validate_session(guardian_id, token):
+        return jsonify({'success': False, 'error': 'Invalid session'}), 401
+
+    # Verify driver belongs to guardian
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT driver_id FROM drivers WHERE driver_id = %s AND guardian_id = %s',
+                       (driver_id, guardian_id))
+        if not cursor.fetchone():
+            return jsonify({'success': False, 'error': 'Driver not found'}), 404
+
+        embedding_json = json.dumps(embedding)
+        cursor.execute('UPDATE drivers SET face_embedding = %s WHERE driver_id = %s',
+                       (embedding_json, driver_id))
+        conn.commit()
+    return jsonify({'success': True, 'message': 'Embedding stored'})
 
 @app.route('/api/driver/<driver_id>/guardian', methods=['GET'])
 def get_driver_guardian(driver_id):
