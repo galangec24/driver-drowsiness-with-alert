@@ -29,7 +29,6 @@ from contextlib import contextmanager
 import urllib.parse
 import traceback
 import requests
-import face_recognition
 from PIL import Image
 import io
 
@@ -39,23 +38,24 @@ import cloudinary.uploader
 import cloudinary.api
 import cloudinary.exceptions  
 from cloudinary.utils import cloudinary_url
-
 # Google OAuth imports
 import jwt
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 import google.auth.transport.requests
 
-# ==================== POSTGRESQL CONFIGURATION ====================
-import psycopg2
-from psycopg2.extras import RealDictCursor
-
-
 import numpy as np
 from PIL import Image
 import io
 from deepface import DeepFace
 import psycopg2.extras
+
+# ==================== POSTGRESQL CONFIGURATION ====================
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+
+
 
 # ==================== APP SETUP ====================
 app = Flask(__name__)
@@ -3455,92 +3455,107 @@ def get_driver_details(driver_id):
 # ==================== Driver Monitoring (WEBRTc) ==================
 @app.route('/api/identify-driver', methods=['POST'])
 def identify_driver():
-    data = request.json
-    if not data or 'image' not in data:
-        return jsonify({'success': False, 'error': 'No image provided'}), 400
-
-    # Decode base64 image
+    """Identify driver by face image using DeepFace"""
     try:
+        data = request.json
+        if not data or 'image' not in data:
+            return jsonify({'success': False, 'error': 'No image provided'}), 400
+
+        # Decode base64 image
         image_data = base64.b64decode(data['image'].split(',')[-1])
-        pil_image = Image.open(io.BytesIO(image_data)).convert('RGB')
-        img_np = np.array(pil_image)
-    except Exception as e:
-        return jsonify({'success': False, 'error': f'Invalid image: {str(e)}'}), 400
-
-    # Find face in the uploaded image
-    face_locations = face_recognition.face_locations(img_np)
-    if not face_locations:
-        return jsonify({'success': False, 'error': 'No face detected in image'}), 400
-
-    unknown_encoding = face_recognition.face_encodings(img_np, face_locations)[0]
-
-    # Fetch all drivers from database (only those with face images)
-    drivers = []
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT d.driver_id, d.name, d.guardian_id, f.image_path
-            FROM drivers d
-            JOIN face_images f ON d.driver_id = f.driver_id
-            WHERE d.is_active = TRUE
-        ''')
-        rows = cursor.fetchall()
-        # Group by driver – we'll keep one encoding per driver (use first face image)
-        driver_encodings = {}
-        for row in rows:
-            if isinstance(row, dict):
-                driver_id = row['driver_id']
-                guardian_id = row['guardian_id']
-                image_url = row['image_path']
-            else:
-                driver_id, name, guardian_id, image_url = row
-            if driver_id not in driver_encodings:
-                # Download the image and get encoding
+        
+        # Save temporarily (DeepFace needs file path)
+        temp_path = '/tmp/temp_face_identification.jpg'
+        with open(temp_path, 'wb') as f:
+            f.write(image_data)
+        
+        try:
+            # Extract face embedding using Facenet
+            embedding_result = DeepFace.represent(
+                img_path=temp_path,
+                model_name='Facenet',
+                detector_backend='opencv',
+                enforce_detection=True
+            )
+            
+            if not embedding_result:
+                return jsonify({'success': False, 'error': 'No face detected'}), 400
+                
+            unknown_embedding = np.array(embedding_result[0]['embedding'])
+            
+        except Exception as e:
+            print(f"❌ DeepFace error: {e}")
+            return jsonify({'success': False, 'error': f'Face detection failed: {str(e)}'}), 400
+        finally:
+            # Clean up temp file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        
+        # Fetch all drivers with their face embeddings
+        with get_db_connection() as conn:
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            
+            # Get all drivers with embeddings
+            cursor.execute("""
+                SELECT driver_id, name, guardian_id, face_embedding 
+                FROM drivers 
+                WHERE face_embedding IS NOT NULL AND is_active = TRUE
+            """)
+            
+            drivers = cursor.fetchall()
+            
+            if not drivers:
+                return jsonify({
+                    'success': False, 
+                    'error': 'No registered drivers with face data'
+                }), 404
+            
+            # Find best match
+            best_match = None
+            best_distance = float('inf')
+            
+            for driver in drivers:
                 try:
-                    resp = requests.get(image_url, timeout=5)
-                    resp.raise_for_status()
-                    img_pil = Image.open(io.BytesIO(resp.content)).convert('RGB')
-                    img_arr = np.array(img_pil)
-                    locs = face_recognition.face_locations(img_arr)
-                    if locs:
-                        enc = face_recognition.face_encodings(img_arr, locs)[0]
-                        driver_encodings[driver_id] = {
-                            'encoding': enc,
-                            'name': name,
-                            'guardian_id': guardian_id
-                        }
+                    stored_embedding = np.array(json.loads(driver['face_embedding']))
+                    # Calculate Euclidean distance
+                    distance = np.linalg.norm(unknown_embedding - stored_embedding)
+                    
+                    if distance < best_distance:
+                        best_distance = distance
+                        best_match = driver
                 except Exception as e:
-                    print(f"⚠️ Error processing driver {driver_id}: {e}")
-
-    if not driver_encodings:
-        return jsonify({'success': False, 'error': 'No registered drivers with face data'}), 404
-
-    # Compare unknown encoding with all stored encodings
-    best_match = None
-    best_distance = 1.0
-    for driver_id, data in driver_encodings.items():
-        distance = face_recognition.face_distance([data['encoding']], unknown_encoding)[0]
-        if distance < best_distance:
-            best_distance = distance
-            best_match = (driver_id, data['name'], data['guardian_id'])
-
-    threshold = 0.5  # adjust as needed
-    if best_match and best_distance < threshold:
-        driver_id, driver_name, guardian_id = best_match
-        return jsonify({
-            'success': True,
-            'driver_id': driver_id,
-            'driver_name': driver_name,
-            'guardian_id': guardian_id,
-            'confidence': 1 - best_distance,
-            'message': 'Driver identified'
-        })
-    else:
+                    print(f"⚠️ Error processing driver {driver['driver_id']}: {e}")
+                    continue
+            
+            # Threshold for Facenet embeddings
+            threshold = 0.8
+            
+            if best_match and best_distance < threshold:
+                confidence = 1.0 - (best_distance / 2.0)  # Normalize to 0-1
+                
+                return jsonify({
+                    'success': True,
+                    'driver_id': best_match['driver_id'],
+                    'driver_name': best_match['name'],
+                    'guardian_id': best_match['guardian_id'],
+                    'confidence': float(confidence),
+                    'distance': float(best_distance)
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'No matching driver found',
+                    'best_distance': float(best_distance) if best_match else None
+                }), 404
+                
+    except Exception as e:
+        print(f"❌ Error in identify_driver: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'success': False,
-            'error': 'No matching driver found',
-            'best_distance': best_distance if best_match else None
-        }), 404
+            'error': str(e)
+        }), 500
 
 @app.route('/api/driver/<driver_id>/generate-embedding', methods=['POST'])
 def generate_driver_embedding(driver_id):
