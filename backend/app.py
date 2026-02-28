@@ -29,7 +29,6 @@ from contextlib import contextmanager
 import urllib.parse
 import traceback
 import requests
-from PIL import Image
 import io
 
 # Cloudinary imports
@@ -43,9 +42,6 @@ import jwt
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 import google.auth.transport.requests
-
-import numpy as np
-from PIL import Image
 import io
 import psycopg2.extras
 
