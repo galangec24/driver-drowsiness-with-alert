@@ -50,6 +50,13 @@ import google.auth.transport.requests
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+
+import numpy as np
+from PIL import Image
+import io
+from deepface import DeepFace
+import psycopg2.extras
+
 # ==================== APP SETUP ====================
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
@@ -206,7 +213,7 @@ ADMIN_CREDENTIALS = {
 admin_rate_limit = {}
 admin_sessions = {}
 
-# ==================== PASSWORD FUNCTIONS ====================
+#region Clean Password
 def clean_password(password):
     """Remove all spaces from password"""
     if not password:
@@ -247,6 +254,9 @@ def verify_password(password, hashed_password):
         print(f"❌ Error verifying password: {e}")
         return False
 
+#end Region
+
+#region Admin Cred
 def verify_admin_credentials(username, password):
     """Verify admin login credentials"""
     if username not in ADMIN_CREDENTIALS:
@@ -342,8 +352,9 @@ def rate_limit_exceeded(ip, endpoint_type='general', limit=100):
     
     admin_rate_limit[key].append(current_time)
     return False
+#end Region
 
-# ==================== DATABASE CONNECTION ====================
+#region Database
 @contextmanager
 def get_db_connection():
     """Context manager for database connections"""
@@ -571,12 +582,35 @@ def init_db():
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_timestamp ON drowsiness_events(timestamp)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_guardians_active ON guardians(is_active)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_guardians_google ON guardians(google_id)')
+            
+            # ===== NEW: Add face_embedding column if it doesn't exist =====
+            print("   Checking for face_embedding column...")
+            cursor.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='drivers' AND column_name='face_embedding'
+            """)
+            
+            if not cursor.fetchone():
+                print("   Adding face_embedding column to drivers table...")
+                cursor.execute("ALTER TABLE drivers ADD COLUMN face_embedding JSONB")
+                print("   ✅ face_embedding column added")
+            else:
+                print("   ✅ face_embedding column already exists")
+ 
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_drivers_face_embedding 
+                ON drivers((face_embedding IS NOT NULL)) 
+                WHERE face_embedding IS NOT NULL
+            ''')
         
         print("✅ Database initialized successfully")
         return True
         
     except Exception as e:
         print(f"❌ Database initialization failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def update_db_schema():
@@ -1587,18 +1621,50 @@ def serve_home():
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with face recognition status"""
     try:
+        # Test DeepFace availability
+        deepface_available = False
+        deepface_version = None
+        try:
+            import deepface
+            deepface_available = True
+            deepface_version = deepface.__version__
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f"⚠️ DeepFace import error: {e}")
+        
+        # Count drivers with face embeddings
+        drivers_with_embeddings = 0
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM drivers WHERE face_embedding IS NOT NULL")
+                result = cursor.fetchone()
+                drivers_with_embeddings = result[0] if result else 0
+        except Exception as e:
+            print(f"⚠️ Could not count embeddings: {e}")
+        
         health_info = {
+            'success': True,
             'status': 'running',
             'timestamp': datetime.now().isoformat(),
             'server': 'Driver Alert System API',
-            'version': '2.0.0',
+            'version': '2.1.0',  # Updated version
             'connected_clients': len(connected_clients),
             'active_sessions': len(active_sessions),
             'database': 'postgresql',
             'google_auth': bool(GOOGLE_CLIENT_ID),
             'cloudinary_enabled': CLOUDINARY_ENABLED,
+            # NEW: Face recognition info
+            'face_recognition': {
+                'enabled': deepface_available,
+                'version': deepface_version,
+                'backend': 'DeepFace with Facenet',
+                'drivers_with_embeddings': drivers_with_embeddings,
+                'models_loaded': ['Facenet'] if deepface_available else []
+            },
             'firebase_integration': True,
             'allowed_origins': ALLOWED_ORIGINS,
             'websocket_connections': len(connected_clients),
@@ -1618,7 +1684,7 @@ def health_check():
 # =================== WEBSOCKET CHECKER ======================
 @app.route('/api/websocket-status', methods=['GET'])
 def websocket_status():
-    """Check WebSocket server status"""
+    """Check WebSocket server status with face recognition info"""
     try:
         # Count authenticated clients
         authenticated_count = sum(1 for c in connected_clients.values() if c.get('authenticated'))
@@ -1630,8 +1696,20 @@ def websocket_status():
                 guardians_online[info['guardian_id']] = {
                     'connected_since': info['auth_time'].isoformat() if info.get('auth_time') else None,
                     'last_ping': info['last_ping'].isoformat() if info.get('last_ping') else None,
-                    'auth_provider': info.get('auth_provider', 'unknown')
+                    'auth_provider': info.get('auth_provider', 'unknown'),
+                    'client_type': info.get('type', 'unknown')  # 'guardian' or 'driver'
                 }
+        
+        # Count drivers with face embeddings
+        drivers_with_embeddings = 0
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM drivers WHERE face_embedding IS NOT NULL")
+                result = cursor.fetchone()
+                drivers_with_embeddings = result[0] if result else 0
+        except:
+            pass
         
         return jsonify({
             'success': True,
@@ -1645,7 +1723,11 @@ def websocket_status():
             'websocket_url': 'wss://driver-drowsiness-with-alert.onrender.com/socket.io/',
             'allowed_origins': ALLOWED_ORIGINS,
             'server_time': datetime.now().isoformat(),
-            'python_version': '3.10.11'
+            'python_version': '3.10.11',
+            'face_recognition': {
+                'enabled': True,
+                'drivers_with_embeddings': drivers_with_embeddings
+            }
         })
     except Exception as e:
         return jsonify({
@@ -2596,7 +2678,7 @@ def register_guardian():
 #region Guardian Data
 @app.route('/api/guardian/dashboard', methods=['GET'])
 def guardian_dashboard():
-    """Get guardian dashboard data"""
+    """Get guardian dashboard data with face recognition stats"""
     try:
         guardian_id = request.args.get('guardian_id')
         token = request.args.get('token')
@@ -2627,10 +2709,12 @@ def guardian_dashboard():
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
+            # Driver count
             cursor.execute('SELECT COUNT(*) as count FROM drivers WHERE guardian_id = %s', (guardian_id,))
             driver_count_result = cursor.fetchone()
             driver_count = driver_count_result['count'] if isinstance(driver_count_result, dict) else driver_count_result[0]
             
+            # Alert counts
             cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s', (guardian_id,))
             total_alerts_result = cursor.fetchone()
             total_alerts = total_alerts_result['count'] if isinstance(total_alerts_result, dict) else total_alerts_result[0]
@@ -2639,6 +2723,14 @@ def guardian_dashboard():
                          (guardian_id,))
             unread_alerts_result = cursor.fetchone()
             unread_alerts = unread_alerts_result['count'] if isinstance(unread_alerts_result, dict) else unread_alerts_result[0]
+            
+            # NEW: Face recognition stats
+            cursor.execute('''
+                SELECT COUNT(*) FROM drivers 
+                WHERE guardian_id = %s AND face_embedding IS NOT NULL
+            ''', (guardian_id,))
+            embed_count_result = cursor.fetchone()
+            drivers_with_embeddings = embed_count_result[0] if embed_count_result else 0
         
         return jsonify({
             'success': True,
@@ -2648,7 +2740,13 @@ def guardian_dashboard():
                 'driver_count': driver_count,
                 'total_alerts': total_alerts,
                 'unread_alerts': unread_alerts,
-                'recent_alerts': recent_alerts
+                'recent_alerts': recent_alerts,
+                # NEW: Face recognition stats
+                'face_recognition': {
+                    'drivers_with_embeddings': drivers_with_embeddings,
+                    'total_drivers': driver_count,
+                    'completion_rate': round((drivers_with_embeddings / driver_count * 100) if driver_count > 0 else 0, 1)
+                }
             },
             'drivers': drivers
         })
@@ -2659,7 +2757,7 @@ def guardian_dashboard():
             'success': False,
             'error': str(e)
         }), 500
-
+        
 @app.route('/api/guardian/<guardian_id>/drivers', methods=['GET'])
 def get_guardian_drivers_endpoint(guardian_id):
     """Get all drivers for a specific guardian"""
@@ -2681,17 +2779,21 @@ def get_guardian_drivers_endpoint(guardian_id):
         
         drivers = get_guardian_drivers(guardian_id)
         
-        # Add face image count for each driver
+        # Add face image count and embedding status for each driver
         with get_db_connection() as conn:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
             for driver in drivers:
+                # Face image count
                 cursor.execute('SELECT COUNT(*) FROM face_images WHERE driver_id = %s', 
                              (driver['driver_id'],))
                 result = cursor.fetchone()
-                if isinstance(result, dict):
-                    driver['face_image_count'] = result['count']
-                else:
-                    driver['face_image_count'] = result[0]
+                driver['face_image_count'] = result[0] if result else 0
+                
+                # NEW: Check if driver has face embedding
+                cursor.execute('SELECT face_embedding IS NOT NULL FROM drivers WHERE driver_id = %s',
+                             (driver['driver_id'],))
+                embed_result = cursor.fetchone()
+                driver['has_face_embedding'] = embed_result[0] if embed_result else False
         
         return jsonify({
             'success': True,
@@ -3440,6 +3542,81 @@ def identify_driver():
             'best_distance': best_distance if best_match else None
         }), 404
 
+@app.route('/api/driver/<driver_id>/generate-embedding', methods=['POST'])
+def generate_driver_embedding(driver_id):
+    """Generate face embedding for an existing driver"""
+    try:
+        guardian_id = request.args.get('guardian_id')
+        token = request.args.get('token')
+        
+        if not guardian_id or not token:
+            return jsonify({'success': False, 'error': 'Authentication required'}), 401
+        
+        if not validate_session(guardian_id, token):
+            return jsonify({'success': False, 'error': 'Invalid session'}), 401
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            
+            # Verify driver belongs to guardian
+            cursor.execute("""
+                SELECT driver_id FROM drivers 
+                WHERE driver_id = %s AND guardian_id = %s
+            """, (driver_id, guardian_id))
+            
+            if not cursor.fetchone():
+                return jsonify({'success': False, 'error': 'Driver not found'}), 404
+            
+            # Get face images
+            cursor.execute("""
+                SELECT image_path FROM face_images 
+                WHERE driver_id = %s 
+                ORDER BY capture_date DESC LIMIT 1
+            """, (driver_id,))
+            
+            images = cursor.fetchall()
+            if not images:
+                return jsonify({'success': False, 'error': 'No face images found'}), 404
+            
+            # Download image
+            image_url = images[0]['image_path']
+            response = requests.get(image_url, timeout=10)
+            response.raise_for_status()
+            
+            # Save temporarily
+            temp_path = f'/tmp/temp_embedding_{driver_id}.jpg'
+            with open(temp_path, 'wb') as f:
+                f.write(response.content)
+            
+            try:
+                # Generate embedding
+                embedding_result = DeepFace.represent(
+                    img_path=temp_path,
+                    model_name='Facenet',
+                    detector_backend='opencv',
+                    enforce_detection=False
+                )
+                
+                if embedding_result:
+                    embedding = embedding_result[0]['embedding']
+                    embedding_json = json.dumps(embedding)
+                    
+                    cursor.execute("""
+                        UPDATE drivers 
+                        SET face_embedding = %s 
+                        WHERE driver_id = %s
+                    """, (embedding_json, driver_id))
+                    conn.commit()
+                    
+                    return jsonify({'success': True, 'message': 'Embedding generated'})
+                    
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                    
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/driver/<driver_id>/guardian', methods=['GET'])
 def get_driver_guardian(driver_id):
@@ -3783,7 +3960,7 @@ def get_driver_details_full(driver_id):
             }), 401
         
         with get_db_connection() as conn:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
             
             # Get driver details with validation
             cursor.execute('''
@@ -3803,6 +3980,13 @@ def get_driver_details_full(driver_id):
                 }), 404
             
             driver = dict(driver_result)
+            
+            # NEW: Add face embedding info
+            driver['has_face_embedding'] = driver.get('face_embedding') is not None
+            
+            # Remove the actual embedding from response (too large)
+            if 'face_embedding' in driver:
+                del driver['face_embedding']
             
             # Get face images
             cursor.execute('''
@@ -4626,7 +4810,24 @@ def test_cloudinary():
             'error': f'Cloudinary test failed: {str(e)}'
         }), 500
 
-# ==================== APPLICATION STARTUP ====================
+def add_face_embedding_column():
+    """Add face_embedding column to drivers table if it doesn't exist"""
+    try:
+        with get_db_cursor() as cursor:
+            cursor.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='drivers' AND column_name='face_embedding'
+            """)
+            if not cursor.fetchone():
+                print("📝 Adding face_embedding column to drivers table...")
+                cursor.execute("ALTER TABLE drivers ADD COLUMN face_embedding JSONB")
+                print("✅ face_embedding column added")
+    except Exception as e:
+        print(f"⚠️ Could not add face_embedding column: {e}")
+
+
+#region Start Task
 def startup_tasks():
     """Run startup tasks"""
     print(f"\n{'='*70}")
@@ -4683,6 +4884,23 @@ def startup_tasks():
     print(f"   ✅ Frontend URL: https://guardian-drive-app.web.app")
     print(f"   ✅ Allowed Origins: {len(ALLOWED_ORIGINS)} domains configured")
     
+    # ===== NEW: Add face embedding column =====
+    print("\n🔧 Face Recognition Setup:")
+    try:
+        add_face_embedding_column()
+        print("✅ Face recognition schema checked/updated")
+        
+        # Test DeepFace availability
+        try:
+            import deepface
+            print(f"   ✅ DeepFace version: {deepface.__version__}")
+            print(f"   ✅ Face recognition ready")
+        except ImportError as e:
+            print(f"   ⚠️ DeepFace not available: {e}")
+    except Exception as e:
+        print(f"   ⚠️ Face recognition setup error: {e}")
+    # ==========================================
+    
     # Database initialization
     print("\n🗄️  Database Initialization:")
     try:
@@ -4730,13 +4948,19 @@ def startup_tasks():
         ("GET", "/api/guardian/dashboard", "Guardian dashboard"),
         ("POST", "/api/admin/login", "Admin login"),
         ("POST", "/api/test-cloudinary", "Test Cloudinary upload"),
+        # ===== NEW: Face recognition endpoints =====
+        ("POST", "/api/identify-driver", "Identify driver by face"),
+        ("POST", "/api/driver/<driver_id>/generate-embedding", "Generate face embedding"),
+        # ===========================================
     ]
     
     for method, path, desc in endpoints:
         print(f"   • {method:6} {path:30} - {desc}")
     
+    
+#end Region
 
-# ==================== MAIN ENTRY POINT ====================
+#region Main Entry
 if __name__ == '__main__':
     # Run startup tasks
     startup_tasks()
@@ -4887,3 +5111,5 @@ if __name__ == '__main__':
             print("   - PORT=5000")
             print("   - WEBSOCKET_ENABLED=true")
             sys.exit(1)
+            
+#end Region
