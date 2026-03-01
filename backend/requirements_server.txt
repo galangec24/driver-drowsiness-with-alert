@@ -28,3 +28,9 @@ dnspython==2.3.0
 # Certification
 pyopenssl==23.3.0
 cryptography==41.0.7
+
+# Additional utilities that might be needed
+urllib3==1.26.18
+certifi==2023.7.22
+idna==3.4
+chardet==5.1.0

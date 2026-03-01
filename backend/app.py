@@ -45,10 +45,13 @@ import google.auth.transport.requests
 import io
 import psycopg2.extras
 
+import logging
 import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg2.extras
+from flask import request, jsonify
 
-
+# Setup logger (if not already done)
+logger = logging.getLogger(__name__)
 
 
 #region Backend Setup
@@ -3463,25 +3466,25 @@ def store_embedding(driver_id):
         conn.commit()
     return jsonify({'success': True, 'message': 'Embedding stored'})
 
-@app.route('/api/driver/<driver_id>/name', methods=['GET'])
-def get_driver_name(driver_id):
-    """Get driver name by ID or reference number - Used by Project 2"""
+@app.route('/api/driver/<identifier>/name', methods=['GET'])
+def get_driver_name(identifier):
+    """Get driver name by either driver_id or reference_number"""
     try:
         api_key = request.args.get('api_key')
         
-        # Simple API key check
-        if api_key != os.getenv('CLIENT_API_KEY', 'your_secret_key'):
+        expected_api_key = os.environ.get('CLIENT_API_KEY', 'your_secret_key')
+        if api_key != expected_api_key:
             return jsonify({'success': False, 'error': 'Unauthorized'}), 401
         
         with get_db_connection() as conn:
             cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
             
-            # Try to find by driver_id first
+            # Try by driver_id first
             cursor.execute('''
                 SELECT name, guardian_id, driver_id 
                 FROM drivers 
                 WHERE driver_id = %s AND is_active = TRUE
-            ''', (driver_id,))
+            ''', (identifier,))
             
             driver = cursor.fetchone()
             
@@ -3491,7 +3494,7 @@ def get_driver_name(driver_id):
                     SELECT name, guardian_id, driver_id 
                     FROM drivers 
                     WHERE reference_number = %s AND is_active = TRUE
-                ''', (driver_id,))
+                ''', (identifier,))
                 driver = cursor.fetchone()
             
             if driver:
@@ -3514,34 +3517,58 @@ def get_driver_name(driver_id):
             'error': str(e)
         }), 500
 
-@app.route('/api/driver/by-reference/<reference_number>', methods=['GET'])
-def get_driver_by_reference(reference_number):
-    """Get driver details by reference number - Used by Project 2"""
+@app.route('/api/driver/by-reference/<identifier>', methods=['GET'])
+def get_driver_by_reference(identifier):
+    """Get driver details by either driver_id or reference_number"""
     try:
         api_key = request.args.get('api_key')
         
-        if api_key != os.getenv('CLIENT_API_KEY', 'your_secret_key'):
+        # Simple API key check
+        expected_api_key = os.environ.get('CLIENT_API_KEY', 'your_secret_key')
+        if api_key != expected_api_key:
             return jsonify({'success': False, 'error': 'Unauthorized'}), 401
         
         with get_db_connection() as conn:
             cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            
+            # Try to find by driver_id first (since that's where your data is)
             cursor.execute('''
-                SELECT driver_id, name, guardian_id, phone, email, license_number
+                SELECT driver_id, name, guardian_id, phone, email, license_number, reference_number
                 FROM drivers 
-                WHERE reference_number = %s AND is_active = TRUE
-            ''', (reference_number,))
+                WHERE driver_id = %s AND is_active = TRUE
+            ''', (identifier,))
             
             driver = cursor.fetchone()
             
+            # If not found, try by reference_number
+            if not driver:
+                cursor.execute('''
+                    SELECT driver_id, name, guardian_id, phone, email, license_number, reference_number
+                    FROM drivers 
+                    WHERE reference_number = %s AND is_active = TRUE
+                ''', (identifier,))
+                driver = cursor.fetchone()
+            
             if driver:
+                # Convert to dict for JSON response
+                driver_dict = dict(driver)
+                logger.info(f"Found driver: {driver_dict.get('name')} (ID: {driver_dict.get('driver_id')})")
                 return jsonify({
                     'success': True,
-                    'driver': dict(driver)
+                    'driver': driver_dict
                 })
             else:
+                # Debug: Show what's in the database
+                cursor.execute('SELECT driver_id, name, reference_number FROM drivers LIMIT 5')
+                sample_drivers = cursor.fetchall()
+                sample_list = [dict(d) for d in sample_drivers]
+                logger.info(f"Sample drivers in DB: {sample_list}")
+                
                 return jsonify({
                     'success': False,
-                    'error': 'Driver not found'
+                    'error': 'Driver not found',
+                    'identifier_searched': identifier,
+                    'sample_drivers': sample_list
                 }), 404
                 
     except Exception as e:
@@ -3870,81 +3897,70 @@ def update_guardian():
             'error': str(e)
         }), 500
 
-# ==================== GET DRIVER DETAILS ENDPOINT ====================
+#region Alert
 
 @app.route('/api/driver/<driver_id>/details', methods=['GET'])
-def get_driver_details_full(driver_id):
-    """Get detailed information about a specific driver with validation"""
+def get_driver_details_api(driver_id):
+    """Get detailed driver information - Used by Project 2"""
     try:
         guardian_id = request.args.get('guardian_id')
         token = request.args.get('token')
+        api_key = request.args.get('api_key')
         
-        if not guardian_id or not token:
-            return jsonify({
-                'success': False,
-                'error': 'Authentication required'
-            }), 401
+        # Check either API key or session token
+        expected_api_key = os.environ.get('CLIENT_API_KEY', 'your_secret_key')
+        valid_api_key = api_key == expected_api_key
         
-        # Validate session
-        if not validate_session(guardian_id, token):
-            return jsonify({
-                'success': False,
-                'error': 'Invalid or expired session'
-            }), 401
+        # Validate session if guardian_id and token provided
+        valid_session = False
+        if guardian_id and token:
+            valid_session = validate_session(guardian_id, token)
+        
+        if not (valid_api_key or valid_session):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
         
         with get_db_connection() as conn:
             cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
             
-            # Get driver details with validation
+            # Get driver details
             cursor.execute('''
-                SELECT d.*, 
-                       (SELECT COUNT(*) FROM alerts a WHERE a.driver_id = d.driver_id AND a.acknowledged = FALSE) as unread_alerts,
-                       (SELECT COUNT(*) FROM face_images f WHERE f.driver_id = d.driver_id) as face_image_count
+                SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
                 FROM drivers d
-                WHERE d.driver_id = %s AND d.guardian_id = %s
-            ''', (driver_id, guardian_id))
-            
-            driver_result = cursor.fetchone()
-            
-            if not driver_result:
-                return jsonify({
-                    'success': False,
-                    'error': 'Driver not found or not authorized'
-                }), 404
-            
-            driver = dict(driver_result)
-            
-            # NEW: Add face embedding info
-            driver['has_face_embedding'] = driver.get('face_embedding') is not None
-            
-            # Remove the actual embedding from response (too large)
-            if 'face_embedding' in driver:
-                del driver['face_embedding']
-            
-            # Get face images
-            cursor.execute('''
-                SELECT image_id, image_path, capture_date
-                FROM face_images
-                WHERE driver_id = %s
-                ORDER BY capture_date DESC
+                LEFT JOIN guardians g ON d.guardian_id = g.guardian_id
+                WHERE d.driver_id = %s AND d.is_active = TRUE
             ''', (driver_id,))
             
-            face_images = cursor.fetchall()
-            driver['face_images'] = [dict(img) for img in face_images]
+            driver = cursor.fetchone()
+            
+            if not driver:
+                return jsonify({
+                    'success': False,
+                    'error': 'Driver not found'
+                }), 404
+            
+            driver_dict = dict(driver)
+            
+            # Get face image count
+            cursor.execute('SELECT COUNT(*) FROM face_images WHERE driver_id = %s', (driver_id,))
+            count_result = cursor.fetchone()
+            driver_dict['face_image_count'] = count_result[0] if count_result else 0
+            
+            # Remove embedding from response if exists
+            if 'face_embedding' in driver_dict:
+                del driver_dict['face_embedding']
             
             return jsonify({
                 'success': True,
-                'driver': driver
+                'driver': driver_dict
             })
             
     except Exception as e:
-        print(f"❌ Error in get_driver_details_full: {e}")
+        logger.error(f"Error in get_driver_details_api: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
         }), 500
 
-# ==================== ALERT ENDPOINTS ====================
 @app.route('/api/send-alert', methods=['POST'])
 def receive_alert():
     """Receive alert from Project 2 and store in database"""
@@ -3952,7 +3968,8 @@ def receive_alert():
         data = request.json
         api_key = request.args.get('api_key')
         
-        if api_key != os.getenv('CLIENT_API_KEY', 'your_secret_key'):
+        expected_api_key = os.environ.get('CLIENT_API_KEY', 'your_secret_key')
+        if api_key != expected_api_key:
             return jsonify({'success': False, 'error': 'Unauthorized'}), 401
         
         driver_id = data.get('driver_id')
@@ -4012,7 +4029,10 @@ def receive_alert():
                     'location': location,
                     'timestamp': datetime.now().isoformat()
                 }
+                # Emit to guardian's room
                 socketio.emit('guardian_alert', alert_data, room=f'guardian_{guardian_id}')
+            
+            logger.info(f"Alert received: {severity} from driver {driver_name} ({driver_id})")
             
             return jsonify({
                 'success': True,
@@ -4095,6 +4115,7 @@ def get_guardian_alerts():
             'success': False,
             'error': str(e)
         }), 500
+#end Region
 
 @app.route('/api/guardian/active-drivers', methods=['GET'])
 def get_active_drivers():
