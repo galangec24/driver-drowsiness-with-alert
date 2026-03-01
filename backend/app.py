@@ -49,6 +49,7 @@ import logging
 import psycopg2
 import psycopg2.extras
 from flask import request, jsonify
+from psycopg2.extras import RealDictCursor
 
 # Setup logger (if not already done)
 logger = logging.getLogger(__name__)
@@ -374,7 +375,7 @@ def get_db_connection():
             password=url.password,
             host=url.hostname,
             port=port,
-            cursor_factory=RealDictCursor,
+            cursor_factory=psycopg2.extras.RealDictCursor,  
             connect_timeout=5
         )
         yield conn
