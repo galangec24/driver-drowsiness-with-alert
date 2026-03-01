@@ -3465,19 +3465,91 @@ def store_embedding(driver_id):
 
 @app.route('/api/driver/<driver_id>/name', methods=['GET'])
 def get_driver_name(driver_id):
-    # Optional: simple API key check for security
-    api_key = request.args.get('api_key')
-    if api_key != os.getenv('CLIENT_API_KEY', 'your_secret_key'):
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+    """Get driver name by ID or reference number - Used by Project 2"""
+    try:
+        api_key = request.args.get('api_key')
+        
+        # Simple API key check
+        if api_key != os.getenv('CLIENT_API_KEY', 'your_secret_key'):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            
+            # Try to find by driver_id first
+            cursor.execute('''
+                SELECT name, guardian_id, driver_id 
+                FROM drivers 
+                WHERE driver_id = %s AND is_active = TRUE
+            ''', (driver_id,))
+            
+            driver = cursor.fetchone()
+            
+            # If not found, try by reference_number
+            if not driver:
+                cursor.execute('''
+                    SELECT name, guardian_id, driver_id 
+                    FROM drivers 
+                    WHERE reference_number = %s AND is_active = TRUE
+                ''', (driver_id,))
+                driver = cursor.fetchone()
+            
+            if driver:
+                return jsonify({
+                    'success': True,
+                    'name': driver['name'],
+                    'guardian_id': driver['guardian_id'],
+                    'driver_id': driver['driver_id']
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Driver not found'
+                }), 404
+                
+    except Exception as e:
+        logger.error(f"Error in get_driver_name: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cursor.execute('SELECT name, guardian_id FROM drivers WHERE driver_id = %s', (driver_id,))
-        driver = cursor.fetchone()
-        if driver:
-            return jsonify({'success': True, 'name': driver['name'], 'guardian_id': driver['guardian_id']})
-        else:
-            return jsonify({'success': False, 'error': 'Driver not found'}), 404
+@app.route('/api/driver/by-reference/<reference_number>', methods=['GET'])
+def get_driver_by_reference(reference_number):
+    """Get driver details by reference number - Used by Project 2"""
+    try:
+        api_key = request.args.get('api_key')
+        
+        if api_key != os.getenv('CLIENT_API_KEY', 'your_secret_key'):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            cursor.execute('''
+                SELECT driver_id, name, guardian_id, phone, email, license_number
+                FROM drivers 
+                WHERE reference_number = %s AND is_active = TRUE
+            ''', (reference_number,))
+            
+            driver = cursor.fetchone()
+            
+            if driver:
+                return jsonify({
+                    'success': True,
+                    'driver': dict(driver)
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'Driver not found'
+                }), 404
+                
+    except Exception as e:
+        logger.error(f"Error in get_driver_by_reference: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 @app.route('/api/driver/<driver_id>/guardian', methods=['GET'])
 def get_driver_guardian(driver_id):
@@ -3874,15 +3946,22 @@ def get_driver_details_full(driver_id):
 
 # ==================== ALERT ENDPOINTS ====================
 @app.route('/api/send-alert', methods=['POST'])
-def send_alert():
-    """Send drowsiness alert"""
+def receive_alert():
+    """Receive alert from Project 2 and store in database"""
     try:
         data = request.json
+        api_key = request.args.get('api_key')
+        
+        if api_key != os.getenv('CLIENT_API_KEY', 'your_secret_key'):
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+        
         driver_id = data.get('driver_id')
-        driver_name = data.get('driver_name', 'Unknown Driver')
-        severity = data.get('severity', 'high')
-        message = data.get('message', 'Drowsiness detected!')
+        driver_name = data.get('driver_name')
+        guardian_id = data.get('guardian_id')
+        severity = data.get('severity', 'medium')
+        message = data.get('message', 'Drowsiness detected')
         confidence = data.get('confidence', 0.0)
+        location = data.get('location', 'Unknown')
         detection_details = data.get('detection_details', {})
         
         if not driver_id:
@@ -3891,112 +3970,58 @@ def send_alert():
                 'error': 'Driver ID required'
             }), 400
         
-        # Try to find the driver in the database
-        driver_info = get_driver_by_name_or_id(driver_id)
-        
-        if driver_info:
-            driver_id = driver_info['driver_id']
-            driver_name = driver_info['name']
-            guardian_id = driver_info['guardian_id']
-            guardian_name = driver_info['guardian_name']
-            guardian_phone = driver_info['guardian_phone']
-        else:
-            # Driver not found - create a temporary record
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('SELECT guardian_id, full_name, phone FROM guardians LIMIT 1')
-                guardian_result = cursor.fetchone()
-                
-                if guardian_result:
-                    guardian_id = guardian_result['guardian_id']
-                    guardian_name = guardian_result['full_name']
-                    guardian_phone = guardian_result['phone']
-                    
-                    # Create a temporary driver entry
-                    temp_driver_id = f"TEMP{int(time.time())}"
-                    try:
-                        cursor.execute('''
-                            INSERT INTO drivers (driver_id, name, phone, guardian_id)
-                            VALUES (%s, %s, %s, %s)
-                        ''', (temp_driver_id, driver_name, '00000000000', guardian_id))
-                        conn.commit()
-                    except Exception as e:
-                        print(f"⚠️ Error creating temp driver: {e}")
-                    
-                    driver_id = temp_driver_id
-                else:
-                    return jsonify({
-                        'success': False,
-                        'error': 'No guardian found for this alert'
-                    }), 404
-        
-        # Convert detection_details to JSON string for storage
-        detection_details_json = json.dumps(detection_details) if detection_details else None
-        
         with get_db_cursor() as cursor:
-            # Create alert
+            # Insert alert
             cursor.execute('''
                 INSERT INTO alerts (driver_id, guardian_id, severity, message, detection_details, source)
                 VALUES (%s, %s, %s, %s, %s, %s)
-            ''', (driver_id, guardian_id, severity, message, detection_details_json, 'drowsiness_detection'))
-            
-            cursor.execute('SELECT LASTVAL()')
-            alert_id_result = cursor.fetchone()
-            alert_id = alert_id_result[0] if alert_id_result else None
-            
-            # Log drowsiness event
-            cursor.execute('''
-                INSERT INTO drowsiness_events (driver_id, guardian_id, confidence, state, ear, mar, perclos)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING alert_id
             ''', (
-                driver_id, 
-                guardian_id, 
+                driver_id,
+                guardian_id,
+                severity,
+                message,
+                json.dumps(detection_details),
+                'drowsiness_detection'
+            ))
+            
+            result = cursor.fetchone()
+            alert_id = result[0] if result else None
+            
+            # Insert drowsiness event
+            cursor.execute('''
+                INSERT INTO drowsiness_events (driver_id, guardian_id, confidence, ear, mar, perclos)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            ''', (
+                driver_id,
+                guardian_id,
                 confidence,
-                detection_details.get('state', 'unknown'),
                 detection_details.get('ear', 0.0),
                 detection_details.get('mar', 0.0),
                 detection_details.get('perclos', 0.0)
             ))
             
-            # Log activity
-            cursor.execute('''
-                INSERT INTO activity_log (guardian_id, action, details)
-                VALUES (%s, %s, %s)
-            ''', (guardian_id, 'ALERT_GENERATED', 
-                f'Alert for driver {driver_name}: {message} (Confidence: {confidence:.1%})'))
-            
-            # Prepare alert data for WebSocket
-            alert_data = {
-                'alert_id': alert_id,
-                'driver_id': driver_id,
-                'driver_name': driver_name,
-                'guardian_id': guardian_id,
-                'guardian_name': guardian_name,
-                'severity': severity,
-                'message': message,
-                'confidence': confidence,
-                'timestamp': datetime.now().isoformat(),
-                'detection_details': detection_details,
-                'acknowledged': False
-            }
-            
-            # Emit socket events
-            socketio.emit('new_alert', alert_data)
-            
-            # Send to specific guardian clients
-            for client_id, client_info in connected_clients.items():
-                if client_info.get('guardian_id') == guardian_id and client_info.get('authenticated'):
-                    socketio.emit('guardian_alert', alert_data, room=client_id)
+            # Notify via WebSocket if guardian connected
+            if guardian_id:
+                alert_data = {
+                    'alert_id': alert_id,
+                    'driver_id': driver_id,
+                    'driver_name': driver_name,
+                    'severity': severity,
+                    'message': message,
+                    'location': location,
+                    'timestamp': datetime.now().isoformat()
+                }
+                socketio.emit('guardian_alert', alert_data, room=f'guardian_{guardian_id}')
             
             return jsonify({
                 'success': True,
                 'alert_id': alert_id,
-                'data': alert_data,
-                'message': f'Alert sent to guardian {guardian_name}'
+                'message': 'Alert received and stored'
             })
-        
+            
     except Exception as e:
-        print(f"❌ Error in send_alert: {e}")
+        logger.error(f"Error in receive_alert: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
