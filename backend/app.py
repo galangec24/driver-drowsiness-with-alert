@@ -4116,6 +4116,22 @@ def get_guardian_alerts():
             'error': str(e)
         }), 500
 #end Region
+@app.route('/api/debug/check-key', methods=['GET'])
+def debug_check_key():
+    """Check if API key is properly set in environment"""
+    received_key = request.args.get('api_key', 'NOT PROVIDED')
+    expected_key = os.environ.get('CLIENT_API_KEY', 'NOT SET IN ENV')
+    
+    return jsonify({
+        'success': True,
+        'received_key': received_key,
+        'expected_key': expected_key,
+        'keys_match': received_key == expected_key,
+        'expected_key_length': len(expected_key) if expected_key != 'NOT SET IN ENV' else 0,
+        'received_key_length': len(received_key),
+        'environment': os.environ.get('RENDER', 'local'),
+        'all_env_keys': list(os.environ.keys())  # See what env vars are available
+    })
 
 @app.route('/api/guardian/active-drivers', methods=['GET'])
 def get_active_drivers():
