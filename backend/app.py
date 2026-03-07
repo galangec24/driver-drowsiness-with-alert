@@ -497,17 +497,64 @@ def update_db_schema():
         return False
 
 def get_guardian_for_driver(driver_id):
+    """Get guardian ID for a driver with debug logging"""
     try:
         if not supabase:
+            print("❌ Supabase not initialized in get_guardian_for_driver")
             return None
         
-        result = supabase.table('drivers').select('guardian_id').eq('driver_id', driver_id).eq('is_active', True).execute()
+        print(f"🔍 Looking up guardian for driver: {driver_id}")
+        
+        # Try by driver_id first
+        result = supabase.table('drivers') \
+            .select('guardian_id, name, is_active') \
+            .eq('driver_id', driver_id) \
+            .eq('is_active', True) \
+            .execute()
         
         if result.data and len(result.data) > 0:
-            return result.data[0]['guardian_id']
+            guardian_id = result.data[0]['guardian_id']
+            driver_name = result.data[0].get('name', 'Unknown')
+            print(f"✅ Found guardian {guardian_id} for driver {driver_id} ({driver_name})")
+            return guardian_id
+        
+        # If not found by driver_id, try by reference_number (if driver_id might be reference)
+        result = supabase.table('drivers') \
+            .select('guardian_id, name, is_active') \
+            .eq('reference_number', driver_id) \
+            .eq('is_active', True) \
+            .execute()
+        
+        if result.data and len(result.data) > 0:
+            guardian_id = result.data[0]['guardian_id']
+            driver_name = result.data[0].get('name', 'Unknown')
+            print(f"✅ Found guardian {guardian_id} for reference {driver_id} ({driver_name})")
+            return guardian_id
+        
+        # Check if driver exists but is inactive
+        inactive_check = supabase.table('drivers') \
+            .select('guardian_id, is_active') \
+            .eq('driver_id', driver_id) \
+            .execute()
+        
+        if inactive_check.data and len(inactive_check.data) > 0:
+            print(f"⚠️ Driver {driver_id} found but is_active = {inactive_check.data[0].get('is_active')}")
+        else:
+            print(f"❌ No driver found with ID or reference: {driver_id}")
+            
+            # Debug: Show some drivers in DB
+            sample = supabase.table('drivers') \
+                .select('driver_id, name, reference_number') \
+                .limit(5) \
+                .execute()
+            if sample.data:
+                print(f"   Sample drivers in DB: {[(d['driver_id'], d.get('reference_number')) for d in sample.data]}")
+        
         return None
     except Exception as e:
         print(f"❌ Error getting guardian for driver {driver_id}: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -1307,20 +1354,30 @@ def handle_guardian_auth(data):
 
 @socketio.on('driver_authenticate')
 def handle_driver_auth(data):
-    """Driver authentication via WebSocket"""
+    """Driver authentication via WebSocket - ENHANCED DEBUG"""
     client_id = request.sid
     driver_id = data.get('driver_id')
-    # Optional: api_key = data.get('api_key') – can be added for extra security
+    driver_name_input = data.get('driver_name', 'Unknown')
 
-    print(f"\n🔐 Driver authentication attempt: {driver_id}")
+    print(f"\n{'='*60}")
+    print(f"🔐 DRIVER AUTHENTICATION ATTEMPT")
+    print(f"{'='*60}")
+    print(f"   Client ID: {client_id}")
+    print(f"   Driver ID from client: {driver_id}")
+    print(f"   Driver Name from client: {driver_name_input}")
+    print(f"   Full data received: {data}")
+    print(f"   Client info before auth: {connected_clients.get(client_id, {})}")
 
     if not driver_id:
+        print("❌ Missing driver_id")
         emit('auth_failed', {'error': 'Missing driver_id'})
         return
 
     # Verify driver exists and is active, get guardian_id
     guardian_id = get_guardian_for_driver(driver_id)
+    
     if not guardian_id:
+        print(f"❌ No guardian found for driver {driver_id}")
         emit('auth_failed', {'error': 'Driver not found or inactive'})
         return
 
@@ -1334,6 +1391,7 @@ def handle_driver_auth(data):
                 .execute()
             if result.data and len(result.data) > 0:
                 driver_name = result.data[0]['name']
+                print(f"   Driver name from DB: {driver_name}")
     except Exception as e:
         print(f"⚠️ Could not fetch driver name: {e}")
 
@@ -1345,18 +1403,26 @@ def handle_driver_auth(data):
         connected_clients[client_id]['driver_name'] = driver_name
         connected_clients[client_id]['authenticated'] = True
         connected_clients[client_id]['auth_time'] = datetime.now()
+        print(f"   Updated client info: {connected_clients[client_id]}")
+    else:
+        print(f"⚠️ Client {client_id} not found in connected_clients")
 
-    # Join driver's personal room (for targeted messages)
-    socketio.enter_room(client_id, f'driver_{driver_id}')
-    print(f"   Joined room driver_{driver_id}")
+    try:
+        socketio.enter_room(client_id, f'driver_{driver_id}')
+        print(f"   Joined room: driver_{driver_id}")
+    except Exception as e:
+        print(f"   Error joining room: {e}")
 
-    emit('auth_confirmed', {
+    # Send confirmation
+    response = {
         'success': True,
         'driver_id': driver_id,
         'guardian_id': guardian_id,
         'driver_name': driver_name,
-        'message': 'Driver authenticated'
-    })
+        'message': 'Driver authenticated successfully'
+    }
+      
+    emit('auth_confirmed', response)
 
 @socketio.on('webrtc_offer')
 def handle_webrtc_offer(data):
