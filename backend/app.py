@@ -172,37 +172,23 @@ socketio = SocketIO(
     app,
     cors_allowed_origins=ALLOWED_ORIGINS,
     async_mode='eventlet',
-    
-    # CRITICAL: WebSocket specific settings
-    ping_timeout=30,           
-    ping_interval=15,          
-    max_http_buffer_size=1e6,  
-    
-    # Transport settings - order matters!
-    transports=['polling', 'websocket'],  
-    allow_upgrades=True,
-    
-    # Connection management
-    manage_session=False,      
-    cookie=None,                
-    always_connect=True,        
-    
-    # Logging - enable for debugging (disable in production)
+    ping_timeout=30,
+    ping_interval=15,
+    max_http_buffer_size=1e6,
+    transports=['websocket'],          
+    allow_upgrades=False,             
+    manage_session=True,                
+    cookie=None,
+    always_connect=True,
     logger=True,
     engineio_logger=True,
     log_output=True,
-    
-    # Path configuration (important for Render)
-    path='socket.io',         
-    
-    # CORS settings
+    path='socket.io',
     cors_credentials=True,
-    
-    # Engine.IO settings
-    max_guest_sessions=1000,    
-    preserve_context=True,    
-    websocket_ping_interval=25,   
-    websocket_ping_timeout=60     
+    max_guest_sessions=1000,
+    preserve_context=True,
+    websocket_ping_interval=25,
+    websocket_ping_timeout=60
 )
 #end Region
 
@@ -1121,7 +1107,12 @@ def add_security_headers(response):
     
     return response
 
-# ==================== SOCKET.IO HANDLERS ====================
+@app.errorhandler(400)
+def handle_bad_request(e):
+   
+    return jsonify({'error': 'Bad request', 'details': str(e)}), 400
+
+#region Socket IO
 @socketio.on('connect')
 def handle_connect():
     """Handle client connection with better error handling"""
@@ -1478,7 +1469,9 @@ def handle_error(error):
     client_id = request.sid
     print(f"❌ Socket error for client {client_id}: {error}")
 
-# ==================== MAIN ROUTES ====================
+#end Region
+
+#region Application
 @app.route('/')
 def serve_home():
     """Redirect to Firebase Hosting - pure backend server"""
@@ -1543,6 +1536,8 @@ def health_check():
             'status': 'running_with_errors',
             'error': str(e)
         }), 200
+        
+#end Region
 
 # =================== WEBSOCKET CHECKER ======================
 @app.route('/api/websocket-status', methods=['GET'])
@@ -4165,16 +4160,14 @@ def admin_get_alerts():
             .execute()
         
         alerts = result.data if result.data else []
-        
-        # Process alerts
+
         for alert in alerts:
             if alert.get('detection_details'):
                 try:
                     alert['detection_details'] = json.loads(alert['detection_details'])
                 except:
                     pass
-            
-            # Extract driver name
+
             if 'drivers' in alert and alert['drivers']:
                 alert['driver_name'] = alert['drivers']['name']
                 del alert['drivers']
@@ -4704,20 +4697,16 @@ if __name__ == '__main__':
     try:
         import dns.resolver
         dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
-        dns.resolver.default_resolver.nameservers = ['8.8.8.8', '8.8.4.4']  # Google DNS
+        dns.resolver.default_resolver.nameservers = ['8.8.8.8', '8.8.4.4'] 
         print("✅ DNS resolver configured for Render")
     except Exception as e:
         print(f"⚠️ DNS resolver configuration warning: {e}")
     
-    # IMPORTANT: Use eventlet WSGI server for WebSocket support
     try:
         import eventlet
         import eventlet.wsgi
         from eventlet import listen
-        
-        print("✅ Eventlet imported successfully")
-        print(f"   Eventlet version: {eventlet.__version__}")
-        
+
         # Monkey patch for Python 3.10 compatibility
         eventlet.monkey_patch(
             socket=True,
@@ -4727,35 +4716,25 @@ if __name__ == '__main__':
             thread=True,
             subprocess=True
         )
-        print("✅ Eventlet monkey patching applied")
         
-        # Create socket with proper configuration
         listen_socket = eventlet.listen((host, port))
-        
-        # Set socket options for better performance
         listen_socket.setsockopt(eventlet.socket.SOL_SOCKET, eventlet.socket.SO_REUSEADDR, 1)
-        
-        # Configure connection pooling for Python 3.10
+   
         eventlet.wsgi.MAX_HEADER_LINE = 16384
         eventlet.wsgi.MAX_REQUEST_LINE = 32768
         eventlet.wsgi.MAX_READ_BYTES = 65536
         eventlet.wsgi.DEFAULT_MAX_SIMULTANEOUS_REQUESTS = 1000
-        
-        print(f"✅ Server socket created on {host}:{port}")
-        print(f"✅ WebSocket support enabled with eventlet")
-        print(f"✅ Ready to accept connections...\n")
+ 
         
         # Add connection tracking middleware
         def connection_count_middleware(environ, start_response):
-            """Middleware to track connections"""
             client_id = environ.get('REMOTE_ADDR', 'unknown')
             print(f"📡 New connection from {client_id} at {datetime.now().strftime('%H:%M:%S')}")
             return app(environ, start_response)
-        
-        # Start the server with proper configuration
+
         eventlet.wsgi.server(
             listen_socket,
-            connection_count_middleware,  # Wrap app with middleware
+            connection_count_middleware,  
             log_output=True,               # Enable logging
             keepalive=True,                 # Enable keepalive
             max_size=8096,                   # Maximum number of concurrent connections
