@@ -518,7 +518,7 @@ def get_guardian_for_driver(driver_id):
             print(f"✅ Found guardian {guardian_id} for driver {driver_id} ({driver_name})")
             return guardian_id
         
-        # If not found by driver_id, try by reference_number (if driver_id might be reference)
+        # If not found by driver_id, try by reference_number
         result = supabase.table('drivers') \
             .select('guardian_id, name, is_active') \
             .eq('reference_number', driver_id) \
@@ -531,26 +531,9 @@ def get_guardian_for_driver(driver_id):
             print(f"✅ Found guardian {guardian_id} for reference {driver_id} ({driver_name})")
             return guardian_id
         
-        # Check if driver exists but is inactive
-        inactive_check = supabase.table('drivers') \
-            .select('guardian_id, is_active') \
-            .eq('driver_id', driver_id) \
-            .execute()
-        
-        if inactive_check.data and len(inactive_check.data) > 0:
-            print(f"⚠️ Driver {driver_id} found but is_active = {inactive_check.data[0].get('is_active')}")
-        else:
-            print(f"❌ No driver found with ID or reference: {driver_id}")
-            
-            # Debug: Show some drivers in DB
-            sample = supabase.table('drivers') \
-                .select('driver_id, name, reference_number') \
-                .limit(5) \
-                .execute()
-            if sample.data:
-                print(f"   Sample drivers in DB: {[(d['driver_id'], d.get('reference_number')) for d in sample.data]}")
-        
+        print(f"❌ No driver found with ID or reference: {driver_id}")
         return None
+        
     except Exception as e:
         print(f"❌ Error getting guardian for driver {driver_id}: {e}")
         import traceback
@@ -1380,17 +1363,20 @@ def handle_driver_auth(data):
         emit('auth_failed', {'error': 'Driver not found or inactive'})
         return
 
-    # Update client info in connected_clients
+    # CRITICAL: Update or create client info in connected_clients
     if client_id in connected_clients:
-        connected_clients[client_id]['type'] = 'driver'
-        connected_clients[client_id]['driver_id'] = driver_id
-        connected_clients[client_id]['guardian_id'] = guardian_id
-        connected_clients[client_id]['driver_name'] = driver_name
-        connected_clients[client_id]['authenticated'] = True
-        connected_clients[client_id]['auth_time'] = datetime.now()
-        print(f"✅ Updated client info: {connected_clients[client_id]}")
+        # Update existing entry
+        connected_clients[client_id].update({
+            'type': 'driver',
+            'driver_id': driver_id,
+            'guardian_id': guardian_id,
+            'driver_name': driver_name,
+            'authenticated': True,
+            'auth_time': datetime.now()
+        })
+        print(f"✅ Updated existing client info")
     else:
-        # Create new entry if it doesn't exist
+        # Create new entry
         connected_clients[client_id] = {
             'connected_at': datetime.now(),
             'ip': request.remote_addr,
@@ -1405,7 +1391,7 @@ def handle_driver_auth(data):
             'origin': request.headers.get('Origin', 'Unknown'),
             'transport': request.environ.get('HTTP_UPGRADE', 'polling')
         }
-        print(f"✅ Created new client entry for driver")
+        print(f"✅ Created new client entry")
 
     # Join driver's personal room
     try:
@@ -1424,9 +1410,17 @@ def handle_driver_auth(data):
     }
     
     print(f"✅ Driver {driver_name} authenticated successfully for guardian {guardian_id}")
+    print(f"   Current connected_clients: {list(connected_clients.keys())}")
     print(f"{'='*60}\n")
     
     emit('auth_confirmed', response)
+    
+    # Broadcast to guardian that driver is online
+    socketio.emit('driver_online', {
+        'driver_id': driver_id,
+        'driver_name': driver_name,
+        'guardian_id': guardian_id
+    }, room=f'guardian_{guardian_id}')
 
 @socketio.on('webrtc_offer')
 def handle_webrtc_offer(data):
@@ -1517,6 +1511,26 @@ def handle_webrtc_ice(data):
 
     else:
         emit('error', {'error': 'Invalid target'})
+
+@socketio.on('webrtc_ready')
+def handle_webrtc_ready(data):
+    """Handle driver ready signal and notify guardian"""
+    client_id = request.sid
+    client_info = connected_clients.get(client_id, {})
+    
+    if client_info.get('type') == 'driver':
+        guardian_id = client_info.get('guardian_id')
+        driver_id = client_info.get('driver_id')
+        driver_name = client_info.get('driver_name', 'Unknown')
+        
+        print(f"📢 Driver {driver_name} is ready for WebRTC, notifying guardian {guardian_id}")
+        
+        # Notify guardian
+        socketio.emit('webrtc_ready', {
+            'driver_id': driver_id,
+            'driver_name': driver_name,
+            'guardian_id': guardian_id
+        }, room=f'guardian_{guardian_id}')
 
 @socketio.on('driver_alert')
 def handle_driver_alert(data):
@@ -2420,11 +2434,16 @@ def get_active_streams(guardian_id):
         active_streams = []
         
         for client_id, client_info in connected_clients.items():
-            print(f"   Client {client_id}: type={client_info.get('type')}, guardian={client_info.get('guardian_id')}, authenticated={client_info.get('authenticated')}")
+            client_type = client_info.get('type')
+            client_guardian = client_info.get('guardian_id')
+            client_auth = client_info.get('authenticated')
             
-            if (client_info.get('type') == 'driver' and 
-                str(client_info.get('guardian_id')) == str(guardian_id) and
-                client_info.get('authenticated') == True):
+            print(f"   Client {client_id}: type={client_type}, guardian={client_guardian}, auth={client_auth}")
+            
+            # Check if this is a driver for our guardian
+            if (client_type == 'driver' and 
+                str(client_guardian) == str(guardian_id) and 
+                client_auth == True):
                 
                 # Get driver details
                 driver_id = client_info.get('driver_id')
@@ -2437,15 +2456,17 @@ def get_active_streams(guardian_id):
                 else:
                     connected_seconds = 0
                 
-                active_streams.append({
+                stream_info = {
                     'driver_id': driver_id,
                     'driver_name': driver_name,
                     'connected_at': connected_at.isoformat() if connected_at else None,
                     'connected_seconds': connected_seconds,
                     'client_id': client_id
-                })
+                }
+                active_streams.append(stream_info)
+                print(f"   ✅ Found active stream: {stream_info}")
         
-        print(f"   Found {len(active_streams)} active streams for guardian {guardian_id}")
+        print(f"   Total active streams for guardian {guardian_id}: {len(active_streams)}")
         
         return jsonify({
             'success': True,
@@ -2927,6 +2948,12 @@ def get_guardian_activity():
 def debug_connected_clients():
     """Debug endpoint to see all connected clients"""
     try:
+        api_key = request.args.get('api_key')
+        expected_api_key = os.environ.get('CLIENT_API_KEY', 'your_secret_key')
+        
+        if api_key != expected_api_key:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
         clients_info = []
         for client_id, info in connected_clients.items():
             clients_info.append({
@@ -2936,7 +2963,8 @@ def debug_connected_clients():
                 'driver_id': info.get('driver_id'),
                 'driver_name': info.get('driver_name'),
                 'authenticated': info.get('authenticated'),
-                'connected_at': info.get('connected_at').isoformat() if info.get('connected_at') else None
+                'connected_at': info.get('connected_at').isoformat() if info.get('connected_at') else None,
+                'ip': info.get('ip')
             })
         
         return jsonify({
