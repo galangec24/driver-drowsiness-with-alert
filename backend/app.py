@@ -1354,19 +1354,18 @@ def handle_guardian_auth(data):
 
 @socketio.on('driver_authenticate')
 def handle_driver_auth(data):
-    """Driver authentication via WebSocket - ENHANCED DEBUG"""
+    """Driver authentication via WebSocket - FIXED registration"""
     client_id = request.sid
     driver_id = data.get('driver_id')
-    driver_name_input = data.get('driver_name', 'Unknown')
+    driver_name = data.get('driver_name', 'Unknown')
 
     print(f"\n{'='*60}")
     print(f"🔐 DRIVER AUTHENTICATION ATTEMPT")
     print(f"{'='*60}")
     print(f"   Client ID: {client_id}")
-    print(f"   Driver ID from client: {driver_id}")
-    print(f"   Driver Name from client: {driver_name_input}")
-    print(f"   Full data received: {data}")
-    print(f"   Client info before auth: {connected_clients.get(client_id, {})}")
+    print(f"   Driver ID: {driver_id}")
+    print(f"   Driver Name: {driver_name}")
+    print(f"   Full data: {data}")
 
     if not driver_id:
         print("❌ Missing driver_id")
@@ -1381,21 +1380,7 @@ def handle_driver_auth(data):
         emit('auth_failed', {'error': 'Driver not found or inactive'})
         return
 
-    # Fetch driver name for better notifications
-    driver_name = 'Unknown'
-    try:
-        if supabase:
-            result = supabase.table('drivers') \
-                .select('name') \
-                .eq('driver_id', driver_id) \
-                .execute()
-            if result.data and len(result.data) > 0:
-                driver_name = result.data[0]['name']
-                print(f"   Driver name from DB: {driver_name}")
-    except Exception as e:
-        print(f"⚠️ Could not fetch driver name: {e}")
-
-    # Update client info
+    # Update client info in connected_clients
     if client_id in connected_clients:
         connected_clients[client_id]['type'] = 'driver'
         connected_clients[client_id]['driver_id'] = driver_id
@@ -1403,10 +1388,26 @@ def handle_driver_auth(data):
         connected_clients[client_id]['driver_name'] = driver_name
         connected_clients[client_id]['authenticated'] = True
         connected_clients[client_id]['auth_time'] = datetime.now()
-        print(f"   Updated client info: {connected_clients[client_id]}")
+        print(f"✅ Updated client info: {connected_clients[client_id]}")
     else:
-        print(f"⚠️ Client {client_id} not found in connected_clients")
+        # Create new entry if it doesn't exist
+        connected_clients[client_id] = {
+            'connected_at': datetime.now(),
+            'ip': request.remote_addr,
+            'type': 'driver',
+            'guardian_id': guardian_id,
+            'driver_id': driver_id,
+            'driver_name': driver_name,
+            'authenticated': True,
+            'auth_time': datetime.now(),
+            'last_ping': datetime.now(),
+            'user_agent': request.headers.get('User-Agent', 'Unknown'),
+            'origin': request.headers.get('Origin', 'Unknown'),
+            'transport': request.environ.get('HTTP_UPGRADE', 'polling')
+        }
+        print(f"✅ Created new client entry for driver")
 
+    # Join driver's personal room
     try:
         socketio.enter_room(client_id, f'driver_{driver_id}')
         print(f"   Joined room: driver_{driver_id}")
@@ -1421,7 +1422,10 @@ def handle_driver_auth(data):
         'driver_name': driver_name,
         'message': 'Driver authenticated successfully'
     }
-      
+    
+    print(f"✅ Driver {driver_name} authenticated successfully for guardian {guardian_id}")
+    print(f"{'='*60}\n")
+    
     emit('auth_confirmed', response)
 
 @socketio.on('webrtc_offer')
@@ -2391,7 +2395,7 @@ def troubleshoot_google_auth():
         
 @app.route('/api/guardian/<guardian_id>/active-streams', methods=['GET'])
 def get_active_streams(guardian_id):
-    """Get list of active streams/drivers for a guardian"""
+    """Get list of active streams/drivers for a guardian - ENHANCED"""
     try:
         token = request.args.get('token')
         
@@ -2408,13 +2412,19 @@ def get_active_streams(guardian_id):
                 'error': 'Invalid or expired session'
             }), 401
         
+        # Debug: Print all connected clients
+        print(f"\n🔍 Active streams check for guardian {guardian_id}")
+        print(f"   Total connected clients: {len(connected_clients)}")
+        
         # Find active drivers for this guardian from connected_clients
         active_streams = []
         
         for client_id, client_info in connected_clients.items():
+            print(f"   Client {client_id}: type={client_info.get('type')}, guardian={client_info.get('guardian_id')}, authenticated={client_info.get('authenticated')}")
+            
             if (client_info.get('type') == 'driver' and 
-                client_info.get('guardian_id') == guardian_id and
-                client_info.get('authenticated')):
+                str(client_info.get('guardian_id')) == str(guardian_id) and
+                client_info.get('authenticated') == True):
                 
                 # Get driver details
                 driver_id = client_info.get('driver_id')
@@ -2435,6 +2445,8 @@ def get_active_streams(guardian_id):
                     'client_id': client_id
                 })
         
+        print(f"   Found {len(active_streams)} active streams for guardian {guardian_id}")
+        
         return jsonify({
             'success': True,
             'guardian_id': guardian_id,
@@ -2444,6 +2456,8 @@ def get_active_streams(guardian_id):
         
     except Exception as e:
         print(f"❌ Error getting active streams: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e)
@@ -2905,6 +2919,33 @@ def get_guardian_activity():
     except Exception as e:
         print(f"❌ Error in get_guardian_activity: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+#end Region
+
+#region Clients
+@app.route('/api/debug/connected-clients', methods=['GET'])
+def debug_connected_clients():
+    """Debug endpoint to see all connected clients"""
+    try:
+        clients_info = []
+        for client_id, info in connected_clients.items():
+            clients_info.append({
+                'client_id': client_id,
+                'type': info.get('type'),
+                'guardian_id': info.get('guardian_id'),
+                'driver_id': info.get('driver_id'),
+                'driver_name': info.get('driver_name'),
+                'authenticated': info.get('authenticated'),
+                'connected_at': info.get('connected_at').isoformat() if info.get('connected_at') else None
+            })
+        
+        return jsonify({
+            'success': True,
+            'total_clients': len(connected_clients),
+            'clients': clients_info
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 #end Region
 
