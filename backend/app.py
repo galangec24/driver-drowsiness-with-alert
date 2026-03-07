@@ -170,14 +170,20 @@ CORS(app,
 # Initialize SocketIO for real-time alerts with Firebase CORS
 socketio = SocketIO(
     app,
-    cors_allowed_origins=ALLOWED_ORIGINS,
+    cors_allowed_origins=[
+        'https://guardian-drive-app.web.app',
+        'https://guardian-drive-app.firebaseapp.com',
+        'http://localhost:5000',
+        'http://localhost:8080',
+        'http://localhost:3000'
+    ],
     async_mode='eventlet',
     ping_timeout=30,
     ping_interval=15,
     max_http_buffer_size=1e6,
-    transports=['websocket'],          
-    allow_upgrades=False,             
-    manage_session=True,                
+    transports=['polling', 'websocket'],  
+    allow_upgrades=True,
+    manage_session=False,
     cookie=None,
     always_connect=True,
     logger=True,
@@ -191,6 +197,22 @@ socketio = SocketIO(
     websocket_ping_timeout=60
 )
 #end Region
+
+@app.route('/socket.io/', methods=['OPTIONS'])
+@app.route('/socket.io/<path:path>', methods=['OPTIONS'])
+def handle_socketio_preflight(path=None):
+    """Handle CORS preflight for socket.io paths"""
+    response = jsonify({'status': 'ok'})
+    origin = request.headers.get('Origin')
+    
+    if origin and any(allowed in origin for allowed in ['guardian-drive-app.web.app', 'localhost']):
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        response.headers['Access-Control-Max-Age'] = '3600'
+    
+    return response, 200
 
 #region Admin (Initial)
 ADMIN_PASSWORD_HASH = bcrypt.hashpw(b'admin123', bcrypt.gensalt(rounds=12)).decode('utf-8')
@@ -1074,6 +1096,27 @@ def get_driver_by_name_or_id(identifier):
 
 #region Security
 @app.after_request
+
+def add_cors_headers_for_socketio(response):
+    """Ensure CORS headers are set for all responses, especially socket.io"""
+    origin = request.headers.get('Origin')
+    
+    # Allow all your Firebase origins
+    if origin and any(allowed in origin for allowed in ['guardian-drive-app.web.app', 'localhost']):
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+    
+    # Special handling for socket.io paths
+    if request.path.startswith('/socket.io/'):
+        # Ensure these headers are always present for socket.io
+        if 'Access-Control-Allow-Origin' not in response.headers:
+            response.headers['Access-Control-Allow-Origin'] = 'https://guardian-drive-app.web.app'
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+    
+    return response
+
 def add_security_headers(response):
     """Add security headers to all responses"""
     # CORS headers for Firebase Hosting
