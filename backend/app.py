@@ -2322,6 +2322,67 @@ def troubleshoot_google_auth():
             'traceback': traceback.format_exc(),
             'timestamp': datetime.now().isoformat()
         }), 500
+        
+@app.route('/api/guardian/<guardian_id>/active-streams', methods=['GET'])
+def get_active_streams(guardian_id):
+    """Get list of active streams/drivers for a guardian"""
+    try:
+        token = request.args.get('token')
+        
+        if not token:
+            return jsonify({
+                'success': False,
+                'error': 'Authentication token required'
+            }), 401
+        
+        # Validate session
+        if not validate_session(guardian_id, token):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid or expired session'
+            }), 401
+        
+        # Find active drivers for this guardian from connected_clients
+        active_streams = []
+        
+        for client_id, client_info in connected_clients.items():
+            if (client_info.get('type') == 'driver' and 
+                client_info.get('guardian_id') == guardian_id and
+                client_info.get('authenticated')):
+                
+                # Get driver details
+                driver_id = client_info.get('driver_id')
+                driver_name = client_info.get('driver_name', 'Unknown')
+                
+                # Get connection time
+                connected_at = client_info.get('connected_at')
+                if connected_at:
+                    connected_seconds = (datetime.now() - connected_at).total_seconds()
+                else:
+                    connected_seconds = 0
+                
+                active_streams.append({
+                    'driver_id': driver_id,
+                    'driver_name': driver_name,
+                    'connected_at': connected_at.isoformat() if connected_at else None,
+                    'connected_seconds': connected_seconds,
+                    'client_id': client_id
+                })
+        
+        return jsonify({
+            'success': True,
+            'guardian_id': guardian_id,
+            'count': len(active_streams),
+            'streams': active_streams
+        })
+        
+    except Exception as e:
+        print(f"❌ Error getting active streams: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+        
 #end Region
 
 @app.route('/api/logout', methods=['POST'])
