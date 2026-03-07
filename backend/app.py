@@ -1221,57 +1221,60 @@ def handle_connect():
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    """Handle client disconnection with cleanup and notify guardian if driver"""
+    """Handle client disconnection"""
     client_id = request.sid
     if client_id in connected_clients:
         client_info = connected_clients[client_id]
-        connected_duration = datetime.now() - client_info['connected_at']
         
-        print(f"\n{'='*60}")
-        print(f"⚠️ WebSocket client disconnected: {client_id}")
-        print(f"   Type: {client_info.get('type', 'unknown')}")
-        print(f"   Guardian ID: {client_info.get('guardian_id', 'None')}")
-        print(f"   Driver ID: {client_info.get('driver_id', 'None')}")
-        print(f"   Authenticated: {client_info.get('authenticated', False)}")
-        print(f"   Connected for: {connected_duration.total_seconds():.1f} seconds")
-        print(f"   IP: {client_info.get('ip', 'Unknown')}")
-        print(f"{'='*60}\n")
+        print(f"\n⚠️ Client disconnected: {client_id}")
+        print(f"   Type: {client_info.get('type')}")
+        print(f"   Guardian ID: {client_info.get('guardian_id')}")
         
         # If it was a driver, notify its guardian
         if client_info.get('type') == 'driver':
             guardian_id = client_info.get('guardian_id')
             driver_id = client_info.get('driver_id')
-            driver_name = client_info.get('driver_name', 'Unknown')
+            driver_name = client_info.get('driver_name')
+            
             if guardian_id:
                 socketio.emit('driver_disconnected', {
                     'driver_id': driver_id,
                     'driver_name': driver_name
                 }, room=f'guardian_{guardian_id}')
-                print(f"   Notified guardian {guardian_id} that driver {driver_id} ({driver_name}) disconnected")
+                print(f"   Notified guardian {guardian_id}")
         
         # Clean up
         del connected_clients[client_id]
+        
+        # Leave rooms
+        try:
+            socketio.server.close_room(client_id)
+        except:
+            pass
 
 @socketio.on('guardian_authenticate')
 def handle_guardian_auth(data):
-    """Guardian authentication via WebSocket - FIXED room joining"""
+    """Guardian authentication via WebSocket - COMPLETE FIXED VERSION"""
     client_id = request.sid
     guardian_id = data.get('guardian_id')
     token = data.get('token')
     auth_provider = data.get('auth_provider', 'unknown')
     
-    print(f"\n🔐 WebSocket authentication attempt:")
+    print(f"\n{'='*60}")
+    print(f"🔐 GUARDIAN AUTHENTICATION ATTEMPT")
+    print(f"{'='*60}")
     print(f"   Client ID: {client_id}")
     print(f"   Guardian ID: {guardian_id}")
     print(f"   Auth Provider: {auth_provider}")
     print(f"   Token present: {bool(token)}")
+    print(f"   Token length: {len(token) if token else 0}")
     
     if not guardian_id or not token:
         print(f"❌ Missing credentials from client {client_id}")
         emit('auth_failed', {'error': 'Missing guardian_id or token'})
         return
     
-    # Validate session
+    # Validate session (works for both phone and Google auth)
     is_valid = validate_session(guardian_id, token)
     
     if is_valid:
@@ -1297,7 +1300,9 @@ def handle_guardian_auth(data):
             connected_clients[client_id]['authenticated'] = True
             connected_clients[client_id]['auth_time'] = datetime.now()
             connected_clients[client_id]['auth_provider'] = auth_provider
+            connected_clients[client_id]['last_ping'] = datetime.now()
         else:
+            # Create new client entry
             connected_clients[client_id] = {
                 'connected_at': datetime.now(),
                 'ip': request.remote_addr,
@@ -1307,17 +1312,23 @@ def handle_guardian_auth(data):
                 'auth_time': datetime.now(),
                 'auth_provider': auth_provider,
                 'last_ping': datetime.now(),
-                'user_agent': request.headers.get('User-Agent', 'Unknown')
+                'user_agent': request.headers.get('User-Agent', 'Unknown'),
+                'origin': request.headers.get('Origin', 'Unknown'),
+                'transport': request.environ.get('HTTP_UPGRADE', 'polling')
             }
         
-        # Join guardian room for targeted messages - FIXED: use join_room
+        # Join guardian room for targeted messages - FIXED: use server.enter_room
         try:
-            socketio.rooms[client_id] = {client_id, f"guardian_{guardian_id}"}
-            # Alternative method:
-            # socketio.server.enter_room(client_id, f"guardian_{guardian_id}")
-            print(f"   Added to room: guardian_{guardian_id}")
+            socketio.server.enter_room(client_id, f"guardian_{guardian_id}")
+            print(f"   ✅ Joined room: guardian_{guardian_id}")
         except Exception as e:
-            print(f"   Error adding to room: {e}")
+            print(f"   ⚠️ Error joining room: {e}")
+            # Fallback method
+            try:
+                socketio.enter_room(client_id, f"guardian_{guardian_id}")
+                print(f"   ✅ Joined room (fallback): guardian_{guardian_id}")
+            except Exception as e2:
+                print(f"   ⚠️ Fallback also failed: {e2}")
         
         # Get guardian info
         guardian = get_guardian_by_id(guardian_id)
@@ -1333,17 +1344,31 @@ def handle_guardian_auth(data):
                 'message': 'WebSocket authentication successful'
             })
         else:
+            print(f"✅ Guardian authenticated successfully (no details)")
             emit('auth_confirmed', {
                 'success': True,
                 'guardian_id': guardian_id,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now().isoformat(),
+                'message': 'WebSocket authentication successful'
             })
-    else:
-        emit('auth_failed', {'error': 'Authentication failed'})
+        
+        print(f"   Current connected clients: {len(connected_clients)}")
+        for cid, info in connected_clients.items():
+            print(f"      {cid}: type={info.get('type')}, guardian={info.get('guardian_id')}")
+        print(f"{'='*60}\n")
+        return
+
+    # Authentication failed
+    print(f"❌ Session validation failed for guardian {guardian_id}")
+    emit('auth_failed', {
+        'error': 'Authentication failed',
+        'timestamp': datetime.now().isoformat()
+    })
+    print(f"{'='*60}\n")
         
 @socketio.on('driver_authenticate')
 def handle_driver_auth(data):
-    """Driver authentication via WebSocket - FIXED registration"""
+    """Driver authentication via WebSocket - COMPLETE FIXED VERSION"""
     client_id = request.sid
     driver_id = data.get('driver_id')
     driver_name = data.get('driver_name', 'Unknown')
@@ -1354,6 +1379,7 @@ def handle_driver_auth(data):
     print(f"   Client ID: {client_id}")
     print(f"   Driver ID: {driver_id}")
     print(f"   Driver Name: {driver_name}")
+    print(f"   Full data received: {data}")
 
     if not driver_id:
         print("❌ Missing driver_id")
@@ -1370,17 +1396,35 @@ def handle_driver_auth(data):
 
     print(f"✅ Found guardian_id: {guardian_id} for driver {driver_id}")
 
+    # Fetch driver name from database if not provided
+    if driver_name == 'Unknown' or not driver_name:
+        try:
+            if supabase:
+                result = supabase.table('drivers') \
+                    .select('name') \
+                    .eq('driver_id', driver_id) \
+                    .execute()
+                if result.data and len(result.data) > 0:
+                    driver_name = result.data[0]['name']
+                    print(f"   Fetched driver name from DB: {driver_name}")
+        except Exception as e:
+            print(f"⚠️ Could not fetch driver name: {e}")
+
     # Update or create client info in connected_clients
     if client_id in connected_clients:
+        # Update existing entry
         connected_clients[client_id].update({
             'type': 'driver',
             'driver_id': driver_id,
             'guardian_id': guardian_id,
             'driver_name': driver_name,
             'authenticated': True,
-            'auth_time': datetime.now()
+            'auth_time': datetime.now(),
+            'last_ping': datetime.now()
         })
+        print(f"✅ Updated existing client info for {client_id}")
     else:
+        # Create new entry
         connected_clients[client_id] = {
             'connected_at': datetime.now(),
             'ip': request.remote_addr,
@@ -1391,68 +1435,97 @@ def handle_driver_auth(data):
             'authenticated': True,
             'auth_time': datetime.now(),
             'last_ping': datetime.now(),
-            'user_agent': request.headers.get('User-Agent', 'Unknown')
+            'user_agent': request.headers.get('User-Agent', 'Unknown'),
+            'origin': request.headers.get('Origin', 'Unknown'),
+            'transport': request.environ.get('HTTP_UPGRADE', 'polling')
         }
-    
-    # Add to rooms - FIXED: use join_room for both
-    try:
-        # Add to driver's personal room
-        socketio.rooms[client_id] = {client_id, f"driver_{driver_id}"}
-        # Add to guardian's room to receive broadcasts
-        socketio.rooms[client_id].add(f"guardian_{guardian_id}")
-        print(f"   Added to rooms: driver_{driver_id}, guardian_{guardian_id}")
-    except Exception as e:
-        print(f"   Error adding to rooms: {e}")
+        print(f"✅ Created new client entry for {client_id}")
 
-    print(f"✅ Driver {driver_name} authenticated for guardian {guardian_id}")
-    print(f"   Current connected clients: {len(connected_clients)}")
-    
+    # Join driver's personal room - FIXED: use server.enter_room
+    try:
+        socketio.server.enter_room(client_id, f'driver_{driver_id}')
+        print(f"   ✅ Joined room: driver_{driver_id}")
+    except Exception as e:
+        print(f"   ⚠️ Error joining driver room: {e}")
+        # Fallback method
+        try:
+            socketio.enter_room(client_id, f'driver_{driver_id}')
+            print(f"   ✅ Joined driver room (fallback): driver_{driver_id}")
+        except Exception as e2:
+            print(f"   ⚠️ Fallback also failed: {e2}")
+
+    # Join guardian's room to receive broadcasts - FIXED: use server.enter_room
+    try:
+        socketio.server.enter_room(client_id, f'guardian_{guardian_id}')
+        print(f"   ✅ Joined room: guardian_{guardian_id}")
+    except Exception as e:
+        print(f"   ⚠️ Error joining guardian room: {e}")
+        # Fallback method
+        try:
+            socketio.enter_room(client_id, f'guardian_{guardian_id}')
+            print(f"   ✅ Joined guardian room (fallback): guardian_{guardian_id}")
+        except Exception as e2:
+            print(f"   ⚠️ Fallback also failed: {e2}")
+
     # Send confirmation
-    emit('auth_confirmed', {
+    response = {
         'success': True,
         'driver_id': driver_id,
         'guardian_id': guardian_id,
         'driver_name': driver_name,
         'message': 'Driver authenticated successfully'
-    })
+    }
+    
+    print(f"✅ Driver {driver_name} authenticated successfully for guardian {guardian_id}")
+    print(f"   Current connected clients: {len(connected_clients)}")
+    for cid, info in connected_clients.items():
+        print(f"      {cid}: type={info.get('type')}, guardian={info.get('guardian_id')}, driver={info.get('driver_id')}")
+    
+    emit('auth_confirmed', response)
     
     # Broadcast to guardian that driver is online
-    socketio.emit('driver_online', {
-        'driver_id': driver_id,
-        'driver_name': driver_name,
-        'guardian_id': guardian_id
-    }, room=f'guardian_{guardian_id}')
-    print(f"📢 Broadcast driver_online to guardian_{guardian_id}")
-
-@socketio.on('webrtc_offer')
-def handle_webrtc_offer(data):
-    """Forward a WebRTC offer from driver to its guardian, or from guardian to driver."""
+    try:
+        socketio.emit('driver_online', {
+            'driver_id': driver_id,
+            'driver_name': driver_name,
+            'guardian_id': guardian_id
+        }, room=f'guardian_{guardian_id}')
+        print(f"📢 Broadcast driver_online to guardian_{guardian_id}")
+    except Exception as e:
+        print(f"⚠️ Could not broadcast driver_online: {e}")
+    
+@socketio.on('webrtc_ready')
+def handle_webrtc_ready(data):
+    """Handle driver ready signal and notify guardian"""
     client_id = request.sid
     client_info = connected_clients.get(client_id, {})
-    client_type = client_info.get('type')
-
-    if client_type == 'driver':
-        # Driver is offering to its guardian
+    
+    print(f"\n📢 WEBRTC READY SIGNAL RECEIVED")
+    print(f"{'='*60}")
+    print(f"   From client: {client_id}")
+    print(f"   Client type: {client_info.get('type')}")
+    
+    if client_info.get('type') == 'driver':
         guardian_id = client_info.get('guardian_id')
-        if not guardian_id:
-            emit('error', {'error': 'Unknown guardian'})
-            return
-        # Forward to guardian's room
-        data['from_driver'] = client_info.get('driver_id')
-        socketio.emit('webrtc_offer', data, room=f'guardian_{guardian_id}')
-        print(f"📤 Forwarded offer from driver {client_info.get('driver_id')} to guardian {guardian_id}")
-
-    elif client_type == 'guardian':
-        driver_id = data.get('driver_id')
-        if not driver_id:
-            emit('error', {'error': 'Missing driver_id'})
-            return
-        socketio.emit('webrtc_offer', data, room=f'driver_{driver_id}')
-        print(f"📤 Forwarded offer from guardian to driver {driver_id}")
-
+        driver_id = client_info.get('driver_id')
+        driver_name = client_info.get('driver_name', 'Unknown')
+        
+        print(f"   Driver: {driver_name} (ID: {driver_id})")
+        print(f"   Notifying guardian: {guardian_id}")
+        
+        # Emit to guardian's room
+        try:
+            socketio.emit('webrtc_ready', {
+                'driver_id': driver_id,
+                'driver_name': driver_name,
+                'guardian_id': guardian_id
+            }, room=f'guardian_{guardian_id}')
+            print(f"✅ Notification sent to guardian_{guardian_id}")
+        except Exception as e:
+            print(f"⚠️ Error sending to guardian: {e}")
     else:
-        emit('error', {'error': 'Unauthenticated client'})
-
+        print(f"❌ Not a driver client (type: {client_info.get('type')})")
+    
 @socketio.on('webrtc_answer')
 def handle_webrtc_answer(data):
     """Forward a WebRTC answer from guardian to driver."""
@@ -1520,19 +1593,26 @@ def handle_webrtc_ready(data):
     client_id = request.sid
     client_info = connected_clients.get(client_id, {})
     
+    print(f"\n📢 WebRTC READY signal received from {client_id}")
+    
     if client_info.get('type') == 'driver':
         guardian_id = client_info.get('guardian_id')
         driver_id = client_info.get('driver_id')
         driver_name = client_info.get('driver_name', 'Unknown')
         
-        print(f"📢 Driver {driver_name} is ready for WebRTC, notifying guardian {guardian_id}")
+        print(f"   Driver: {driver_name} (ID: {driver_id})")
+        print(f"   Notifying guardian: {guardian_id}")
         
-        # Notify guardian
+        # Emit to guardian's room
         socketio.emit('webrtc_ready', {
             'driver_id': driver_id,
             'driver_name': driver_name,
             'guardian_id': guardian_id
         }, room=f'guardian_{guardian_id}')
+        
+        print(f"✅ Notification sent to guardian_{guardian_id}")
+    else:
+        print(f"❌ Not a driver client")
 
 @socketio.on('driver_alert')
 def handle_driver_alert(data):
@@ -1587,10 +1667,7 @@ def handle_ping():
     client_id = request.sid
     if client_id in connected_clients:
         connected_clients[client_id]['last_ping'] = datetime.now()
-        emit('pong', {
-            'timestamp': datetime.now().isoformat(),
-            'client_id': client_id
-        })
+        emit('pong', {'timestamp': datetime.now().isoformat()})
 
 @socketio.on('error')
 def handle_error(error):
