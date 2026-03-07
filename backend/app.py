@@ -31,6 +31,9 @@ import traceback
 import requests
 import io
 
+# Supabase imports
+from supabase import create_client, Client
+
 # Cloudinary imports
 import cloudinary
 import cloudinary.uploader
@@ -43,13 +46,8 @@ from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 import google.auth.transport.requests
 import io
-import psycopg2.extras
 
 import logging
-import psycopg2
-import psycopg2.extras
-from flask import request, jsonify
-from psycopg2.extras import RealDictCursor
 
 # Setup logger (if not already done)
 logger = logging.getLogger(__name__)
@@ -72,6 +70,19 @@ eventlet.monkey_patch()
 # Google OAuth Configuration
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+
+# ==================== SUPABASE CONFIGURATION ====================
+SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
+SUPABASE_JWT_SECRET = os.environ.get('SUPABASE_JWT_SECRET', '')
+
+# Initialize Supabase client
+supabase: Client = None
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    print(f"✅ Supabase client initialized")
+else:
+    print("⚠️ Supabase not configured. Check SUPABASE_URL and SUPABASE_KEY environment variables.")
 
 # ==================== CLOUDINARY CONFIGURATION ====================
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME', '')
@@ -353,76 +364,24 @@ def rate_limit_exceeded(ip, endpoint_type='general', limit=100):
     return False
 #end Region
 
-#region Database
+#region Database - Supabase
 @contextmanager
 def get_db_connection():
-    """Context manager for database connections"""
-    conn = None
-    try:
-        database_url = os.environ.get('DATABASE_URL')
-        if not database_url:
-            raise Exception("DATABASE_URL not set")
-        
-        if database_url.startswith('postgres://'):
-            database_url = database_url.replace('postgres://', 'postgresql://', 1)
-        
-        url = urllib.parse.urlparse(database_url)
-        port = url.port or 5432
-        
-        conn = psycopg2.connect(
-            database=url.path[1:] if url.path.startswith('/') else url.path,
-            user=url.username,
-            password=url.password,
-            host=url.hostname,
-            port=port,
-            cursor_factory=psycopg2.extras.RealDictCursor,  
-            connect_timeout=5
-        )
-        yield conn
-    except Exception as e:
-        print(f"❌ Database connection error: {e}")
-        raise
-    finally:
-        if conn:
-            conn.close()
+    """Context manager for Supabase connection"""
+    if not supabase:
+        raise Exception("Supabase client not initialized")
+    yield supabase
 
 @contextmanager
 def get_db_cursor():
-    """Context manager for database cursor"""
-    conn = None
-    cursor = None
-    try:
-        database_url = os.environ.get('DATABASE_URL')
-        if not database_url:
-            raise Exception("DATABASE_URL not set")
-        
-        if database_url.startswith('postgres://'):
-            database_url = database_url.replace('postgres://', 'postgresql://', 1)
-        
-        url = urllib.parse.urlparse(database_url)
-        port = url.port or 5432
-        
-        conn = psycopg2.connect(
-            database=url.path[1:] if url.path.startswith('/') else url.path,
-            user=url.username,
-            password=url.password,
-            host=url.hostname,
-            port=port
-        )
-        cursor = conn.cursor()
-        
-        yield cursor
-        conn.commit()
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        print(f"❌ Database error: {e}")
-        raise
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+    """
+    Context manager for Supabase operations.
+    Note: Supabase doesn't use traditional cursors, so we yield the client
+    and handle transactions differently.
+    """
+    if not supabase:
+        raise Exception("Supabase client not initialized")
+    yield supabase
 
 # Store connected clients and active sessions
 connected_clients = {}
@@ -447,229 +406,98 @@ def cleanup_stale_clients():
 # Start the thread (daemon so it exits when main process ends)
 threading.Thread(target=cleanup_stale_clients, daemon=True).start()
 
-# ==================== DATABASE INITIALIZATION ====================
+# ==================== SUPABASE INITIALIZATION ====================
 def init_db():
-    """Initialize database with all required tables"""
-    print("🗄️  Initializing PostgreSQL database...")
+    """Initialize database with all required tables in Supabase"""
+    print("🗄️  Initializing Supabase database...")
     
     try:
-        with get_db_cursor() as cursor:
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS guardians (
-                    guardian_id SERIAL PRIMARY KEY,
-                    full_name TEXT NOT NULL,
-                    phone TEXT UNIQUE NOT NULL,
-                    email TEXT,
-                    password_hash VARCHAR(255) NOT NULL,
-                    address TEXT,
-                    registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_login TIMESTAMP,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    failed_login_attempts INTEGER DEFAULT 0,
-                    locked_until TIMESTAMP,
-                    google_id TEXT UNIQUE,
-                    auth_provider TEXT DEFAULT 'phone'
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS drivers (
-                    driver_id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    address TEXT,
-                    phone TEXT NOT NULL,
-                    email TEXT,
-                    reference_number TEXT UNIQUE,
-                    license_number TEXT,
-                    guardian_id INTEGER REFERENCES guardians(guardian_id) ON DELETE CASCADE,
-                    registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    is_active BOOLEAN DEFAULT TRUE
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS alerts (
-                    alert_id SERIAL PRIMARY KEY,
-                    driver_id TEXT NOT NULL,
-                    guardian_id INTEGER,
-                    severity TEXT NOT NULL CHECK(severity IN ('low', 'medium', 'high')),
-                    message TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    acknowledged BOOLEAN DEFAULT FALSE,
-                    detection_details TEXT,
-                    source TEXT DEFAULT 'system',
-                    FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
-                    FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS face_images (
-                    image_id SERIAL PRIMARY KEY,
-                    driver_id TEXT NOT NULL,
-                    image_path TEXT NOT NULL,
-                    capture_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS drowsiness_events (
-                    event_id SERIAL PRIMARY KEY,
-                    driver_id TEXT NOT NULL,
-                    guardian_id INTEGER,
-                    confidence REAL,
-                    state TEXT,
-                    ear REAL,
-                    mar REAL,
-                    perclos REAL,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    processed BOOLEAN DEFAULT FALSE,
-                    FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
-                    FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS activity_log (
-                    log_id SERIAL PRIMARY KEY,
-                    guardian_id INTEGER,
-                    admin_username TEXT,
-                    action TEXT,
-                    details TEXT,
-                    ip_address TEXT,
-                    user_agent TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS session_tokens (
-                    token_id SERIAL PRIMARY KEY,
-                    guardian_id INTEGER NOT NULL,
-                    token TEXT UNIQUE NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    expires_at TIMESTAMP,
-                    is_valid BOOLEAN DEFAULT TRUE,
-                    ip_address TEXT,
-                    user_agent TEXT,
-                    FOREIGN KEY (guardian_id) REFERENCES guardians(guardian_id) ON DELETE CASCADE
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS admin_activity_log (
-                    log_id SERIAL PRIMARY KEY,
-                    admin_username TEXT NOT NULL,
-                    action TEXT,
-                    details TEXT,
-                    ip_address TEXT,
-                    user_agent TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            # Create indexes
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_drivers_guardian ON drivers(guardian_id)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_guardian ON alerts(guardian_id)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_expires ON session_tokens(expires_at)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_tokens_valid ON session_tokens(is_valid)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_driver ON drowsiness_events(driver_id)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_drowsiness_timestamp ON drowsiness_events(timestamp)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_guardians_active ON guardians(is_active)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_guardians_google ON guardians(google_id)')
-            
-            # ===== NEW: Add face_embedding column if it doesn't exist =====
-            print("   Checking for face_embedding column...")
-            cursor.execute("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name='drivers' AND column_name='face_embedding'
-            """)
-            
-            if not cursor.fetchone():
-                print("   Adding face_embedding column to drivers table...")
-                cursor.execute("ALTER TABLE drivers ADD COLUMN face_embedding JSONB")
-                print("   ✅ face_embedding column added")
-            else:
-                print("   ✅ face_embedding column already exists")
- 
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_drivers_face_embedding 
-                ON drivers((face_embedding IS NOT NULL)) 
-                WHERE face_embedding IS NOT NULL
-            ''')
+        if not supabase:
+            print("❌ Supabase client not initialized")
+            return False
         
-        print("✅ Database initialized successfully")
+        # Note: In Supabase, tables should be created via SQL editor or migrations
+        # This function now just verifies connectivity and checks for required tables
+        
+        # Test connection by trying to fetch from guardians
+        result = supabase.table('guardians').select('*').limit(1).execute()
+        print("✅ Successfully connected to Supabase")
+        
+        # Check if we can access the tables
+        tables_to_check = ['guardians', 'drivers', 'alerts', 'face_images', 
+                          'drowsiness_events', 'activity_log', 'session_tokens', 
+                          'admin_activity_log']
+        
+        for table in tables_to_check:
+            try:
+                result = supabase.table(table).select('*').limit(1).execute()
+                print(f"   ✅ Table '{table}' exists and is accessible")
+            except Exception as e:
+                print(f"   ⚠️ Table '{table}' might not exist: {e}")
+                print(f"   Please create this table in Supabase SQL editor")
+        
+        print("✅ Supabase connection verified successfully")
         return True
         
     except Exception as e:
-        print(f"❌ Database initialization failed: {e}")
+        print(f"❌ Supabase initialization failed: {e}")
         import traceback
         traceback.print_exc()
         return False
 
 def update_db_schema():
-    """Update existing database schema to add missing columns"""
-    print("🔧 Updating database schema...")
+    """Check Supabase schema - migrations should be done via SQL editor"""
+    print("🔧 Checking Supabase schema...")
     
     try:
-        with get_db_cursor() as cursor:
-            # Check if google_id column exists in guardians table
-            cursor.execute('''
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'guardians' AND column_name = 'google_id'
-            ''')
-            
-            result = cursor.fetchone()
-            if not result:
-                print("   Adding google_id column to guardians table...")
-                cursor.execute('''
-                    ALTER TABLE guardians 
-                    ADD COLUMN google_id TEXT UNIQUE
-                ''')
-                print("   ✅ google_id column added")
-            else:
-                print("   ✅ google_id column already exists")
-            
-            # Check for other missing columns
-            cursor.execute('''
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'guardians' AND column_name = 'auth_provider'
-            ''')
-            
-            result = cursor.fetchone()
-            if not result:
-                print("   Adding auth_provider column to guardians table...")
-                cursor.execute('''
-                    ALTER TABLE guardians 
-                    ADD COLUMN auth_provider TEXT DEFAULT 'phone'
-                ''')
-                print("   ✅ auth_provider column added")
-            else:
-                print("   ✅ auth_provider column already exists")
+        if not supabase:
+            print("❌ Supabase client not initialized")
+            return False
         
-        print("✅ Database schema updated successfully")
+        # Check if google_id column exists in guardians table by trying to query it
+        try:
+            result = supabase.table('guardians').select('google_id').limit(1).execute()
+            print("   ✅ google_id column exists in guardians table")
+        except Exception as e:
+            print("   ⚠️ google_id column might not exist in guardians table")
+            print("   Please add it via Supabase SQL editor:")
+            print("   ALTER TABLE guardians ADD COLUMN google_id TEXT UNIQUE;")
+        
+        # Check auth_provider column
+        try:
+            result = supabase.table('guardians').select('auth_provider').limit(1).execute()
+            print("   ✅ auth_provider column exists in guardians table")
+        except Exception as e:
+            print("   ⚠️ auth_provider column might not exist in guardians table")
+            print("   Please add it via Supabase SQL editor:")
+            print("   ALTER TABLE guardians ADD COLUMN auth_provider TEXT DEFAULT 'phone';")
+        
+        # Check face_embedding column in drivers
+        try:
+            result = supabase.table('drivers').select('face_embedding').limit(1).execute()
+            print("   ✅ face_embedding column exists in drivers table")
+        except Exception as e:
+            print("   ⚠️ face_embedding column might not exist in drivers table")
+            print("   Please add it via Supabase SQL editor:")
+            print("   ALTER TABLE drivers ADD COLUMN face_embedding JSONB;")
+        
+        print("✅ Supabase schema check completed")
         return True
         
     except Exception as e:
-        print(f"❌ Database schema update failed: {e}")
+        print(f"❌ Supabase schema check failed: {e}")
         return False
 
 def get_guardian_for_driver(driver_id):
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('SELECT guardian_id FROM drivers WHERE driver_id = %s AND is_active = TRUE', (driver_id,))
-            result = cursor.fetchone()
-            if result:
-                return result['guardian_id'] if isinstance(result, dict) else result[0]
+        if not supabase:
             return None
+        
+        result = supabase.table('drivers').select('guardian_id').eq('driver_id', driver_id).eq('is_active', True).execute()
+        
+        if result.data and len(result.data) > 0:
+            return result.data[0]['guardian_id']
+        return None
     except Exception as e:
         print(f"❌ Error getting guardian for driver {driver_id}: {e}")
         return None
@@ -811,15 +639,28 @@ def create_session(guardian_id, ip_address=None, user_agent=None):
     expires_at = datetime.now() + timedelta(hours=24)
     
     try:
-        with get_db_cursor() as cursor:
-            # Existing sessions gets nulled
-            cursor.execute('UPDATE session_tokens SET is_valid = FALSE WHERE guardian_id = %s AND is_valid = TRUE', (guardian_id,))
+        if not supabase:
+            return None
             
-            # Create new session
-            cursor.execute('''
-                INSERT INTO session_tokens (guardian_id, token, expires_at, ip_address, user_agent)
-                VALUES (%s, %s, %s, %s, %s)
-            ''', (guardian_id, token, expires_at, ip_address, user_agent))
+        # Invalidate existing sessions
+        supabase.table('session_tokens') \
+            .update({'is_valid': False}) \
+            .eq('guardian_id', guardian_id) \
+            .eq('is_valid', True) \
+            .execute()
+        
+        # Create new session
+        data = {
+            'guardian_id': guardian_id,
+            'token': token,
+            'expires_at': expires_at.isoformat(),
+            'ip_address': ip_address,
+            'user_agent': user_agent,
+            'is_valid': True,
+            'created_at': datetime.now().isoformat()
+        }
+        
+        result = supabase.table('session_tokens').insert(data).execute()
         
         # Store in memory for quick access
         active_sessions[guardian_id] = {
@@ -846,31 +687,29 @@ def validate_session(guardian_id, token):
             session_data['expires'] > datetime.now()):
             return True
     
-    # Check database
+    # Check Supabase
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT COUNT(*) FROM session_tokens 
-                WHERE guardian_id = %s AND token = %s AND is_valid = TRUE AND expires_at > %s
-            ''', (guardian_id, token, datetime.now()))
+        if not supabase:
+            return False
             
-            result = cursor.fetchone()
-            # FIX: Handle both dict and tuple
-            if isinstance(result, dict):
-                count = result['count']
-            else:
-                count = result[0] if result else 0
-            exists = count > 0
-            
-            if exists and guardian_id not in active_sessions:
-                active_sessions[guardian_id] = {
-                    'token': token,
-                    'expires': datetime.now() + timedelta(hours=23),
-                    'created': datetime.now()
-                }
-            
-            return exists
+        result = supabase.table('session_tokens') \
+            .select('*') \
+            .eq('guardian_id', guardian_id) \
+            .eq('token', token) \
+            .eq('is_valid', True) \
+            .gte('expires_at', datetime.now().isoformat()) \
+            .execute()
+        
+        exists = len(result.data) > 0
+        
+        if exists and guardian_id not in active_sessions:
+            active_sessions[guardian_id] = {
+                'token': token,
+                'expires': datetime.now() + timedelta(hours=23),
+                'created': datetime.now()
+            }
+        
+        return exists
     except Exception as e:
         print(f"❌ Error validating session: {e}")
         return False
@@ -878,11 +717,17 @@ def validate_session(guardian_id, token):
 def invalidate_session(guardian_id, token=None):
     """Invalidate a guardian session"""
     try:
-        with get_db_cursor() as cursor:
-            if token:
-                cursor.execute('UPDATE session_tokens SET is_valid = FALSE WHERE guardian_id = %s AND token = %s', (guardian_id, token))
-            else:
-                cursor.execute('UPDATE session_tokens SET is_valid = FALSE WHERE guardian_id = %s', (guardian_id,))
+        if not supabase:
+            return False
+            
+        query = supabase.table('session_tokens') \
+            .update({'is_valid': False}) \
+            .eq('guardian_id', guardian_id)
+        
+        if token:
+            query = query.eq('token', token)
+        
+        query.execute()
         
         # Remove from memory cache
         if guardian_id in active_sessions:
@@ -913,6 +758,10 @@ def verify_guardian_credentials(identifier, password):
         print(f"   Identifier received: '{identifier}'")
         print(f"   Password received: '{password}' (length: {len(password)})")
         
+        if not supabase:
+            print("❌ [LOGIN VERIFY] Supabase client not initialized")
+            return None
+        
         # Check if identifier is email or phone
         is_email = '@' in identifier and '.' in identifier
         
@@ -921,27 +770,26 @@ def verify_guardian_credentials(identifier, password):
             email = identifier.strip().lower()
             print(f"   Using email login: '{email}'")
             
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
+            # Query by email
+            result = supabase.table('guardians') \
+                .select('guardian_id, full_name, password_hash, is_active, phone') \
+                .eq('email', email) \
+                .execute()
+            
+            if not result.data or len(result.data) == 0:
+                print(f"❌ [LOGIN VERIFY] No user found with email: '{email}'")
                 
-                # Query by email
-                cursor.execute('''
-                    SELECT guardian_id, full_name, password_hash, is_active, phone
-                    FROM guardians 
-                    WHERE email = %s
-                ''', (email,))
+                # Debug: Show some emails in DB
+                sample = supabase.table('guardians') \
+                    .select('email, full_name') \
+                    .not_.is_('email', 'null') \
+                    .limit(5) \
+                    .execute()
+                print(f"   First 5 emails in DB: {[item['email'] for item in sample.data]}")
                 
-                result = cursor.fetchone()
-                
-                if not result:
-                    print(f"❌ [LOGIN VERIFY] No user found with email: '{email}'")
-                    
-                    # Debug: Show some emails in DB
-                    cursor.execute('SELECT email, full_name FROM guardians WHERE email IS NOT NULL LIMIT 5')
-                    all_emails = cursor.fetchall()
-                    print(f"   First 5 emails in DB: {[e[0] for e in all_emails]}")
-                    
-                    return None
+                return None
+            
+            guardian_data = result.data[0]
                 
         else:
             # Phone login - clean and format
@@ -991,48 +839,33 @@ def verify_guardian_credentials(identifier, password):
             
             print(f"   Looking up in DB as: '{lookup_phone}'")
             
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
+            # Query by phone
+            result = supabase.table('guardians') \
+                .select('guardian_id, full_name, password_hash, is_active, email') \
+                .eq('phone', lookup_phone) \
+                .execute()
+            
+            if not result.data or len(result.data) == 0:
+                print(f"❌ [LOGIN VERIFY] No user found with phone: '{lookup_phone}'")
                 
-                # Query by phone
-                cursor.execute('''
-                    SELECT guardian_id, full_name, password_hash, is_active, email
-                    FROM guardians 
-                    WHERE phone = %s
-                ''', (lookup_phone,))
+                # Debug: Show what's in the database
+                sample = supabase.table('guardians') \
+                    .select('phone, full_name') \
+                    .not_.is_('phone', 'null') \
+                    .limit(5) \
+                    .execute()
+                print(f"   First 5 phones in DB: {[item['phone'] for item in sample.data]}")
                 
-                result = cursor.fetchone()
-                
-                if not result:
-                    print(f"❌ [LOGIN VERIFY] No user found with phone: '{lookup_phone}'")
-                    
-                    # Debug: Show what's in the database
-                    cursor.execute('SELECT phone, full_name FROM guardians WHERE phone IS NOT NULL LIMIT 5')
-                    all_phones = cursor.fetchall()
-                    print(f"   First 5 phones in DB: {[p[0] for p in all_phones]}")
-                    
-                    return None
+                return None
+            
+            guardian_data = result.data[0]
         
-        print(f"   Result type: {type(result)}")
+        print(f"   Result data: {guardian_data}")
         
-        if isinstance(result, dict):
-            guardian_id = result['guardian_id']
-            full_name = result['full_name']
-            stored_hash = result['password_hash']
-            is_active = result['is_active']
-            email_or_phone = result.get('email') or result.get('phone') or identifier
-            print(f"   Using dictionary access")
-        else:
-            # Tuple from regular cursor
-            # Handle different tuple structures based on which query we ran
-            if is_email:
-                guardian_id, full_name, stored_hash, is_active, phone = result
-                email_or_phone = email
-                print(f"   Using tuple unpacking (email query)")
-            else:
-                guardian_id, full_name, stored_hash, is_active, email = result
-                email_or_phone = lookup_phone
-                print(f"   Using tuple unpacking (phone query)")
+        guardian_id = guardian_data['guardian_id']
+        full_name = guardian_data['full_name']
+        stored_hash = guardian_data['password_hash']
+        is_active = guardian_data['is_active']
         
         print(f"✅ [LOGIN VERIFY] User found: {full_name} (ID: {guardian_id})")
         
@@ -1058,16 +891,17 @@ def verify_guardian_credentials(identifier, password):
             
             # Update last login
             try:
-                cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
-                             (datetime.now(), guardian_id))
-                conn.commit()
+                supabase.table('guardians') \
+                    .update({'last_login': datetime.now().isoformat()}) \
+                    .eq('guardian_id', guardian_id) \
+                    .execute()
             except Exception as update_error:
                 print(f"⚠️ [LOGIN VERIFY] Error updating last login: {update_error}")
             
             return {
                 'guardian_id': guardian_id, 
                 'full_name': full_name,
-                'identifier': email_or_phone,
+                'identifier': email if is_email else lookup_phone,
                 'is_email': is_email
             }
         else:
@@ -1084,17 +918,17 @@ def verify_guardian_credentials(identifier, password):
 def get_guardian_by_id(guardian_id):
     """Get guardian information by ID"""
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT guardian_id, full_name, phone, email, address, registration_date, last_login, auth_provider
-                FROM guardians WHERE guardian_id = %s
-            ''', (guardian_id,))
-            
-            result = cursor.fetchone()
-            if result:
-                return dict(result)
+        if not supabase:
             return None
+            
+        result = supabase.table('guardians') \
+            .select('guardian_id, full_name, phone, email, address, registration_date, last_login, auth_provider') \
+            .eq('guardian_id', guardian_id) \
+            .execute()
+        
+        if result.data and len(result.data) > 0:
+            return result.data[0]
+        return None
     except Exception as e:
         print(f"❌ Error getting guardian: {e}")
         return None
@@ -1102,24 +936,37 @@ def get_guardian_by_id(guardian_id):
 def log_activity(guardian_id=None, admin_username=None, action=None, details=None):
     """Log guardian or admin activity with debug output"""
     try:
+        if not supabase:
+            print("⚠️ [LOG_ACTIVITY] Supabase not initialized")
+            return
+            
         ip_address = request.remote_addr if request else None
         user_agent = request.headers.get('User-Agent') if request else None
         
         print(f"🔍 [LOG_ACTIVITY] Attempting to log: action={action}, guardian={guardian_id}, admin={admin_username}")
         
-        with get_db_cursor() as cursor:
-            if admin_username:
-                cursor.execute('''
-                    INSERT INTO admin_activity_log (admin_username, action, details, ip_address, user_agent)
-                    VALUES (%s, %s, %s, %s, %s)
-                ''', (admin_username, action, details, ip_address, user_agent))
-                print(f"✅ [LOG_ACTIVITY] Admin log inserted for {admin_username}")
-            else:
-                cursor.execute('''
-                    INSERT INTO activity_log (guardian_id, action, details, ip_address, user_agent)
-                    VALUES (%s, %s, %s, %s, %s)
-                ''', (guardian_id, action, details, ip_address, user_agent))
-                print(f"✅ [LOG_ACTIVITY] Guardian log inserted for {guardian_id}")
+        if admin_username:
+            data = {
+                'admin_username': admin_username,
+                'action': action,
+                'details': details,
+                'ip_address': ip_address,
+                'user_agent': user_agent,
+                'timestamp': datetime.now().isoformat()
+            }
+            supabase.table('admin_activity_log').insert(data).execute()
+            print(f"✅ [LOG_ACTIVITY] Admin log inserted for {admin_username}")
+        else:
+            data = {
+                'guardian_id': guardian_id,
+                'action': action,
+                'details': details,
+                'ip_address': ip_address,
+                'user_agent': user_agent,
+                'timestamp': datetime.now().isoformat()
+            }
+            supabase.table('activity_log').insert(data).execute()
+            print(f"✅ [LOG_ACTIVITY] Guardian log inserted for {guardian_id}")
     except Exception as e:
         print(f"⚠️ [LOG_ACTIVITY] Error: {e}")
         traceback.print_exc()
@@ -1130,19 +977,36 @@ def log_activity(guardian_id=None, admin_username=None, action=None, details=Non
 def get_guardian_drivers(guardian_id):
     """Get all drivers registered by a guardian"""
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT d.*, 
-                       (SELECT COUNT(*) FROM alerts a WHERE a.driver_id = d.driver_id AND a.acknowledged = FALSE) as alert_count,
-                       (SELECT COUNT(*) FROM face_images f WHERE f.driver_id = d.driver_id) as face_count
-                FROM drivers d
-                WHERE d.guardian_id = %s AND d.is_active = TRUE
-                ORDER BY d.registration_date DESC
-            ''', (guardian_id,))
+        if not supabase:
+            return []
+        
+        result = supabase.table('drivers') \
+            .select('*') \
+            .eq('guardian_id', guardian_id) \
+            .eq('is_active', True) \
+            .order('registration_date', desc=True) \
+            .execute()
+        
+        drivers = result.data if result.data else []
+        
+        # Add alert counts and face counts
+        for driver in drivers:
+            # Alert count
+            alert_result = supabase.table('alerts') \
+                .select('count', count='exact') \
+                .eq('driver_id', driver['driver_id']) \
+                .eq('acknowledged', False) \
+                .execute()
+            driver['alert_count'] = alert_result.count if hasattr(alert_result, 'count') else 0
             
-            drivers = cursor.fetchall()
-            return [dict(driver) for driver in drivers]
+            # Face count
+            face_result = supabase.table('face_images') \
+                .select('count', count='exact') \
+                .eq('driver_id', driver['driver_id']) \
+                .execute()
+            driver['face_count'] = face_result.count if hasattr(face_result, 'count') else 0
+        
+        return drivers
     except Exception as e:
         print(f"❌ Error in get_guardian_drivers: {e}")
         return []
@@ -1150,28 +1014,31 @@ def get_guardian_drivers(guardian_id):
 def get_recent_alerts(guardian_id, limit=10):
     """Get recent alerts for a guardian"""
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT a.*, d.name as driver_name
-                FROM alerts a
-                JOIN drivers d ON a.driver_id = d.driver_id
-                WHERE a.guardian_id = %s
-                ORDER BY a.timestamp DESC
-                LIMIT %s
-            ''', (guardian_id, limit))
-            
-            alerts = cursor.fetchall()
-            result = []
-            for alert in alerts:
-                alert_dict = dict(alert)
-                if alert_dict.get('detection_details'):
-                    try:
-                        alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
-                    except:
-                        pass
-                result.append(alert_dict)
-            return result
+        if not supabase:
+            return []
+        
+        result = supabase.table('alerts') \
+            .select('*, drivers!inner(name)') \
+            .eq('guardian_id', guardian_id) \
+            .order('timestamp', desc=True) \
+            .limit(limit) \
+            .execute()
+        
+        alerts = result.data if result.data else []
+        
+        # Process detection details
+        for alert in alerts:
+            if alert.get('detection_details'):
+                try:
+                    alert['detection_details'] = json.loads(alert['detection_details'])
+                except:
+                    pass
+            # Rename driver name field
+            if 'drivers' in alert and alert['drivers']:
+                alert['driver_name'] = alert['drivers']['name']
+                del alert['drivers']
+        
+        return alerts
     except Exception as e:
         print(f"❌ Error in get_recent_alerts: {e}")
         return []
@@ -1179,32 +1046,41 @@ def get_recent_alerts(guardian_id, limit=10):
 def get_driver_by_name_or_id(identifier):
     """Get driver by name or ID"""
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Try by ID first
-            cursor.execute('''
-                SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
-                FROM drivers d
-                JOIN guardians g ON d.guardian_id = g.guardian_id
-                WHERE d.driver_id = %s AND d.is_active = TRUE
-            ''', (identifier,))
-            
-            result = cursor.fetchone()
-            
-            # If not found by ID, try by name
-            if not result:
-                cursor.execute('''
-                    SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
-                    FROM drivers d
-                    JOIN guardians g ON d.guardian_id = g.guardian_id
-                    WHERE d.name LIKE %s AND d.is_active = TRUE
-                ''', (f'%{identifier}%',))
-                result = cursor.fetchone()
-            
-            if result:
-                return dict(result)
+        if not supabase:
             return None
+        
+        # Try by ID first
+        result = supabase.table('drivers') \
+            .select('*, guardians!inner(full_name, phone)') \
+            .eq('driver_id', identifier) \
+            .eq('is_active', True) \
+            .execute()
+        
+        if result.data and len(result.data) > 0:
+            driver = result.data[0]
+            if 'guardians' in driver:
+                driver['guardian_name'] = driver['guardians']['full_name']
+                driver['guardian_phone'] = driver['guardians']['phone']
+                del driver['guardians']
+            return driver
+        
+        # If not found by ID, try by name
+        result = supabase.table('drivers') \
+            .select('*, guardians!inner(full_name, phone)') \
+            .ilike('name', f'%{identifier}%') \
+            .eq('is_active', True) \
+            .limit(1) \
+            .execute()
+        
+        if result.data and len(result.data) > 0:
+            driver = result.data[0]
+            if 'guardians' in driver:
+                driver['guardian_name'] = driver['guardians']['full_name']
+                driver['guardian_phone'] = driver['guardians']['phone']
+                del driver['guardians']
+            return driver
+        
+        return None
     except Exception as e:
         print(f"❌ Error getting driver: {e}")
         return None
@@ -1417,12 +1293,13 @@ def handle_driver_auth(data):
     # Fetch driver name for better notifications
     driver_name = 'Unknown'
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('SELECT name FROM drivers WHERE driver_id = %s', (driver_id,))
-            result = cursor.fetchone()
-            if result:
-                driver_name = result['name'] if isinstance(result, dict) else result[0]
+        if supabase:
+            result = supabase.table('drivers') \
+                .select('name') \
+                .eq('driver_id', driver_id) \
+                .execute()
+            if result.data and len(result.data) > 0:
+                driver_name = result.data[0]['name']
     except Exception as e:
         print(f"⚠️ Could not fetch driver name: {e}")
 
@@ -1564,21 +1441,19 @@ def handle_driver_alert(data):
         'detection_details': data.get('detection_details', {})
     }
 
-    # Save to database (reuse your existing send_alert logic, or call it via requests)
-    # For simplicity, we can directly insert into the alerts table here.
+    # Save to database
     try:
-        with get_db_cursor() as cursor:
-            cursor.execute('''
-                INSERT INTO alerts (driver_id, guardian_id, severity, message, detection_details, source)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            ''', (
-                driver_id,
-                guardian_id,
-                alert_data['severity'],
-                alert_data['message'],
-                json.dumps(alert_data['detection_details']),
-                'drowsiness_detection'
-            ))
+        if supabase:
+            alert_insert = {
+                'driver_id': driver_id,
+                'guardian_id': guardian_id,
+                'severity': alert_data['severity'],
+                'message': alert_data['message'],
+                'detection_details': json.dumps(alert_data['detection_details']),
+                'source': 'drowsiness_detection',
+                'timestamp': datetime.now().isoformat()
+            }
+            supabase.table('alerts').insert(alert_insert).execute()
     except Exception as e:
         print(f"❌ Error saving alert: {e}")
 
@@ -1610,7 +1485,8 @@ def serve_home():
     return jsonify({
         'success': True,
         'message': 'Driver Alert System API Server',
-        'backend': 'Render.com',
+        'backend': 'Render.com with Supabase',
+        'database': 'Supabase PostgreSQL',
         'frontend': 'Firebase Hosting',
         'frontend_url': 'https://guardian-drive-app.web.app',
         'api_docs': 'https://driver-drowsiness-with-alert.onrender.com/api/health',
@@ -1622,19 +1498,23 @@ def serve_home():
 def health_check():
     """Health check endpoint with face recognition status"""
     try:
-        # Test DeepFace availability
-       
-        
-        # Count drivers with face embeddings
+        # Test Supabase connection
+        supabase_connected = False
         drivers_with_embeddings = 0
-        try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM drivers WHERE face_embedding IS NOT NULL")
-                result = cursor.fetchone()
-                drivers_with_embeddings = result[0] if result else 0
-        except Exception as e:
-            print(f"⚠️ Could not count embeddings: {e}")
+        
+        if supabase:
+            try:
+                result = supabase.table('guardians').select('*').limit(1).execute()
+                supabase_connected = True
+                
+                # Count drivers with face embeddings
+                embed_result = supabase.table('drivers') \
+                    .select('count', count='exact') \
+                    .not_.is_('face_embedding', 'null') \
+                    .execute()
+                drivers_with_embeddings = embed_result.count if hasattr(embed_result, 'count') else 0
+            except Exception as e:
+                print(f"⚠️ Supabase connection test failed: {e}")
         
         health_info = {
             'success': True,
@@ -1644,7 +1524,8 @@ def health_check():
             'version': '2.1.0',  # Updated version
             'connected_clients': len(connected_clients),
             'active_sessions': len(active_sessions),
-            'database': 'postgresql',
+            'database': 'supabase',
+            'supabase_connected': supabase_connected,
             'google_auth': bool(GOOGLE_CLIENT_ID),
             'cloudinary_enabled': CLOUDINARY_ENABLED,
             'firebase_integration': True,
@@ -1784,104 +1665,95 @@ def google_login():
                 'error': 'Email not found in token'
             }), 400
         
-        # Database operations
+        # Database operations with Supabase
         try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
+            if not supabase:
+                return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+            
+            # Check if user exists by Google ID or email
+            result = supabase.table('guardians') \
+                .select('*') \
+                .or_(f'google_id.eq.{google_id},email.eq.{email}') \
+                .limit(1) \
+                .execute()
+            
+            if result.data and len(result.data) > 0:
+                # User exists - login
+                user_data = result.data[0]
+                guardian_id = user_data['guardian_id']
+                full_name = user_data['full_name']
+                stored_email = user_data['email']
+                stored_google_id = user_data.get('google_id')
                 
-                # Check if user exists by Google ID or email
-                cursor.execute('''
-                    SELECT guardian_id, full_name, email, phone, auth_provider, google_id
-                    FROM guardians 
-                    WHERE google_id = %s OR email = %s
-                    LIMIT 1
-                ''', (google_id, email))
+                print(f"✅ Existing user found: {full_name} ({stored_email})")
                 
-                result = cursor.fetchone()
+                # Update Google ID if not set
+                if not stored_google_id and google_id:
+                    supabase.table('guardians') \
+                        .update({'google_id': google_id}) \
+                        .eq('guardian_id', guardian_id) \
+                        .execute()
+                    print(f"   Updated Google ID for user: {google_id}")
                 
-                if result:
-                    # User exists - login
-                    if isinstance(result, dict):
-                        guardian_id = result['guardian_id']
-                        full_name = result['full_name']
-                        stored_email = result['email']
-                        stored_google_id = result['google_id']
-                    else:
-                        # Handle tuple result
-                        guardian_id, full_name, stored_email, phone, auth_provider, stored_google_id = result
-                    
-                    print(f"✅ Existing user found: {full_name} ({stored_email})")
-                    
-                    # Update Google ID if not set
-                    if not stored_google_id and google_id:
-                        cursor.execute('UPDATE guardians SET google_id = %s WHERE guardian_id = %s', 
-                                     (google_id, guardian_id))
-                        conn.commit()
-                        print(f"   Updated Google ID for user: {google_id}")
-                    
-                    # Update last login
-                    cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
-                                 (datetime.now(), guardian_id))
-                    conn.commit()
-                    
-                else:
-                    # Create new user with Google data
-                    import random
-                    import secrets
-                    
-                    # Generate a unique phone number
-                    phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
-                    
-                    # Generate a random password hash
-                    temp_password = secrets.token_urlsafe(16)
-                    password_hash = hash_password(temp_password)
-                    
-                    cursor.execute('''
-                        INSERT INTO guardians (
-                            full_name, 
-                            email, 
-                            phone, 
-                            password_hash, 
-                            is_active,
-                            registration_date,
-                            last_login,
-                            google_id,
-                            auth_provider
-                        )
-                        VALUES (%s, %s, %s, %s, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, %s, 'google')
-                        RETURNING guardian_id
-                    ''', (name, email, phone, password_hash, google_id))
-                    
-                    result = cursor.fetchone()
-                    if isinstance(result, dict):
-                        guardian_id = result['guardian_id']
-                    else:
-                        guardian_id = result[0] if result else None
-                    
-                    full_name = name
-                    conn.commit()
-                    
-                    print(f"✅ New Google user created: {full_name} (ID: {guardian_id})")
+                # Update last login
+                supabase.table('guardians') \
+                    .update({'last_login': datetime.now().isoformat()}) \
+                    .eq('guardian_id', guardian_id) \
+                    .execute()
                 
-                # Create session
-                token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
+            else:
+                # Create new user with Google data
+                import random
+                import secrets
                 
-                # Log activity
-                log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google login from {request.remote_addr}')
-                conn.commit()
+                # Generate a unique phone number
+                phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
                 
-                return jsonify({
-                    'success': True,
-                    'guardian_id': guardian_id,
-                    'full_name': full_name,
+                # Generate a random password hash
+                temp_password = secrets.token_urlsafe(16)
+                password_hash = hash_password(temp_password)
+                
+                new_user = {
+                    'full_name': name,
                     'email': email,
-                    'session_token': token,
-                    'auth_provider': 'google',
-                    'message': 'Google login successful',
-                    'is_google_user': True,
-                    'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
-                })
-        
+                    'phone': phone,
+                    'password_hash': password_hash,
+                    'is_active': True,
+                    'registration_date': datetime.now().isoformat(),
+                    'last_login': datetime.now().isoformat(),
+                    'google_id': google_id,
+                    'auth_provider': 'google'
+                }
+                
+                insert_result = supabase.table('guardians').insert(new_user).execute()
+                
+                if insert_result.data and len(insert_result.data) > 0:
+                    guardian_id = insert_result.data[0]['guardian_id']
+                else:
+                    raise Exception("Failed to create user")
+                
+                full_name = name
+                
+                print(f"✅ New Google user created: {full_name} (ID: {guardian_id})")
+            
+            # Create session
+            token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
+            
+            # Log activity
+            log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google login from {request.remote_addr}')
+            
+            return jsonify({
+                'success': True,
+                'guardian_id': guardian_id,
+                'full_name': full_name,
+                'email': email,
+                'session_token': token,
+                'auth_provider': 'google',
+                'message': 'Google login successful',
+                'is_google_user': True,
+                'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
+            })
+    
                 
         except Exception as db_error:
             print(f"❌ Database error in google_login: {db_error}")
@@ -1915,46 +1787,57 @@ def google_login_direct():
         
         print(f"🔐 Google login direct - Email: {email}")
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        # Check if user exists
+        result = supabase.table('guardians') \
+            .select('guardian_id, full_name') \
+            .eq('email', email) \
+            .execute()
+        
+        if result.data and len(result.data) > 0:
+            user_data = result.data[0]
+            guardian_id = user_data['guardian_id']
+            full_name = user_data['full_name']
+            print(f"✅ Existing user: {full_name}")
             
-            # Check if user exists
-            cursor.execute('SELECT guardian_id, full_name FROM guardians WHERE email = %s', (email,))
-            result = cursor.fetchone()
+            # Update last login
+            supabase.table('guardians') \
+                .update({'last_login': datetime.now().isoformat()}) \
+                .eq('guardian_id', guardian_id) \
+                .execute()
+        else:
+            # Create new user
+            import random, secrets
+            phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
+            temp_password = secrets.token_urlsafe(16)
             
-            if result:
-                guardian_id = result[0]
-                full_name = result[1]
-                print(f"✅ Existing user: {full_name}")
-                
-                # Update last login
-                cursor.execute('UPDATE guardians SET last_login = %s WHERE guardian_id = %s', 
-                             (datetime.now(), guardian_id))
-                conn.commit()
+            new_user = {
+                'full_name': name,
+                'email': email,
+                'phone': phone,
+                'password_hash': hash_password(temp_password),
+                'auth_provider': 'google',
+                'registration_date': datetime.now().isoformat(),
+                'last_login': datetime.now().isoformat()
+            }
+            
+            insert_result = supabase.table('guardians').insert(new_user).execute()
+            
+            if insert_result.data and len(insert_result.data) > 0:
+                guardian_id = insert_result.data[0]['guardian_id']
             else:
-                # Create new user
-                import random, secrets
-                phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
-                temp_password = secrets.token_urlsafe(16)
-                
-                cursor.execute('''
-                    INSERT INTO guardians (full_name, email, phone, password_hash, auth_provider)
-                    VALUES (%s, %s, %s, %s, 'google')
-                    RETURNING guardian_id
-                ''', (name, email, phone, hash_password(temp_password)))
-                
-                guardian_id = cursor.fetchone()[0]
-                full_name = name
-                conn.commit()
-                print(f"✅ New user created: {full_name}")
+                raise Exception("Failed to create user")
+            
+            full_name = name
+            print(f"✅ New user created: {full_name}")
         
         # Create session
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
         
         log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google direct login from {request.remote_addr}')
         
-        conn.commit()
-
         return jsonify({
             'success': True,
             'guardian_id': guardian_id,
@@ -1989,69 +1872,64 @@ def google_login_with_email():
         
         google_id = f"google_{hash(email) % 1000000}"
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        # Check if user exists by email
+        result = supabase.table('guardians') \
+            .select('*') \
+            .eq('email', email) \
+            .limit(1) \
+            .execute()
+        
+        if result.data and len(result.data) > 0:
+            # User exists - login
+            user_data = result.data[0]
+            guardian_id = user_data['guardian_id']
+            full_name = user_data['full_name']
+            stored_email = user_data['email']
+            auth_provider = user_data.get('auth_provider')
             
-            # Check if user exists by email
-            cursor.execute('''
-                SELECT guardian_id, full_name, email, auth_provider
-                FROM guardians 
-                WHERE email = %s
-                LIMIT 1
-            ''', (email,))
+            # Update auth provider if not google
+            if auth_provider != 'google':
+                supabase.table('guardians') \
+                    .update({'auth_provider': 'google'}) \
+                    .eq('guardian_id', guardian_id) \
+                    .execute()
             
-            result = cursor.fetchone()
+            print(f"✅ User found: {full_name} ({stored_email})")
             
-            if result:
-                # User exists - login
-                if isinstance(result, dict):
-                    guardian_id = result['guardian_id']
-                    full_name = result['full_name']
-                    stored_email = result['email']
-                else:
-                    guardian_id, full_name, stored_email, auth_provider = result
-                
-                # Update auth provider if not google
-                if auth_provider != 'google':
-                    cursor.execute('UPDATE guardians SET auth_provider = %s WHERE guardian_id = %s', 
-                                 ('google', guardian_id))
-                    conn.commit()
-                
-                print(f"✅ User found: {full_name} ({stored_email})")
-                
+        else:
+            # Create new user
+            import random
+            phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
+            
+            new_user = {
+                'full_name': name,
+                'email': email,
+                'phone': phone,
+                'password_hash': hash_password(secrets.token_urlsafe(16)),
+                'is_active': True,
+                'registration_date': datetime.now().isoformat(),
+                'last_login': datetime.now().isoformat(),
+                'google_id': google_id,
+                'auth_provider': 'google'
+            }
+            
+            insert_result = supabase.table('guardians').insert(new_user).execute()
+            
+            if insert_result.data and len(insert_result.data) > 0:
+                guardian_id = insert_result.data[0]['guardian_id']
             else:
-                # Create new user
-                import random
-                phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
-                
-                cursor.execute('''
-                    INSERT INTO guardians (
-                        full_name, 
-                        email, 
-                        phone, 
-                        password_hash, 
-                        is_active,
-                        registration_date,
-                        last_login,
-                        google_id,
-                        auth_provider
-                    )
-                    VALUES (%s, %s, %s, %s, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, %s, 'google')
-                    RETURNING guardian_id
-                ''', (name, email, phone, hash_password(secrets.token_urlsafe(16)), google_id))
-                
-                result = cursor.fetchone()
-                guardian_id = result[0] if result else None
-                full_name = name
-                conn.commit()
-                
-                print(f"✅ New user created: {full_name} (ID: {guardian_id})")
+                raise Exception("Failed to create user")
+            
+            full_name = name
+            
+            print(f"✅ New user created: {full_name} (ID: {guardian_id})")
         
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
        
         log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google email login from {request.remote_addr}')
-        
-        conn.commit()
         
         return jsonify({
             'success': True,
@@ -2088,46 +1966,49 @@ def google_login_simple():
         
         google_id = f"google_{hash(email) % 1000000}"
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        # Check if user exists by email
+        result = supabase.table('guardians') \
+            .select('guardian_id, full_name, email') \
+            .eq('email', email) \
+            .limit(1) \
+            .execute()
+        
+        if result.data and len(result.data) > 0:
+            user_data = result.data[0]
+            guardian_id = user_data['guardian_id']
+            full_name = user_data['full_name']
+        else:
+            # Create new user
+            import random
+            phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
             
-            # Check if user exists by email
-            cursor.execute('''
-                SELECT guardian_id, full_name, email
-                FROM guardians 
-                WHERE email = %s
-                LIMIT 1
-            ''', (email,))
+            new_user = {
+                'full_name': name,
+                'email': email,
+                'phone': phone,
+                'password_hash': hash_password(secrets.token_urlsafe(16)),
+                'is_active': True,
+                'google_id': google_id,
+                'auth_provider': 'google',
+                'registration_date': datetime.now().isoformat(),
+                'last_login': datetime.now().isoformat()
+            }
             
-            result = cursor.fetchone()
+            insert_result = supabase.table('guardians').insert(new_user).execute()
             
-            if result:
-                guardian_id = result['guardian_id']
-                full_name = result['full_name']
+            if insert_result.data and len(insert_result.data) > 0:
+                guardian_id = insert_result.data[0]['guardian_id']
             else:
-                # Create new user
-                import random
-                phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
-                
-                cursor.execute('''
-                    INSERT INTO guardians (
-                        full_name, email, phone, password_hash, 
-                        is_active, google_id, auth_provider
-                    )
-                    VALUES (%s, %s, %s, %s, TRUE, %s, 'google')
-                    RETURNING guardian_id
-                ''', (name, email, phone, hash_password(secrets.token_urlsafe(16)), google_id))
-                
-                result = cursor.fetchone()
-                guardian_id = result[0] if result else None
-                full_name = name
-                conn.commit()
+                raise Exception("Failed to create user")
+            
+            full_name = name
         
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
        
         log_activity(guardian_id, 'GOOGLE_LOGIN', f'Google simple login from {request.remote_addr}')
-        
-        conn.commit()
         
         return jsonify({
             'success': True,
@@ -2200,21 +2081,25 @@ def login():
             log_activity(guardian['guardian_id'], 'LOGIN', f'Logged in from {request.remote_addr}')
 
             # Get full user details for response
-            with get_db_connection() as conn:
-                cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-                cursor.execute('''
-                    SELECT guardian_id, full_name, email, phone
-                    FROM guardians
-                    WHERE guardian_id = %s
-                ''', (guardian['guardian_id'],))
-                user_details = cursor.fetchone()
+            if supabase:
+                user_result = supabase.table('guardians') \
+                    .select('guardian_id, full_name, email, phone') \
+                    .eq('guardian_id', guardian['guardian_id']) \
+                    .execute()
+                
+                if user_result.data and len(user_result.data) > 0:
+                    user_details = user_result.data[0]
+                else:
+                    user_details = {}
+            else:
+                user_details = {}
 
             return jsonify({
                 'success': True,
                 'guardian_id': guardian['guardian_id'],
                 'full_name': guardian['full_name'],
-                'email': user_details['email'] if user_details else '',
-                'phone': user_details['phone'] if user_details else '',
+                'email': user_details.get('email', ''),
+                'phone': user_details.get('phone', ''),
                 'session_token': token,
                 'auth_provider': 'phone',
                 'message': 'Login successful',
@@ -2263,10 +2148,15 @@ def troubleshoot_google_auth():
                 'enabled': CLOUDINARY_ENABLED,
                 'cloud_name': CLOUDINARY_CLOUD_NAME if CLOUDINARY_CLOUD_NAME else 'Not configured'
             },
+            'supabase': {
+                'configured': bool(SUPABASE_URL and SUPABASE_KEY),
+                'url_configured': bool(SUPABASE_URL),
+                'key_configured': bool(SUPABASE_KEY)
+            },
             'environment': {
                 'render': bool(os.environ.get('RENDER')),
                 'render_service': os.environ.get('RENDER_SERVICE_NAME', 'unknown'),
-                'database_configured': bool(os.environ.get('DATABASE_URL'))
+                'database_configured': bool(os.environ.get('DATABASE_URL') or (SUPABASE_URL and SUPABASE_KEY))
             },
             'dns_resolution': [],
             'google_apis_reachable': False,
@@ -2344,12 +2234,6 @@ def troubleshoot_google_auth():
             results['common_issues'].append("⚠️ GOOGLE_CLIENT_SECRET seems too short - may be invalid")
             results['recommendations'].append("Verify your client secret in Google Cloud Console")
         
-        # Check if the exact client ID from your screenshot is being used
-        expected_client_id = "164210458784-d9025r5nmdcjoo7enpa64b5aphdljras.apps.googleusercontent.com"
-        if client_id and client_id != expected_client_id and '164210458784' in client_id:
-            results['common_issues'].append("⚠️ Client ID starts correctly but doesn't match the exact one from your screenshot")
-            results['recommendations'].append(f"Update to exact client ID: {expected_client_id}")
-        
         # Check CORS/origins
         results['allowed_origins'] = ALLOWED_ORIGINS
         
@@ -2364,23 +2248,22 @@ def troubleshoot_google_auth():
         else:
             results['cors_status'] = "No Origin header in request"
         
-        # Test database connection (basic)
-        try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute('SELECT COUNT(*) FROM guardians')
-                count_result = cursor.fetchone()
-                guardian_count = count_result[0] if count_result else 0
-                results['database'] = {
-                    'connected': True,
-                    'guardian_count': guardian_count
-                }
-        except Exception as db_error:
-            results['database'] = {
-                'connected': False,
-                'error': str(db_error)
-            }
-            results['common_issues'].append(f"Database connection issue: {str(db_error)}")
+        # Test Supabase connection (basic)
+        supabase_connected = False
+        guardian_count = 0
+        if supabase:
+            try:
+                result = supabase.table('guardians').select('*', count='exact').limit(1).execute()
+                supabase_connected = True
+                guardian_count = result.count if hasattr(result, 'count') else 0
+            except Exception as db_error:
+                supabase_connected = False
+                results['common_issues'].append(f"Supabase connection issue: {str(db_error)}")
+        
+        results['supabase'] = {
+            'connected': supabase_connected,
+            'guardian_count': guardian_count
+        }
         
         # Provide overall assessment
         if len(results['common_issues']) == 0:
@@ -2391,15 +2274,6 @@ def troubleshoot_google_auth():
             for issue in results['common_issues']:
                 results['assessment'] += f"\n   • {issue}"
             results['status_emoji'] = "⚠️"
-        
-        # Add specific recommendation based on your screenshot
-        if '164210458784' in client_id and 'joo' not in client_id:
-            results['specific_fix'] = {
-                'issue': "Missing 'o' in client ID",
-                'current': client_id,
-                'correct': "164210458784-d9025r5nmdcjoo7enpa64b5aphdljras.apps.googleusercontent.com",
-                'action': "Update your GOOGLE_CLIENT_ID to include the missing 'o' (should be 'joo' not 'jo')"
-            }
         
         return jsonify(results)
         
@@ -2525,10 +2399,8 @@ def register_guardian():
         
         # Clean phone number
         phone_clean = re.sub(r'[\s\-\(\)\+]', '', phone)
-        print(f"🔍 [REGISTRATION] Cleaned phone (digits only): '{phone_clean}'")
         
         if not phone_clean.isdigit():
-            print(f"❌ [REGISTRATION] Phone contains non-digits: '{phone}'")
             return jsonify({
                 'success': False,
                 'error': 'Phone number can only contain digits'
@@ -2574,51 +2446,49 @@ def register_guardian():
         
         print(f"✅ [REGISTRATION] Final phone to store: '{final_phone}'")
         
-        # Database operations
-        with get_db_cursor() as cursor:
-            # Check if phone already exists
-            cursor.execute('SELECT guardian_id FROM guardians WHERE phone = %s', (final_phone,))
-            existing = cursor.fetchone()
-            if existing:
-                print(f"❌ [REGISTRATION] Phone already registered: {final_phone}")
-                return jsonify({
-                    'success': False,
-                    'error': 'Phone number already registered'
-                }), 409
-            
-            # 🔑 Hash password (password is already cleaned)
-            password_hash = hash_password(password)
-            print(f"✅ [REGISTRATION] Password hash generated: {password_hash[:30]}...")
-            print(f"   Hash length: {len(password_hash)}")
-            print(f"   Is bcrypt format: {password_hash.startswith('$2')}")
-            
-            # Insert into database
-            cursor.execute('''
-                INSERT INTO guardians (
-                    full_name, 
-                    phone, 
-                    email, 
-                    password_hash, 
-                    address, 
-                    registration_date,
-                    last_login,
-                    is_active,
-                    auth_provider
-                )
-                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, TRUE, 'phone')
-            ''', (
-                full_name,
-                final_phone,
-                data.get('email', ''),
-                password_hash,
-                data.get('address', '')
-            ))
-            
-            cursor.execute('SELECT guardian_id FROM guardians WHERE phone = %s', (final_phone,))
-            result = cursor.fetchone()
-            guardian_id = result[0] if result else None
-            
+        # Supabase operations
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        # Check if phone already exists
+        phone_check = supabase.table('guardians') \
+            .select('guardian_id') \
+            .eq('phone', final_phone) \
+            .execute()
+        
+        if phone_check.data and len(phone_check.data) > 0:
+            print(f"❌ [REGISTRATION] Phone already registered: {final_phone}")
+            return jsonify({
+                'success': False,
+                'error': 'Phone number already registered'
+            }), 409
+        
+        # 🔑 Hash password (password is already cleaned)
+        password_hash = hash_password(password)
+        print(f"✅ [REGISTRATION] Password hash generated: {password_hash[:30]}...")
+        print(f"   Hash length: {len(password_hash)}")
+        print(f"   Is bcrypt format: {password_hash.startswith('$2')}")
+        
+        # Insert into Supabase
+        new_guardian = {
+            'full_name': full_name,
+            'phone': final_phone,
+            'email': data.get('email', ''),
+            'password_hash': password_hash,
+            'address': data.get('address', ''),
+            'registration_date': datetime.now().isoformat(),
+            'last_login': datetime.now().isoformat(),
+            'is_active': True,
+            'auth_provider': 'phone'
+        }
+        
+        insert_result = supabase.table('guardians').insert(new_guardian).execute()
+        
+        if insert_result.data and len(insert_result.data) > 0:
+            guardian_id = insert_result.data[0]['guardian_id']
             print(f"✅ [REGISTRATION] Database record created with guardian_id: {guardian_id}")
+        else:
+            raise Exception("Failed to insert guardian")
         
         response_data = {
             'success': True,
@@ -2673,31 +2543,37 @@ def guardian_dashboard():
         drivers = get_guardian_drivers(guardian_id)
         recent_alerts = get_recent_alerts(guardian_id, 5)
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Driver count
-            cursor.execute('SELECT COUNT(*) as count FROM drivers WHERE guardian_id = %s', (guardian_id,))
-            driver_count_result = cursor.fetchone()
-            driver_count = driver_count_result['count'] if isinstance(driver_count_result, dict) else driver_count_result[0]
-            
-            # Alert counts
-            cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s', (guardian_id,))
-            total_alerts_result = cursor.fetchone()
-            total_alerts = total_alerts_result['count'] if isinstance(total_alerts_result, dict) else total_alerts_result[0]
-            
-            cursor.execute('SELECT COUNT(*) as count FROM alerts WHERE guardian_id = %s AND acknowledged = FALSE', 
-                         (guardian_id,))
-            unread_alerts_result = cursor.fetchone()
-            unread_alerts = unread_alerts_result['count'] if isinstance(unread_alerts_result, dict) else unread_alerts_result[0]
-            
-            # NEW: Face recognition stats
-            cursor.execute('''
-                SELECT COUNT(*) FROM drivers 
-                WHERE guardian_id = %s AND face_embedding IS NOT NULL
-            ''', (guardian_id,))
-            embed_count_result = cursor.fetchone()
-            drivers_with_embeddings = embed_count_result[0] if embed_count_result else 0
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        # Driver count
+        driver_count_result = supabase.table('drivers') \
+            .select('*', count='exact') \
+            .eq('guardian_id', guardian_id) \
+            .execute()
+        driver_count = driver_count_result.count if hasattr(driver_count_result, 'count') else 0
+        
+        # Alert counts
+        total_alerts_result = supabase.table('alerts') \
+            .select('*', count='exact') \
+            .eq('guardian_id', guardian_id) \
+            .execute()
+        total_alerts = total_alerts_result.count if hasattr(total_alerts_result, 'count') else 0
+        
+        unread_alerts_result = supabase.table('alerts') \
+            .select('*', count='exact') \
+            .eq('guardian_id', guardian_id) \
+            .eq('acknowledged', False) \
+            .execute()
+        unread_alerts = unread_alerts_result.count if hasattr(unread_alerts_result, 'count') else 0
+        
+        # Face recognition stats
+        drivers_with_embeddings_result = supabase.table('drivers') \
+            .select('*', count='exact') \
+            .eq('guardian_id', guardian_id) \
+            .not_.is_('face_embedding', 'null') \
+            .execute()
+        drivers_with_embeddings = drivers_with_embeddings_result.count if hasattr(drivers_with_embeddings_result, 'count') else 0
         
         return jsonify({
             'success': True,
@@ -2747,20 +2623,17 @@ def get_guardian_drivers_endpoint(guardian_id):
         drivers = get_guardian_drivers(guardian_id)
         
         # Add face image count and embedding status for each driver
-        with get_db_connection() as conn:
-            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        if supabase:
             for driver in drivers:
                 # Face image count
-                cursor.execute('SELECT COUNT(*) FROM face_images WHERE driver_id = %s', 
-                             (driver['driver_id'],))
-                result = cursor.fetchone()
-                driver['face_image_count'] = result[0] if result else 0
+                face_result = supabase.table('face_images') \
+                    .select('*', count='exact') \
+                    .eq('driver_id', driver['driver_id']) \
+                    .execute()
+                driver['face_image_count'] = face_result.count if hasattr(face_result, 'count') else 0
                 
-                # NEW: Check if driver has face embedding
-                cursor.execute('SELECT face_embedding IS NOT NULL FROM drivers WHERE driver_id = %s',
-                             (driver['driver_id'],))
-                embed_result = cursor.fetchone()
-                driver['has_face_embedding'] = embed_result[0] if embed_result else False
+                # Check if driver has face embedding
+                driver['has_face_embedding'] = driver.get('face_embedding') is not None
         
         return jsonify({
             'success': True,
@@ -2795,43 +2668,32 @@ def get_guardian_details(guardian_id):
                 'error': 'Invalid or expired session'
             }), 401
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT guardian_id, full_name, phone, email, address, 
-                       registration_date, last_login, auth_provider, is_active
-                FROM guardians 
-                WHERE guardian_id = %s
-            ''', (guardian_id,))
-            
-            result = cursor.fetchone()
-            
-            if not result:
-                return jsonify({
-                    'success': False,
-                    'error': 'Guardian not found'
-                }), 404
-            
-            if isinstance(result, dict):
-                guardian = result
-            else:
-                # Handle tuple result
-                guardian = {
-                    'guardian_id': result[0],
-                    'full_name': result[1],
-                    'phone': result[2],
-                    'email': result[3],
-                    'address': result[4],
-                    'registration_date': result[5].isoformat() if result[5] else None,
-                    'last_login': result[6].isoformat() if result[6] else None,
-                    'auth_provider': result[7],
-                    'is_active': result[8]
-                }
-            
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        result = supabase.table('guardians') \
+            .select('guardian_id, full_name, phone, email, address, registration_date, last_login, auth_provider, is_active') \
+            .eq('guardian_id', guardian_id) \
+            .execute()
+        
+        if not result.data or len(result.data) == 0:
             return jsonify({
-                'success': True,
-                'guardian': guardian
-            })
+                'success': False,
+                'error': 'Guardian not found'
+            }), 404
+        
+        guardian = result.data[0]
+        
+        # Convert datetime strings to ISO format if needed
+        if guardian.get('registration_date'):
+            guardian['registration_date'] = guardian['registration_date']
+        if guardian.get('last_login'):
+            guardian['last_login'] = guardian['last_login']
+        
+        return jsonify({
+            'success': True,
+            'guardian': guardian
+        })
             
     except Exception as e:
         print(f"❌ Error in get_guardian_details: {e}")
@@ -2857,35 +2719,22 @@ def get_guardian_activity():
         if not validate_session(guardian_id, token):
             return jsonify({'success': False, 'error': 'Invalid or expired session'}), 401
 
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT log_id, action, details, ip_address, user_agent, timestamp
-                FROM activity_log
-                WHERE guardian_id = %s
-                ORDER BY timestamp DESC
-                LIMIT %s
-            ''', (guardian_id, limit))
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
 
-            logs = cursor.fetchall()
-            logs_list = []
-            for log in logs:
-                if isinstance(log, dict):
-                    logs_list.append(log)
-                else:
-                    logs_list.append({
-                        'log_id': log[0],
-                        'action': log[1],
-                        'details': log[2],
-                        'ip_address': log[3],
-                        'user_agent': log[4],
-                        'timestamp': log[5].isoformat() if log[5] else None
-                    })
+        result = supabase.table('activity_log') \
+            .select('log_id, action, details, ip_address, user_agent, timestamp') \
+            .eq('guardian_id', guardian_id) \
+            .order('timestamp', desc=True) \
+            .limit(limit) \
+            .execute()
+
+        logs = result.data if result.data else []
 
         return jsonify({
             'success': True,
-            'count': len(logs_list),
-            'activities': logs_list
+            'count': len(logs),
+            'activities': logs
         })
 
     except Exception as e:
@@ -2961,296 +2810,295 @@ def register_driver():
         print(f"   Driver ID: {driver_id}")
         print(f"   Reference Number: {reference_number}")
         
-        with get_db_cursor() as cursor:
-            # Check if phone already exists
-            cursor.execute('SELECT driver_id FROM drivers WHERE phone = %s', (driver_phone,))
-            existing = cursor.fetchone()
-            if existing:
-                print(f"❌ [DRIVER REGISTRATION] Phone already registered: {driver_phone}")
-                return jsonify({
-                    'success': False,
-                    'error': f'Phone number {driver_phone} is already registered for another driver.'
-                }), 409
-            
-            # Check if reference number already exists
-            cursor.execute('SELECT driver_id FROM drivers WHERE reference_number = %s', 
-                         (reference_number,))
-            existing_ref = cursor.fetchone()
-            if existing_ref:
-                # Generate new reference number
-                new_ref_number = f"REF{str(uuid.uuid4().int)[:8].upper()}"
-                print(f"🔧 [DRIVER REGISTRATION] Reference number already exists. Generated new: {new_ref_number}")
-                reference_number = new_ref_number
-            
-            print(f"\n🗄️ [DRIVER REGISTRATION] Inserting driver into database...")
-            
-            try:
-                # Insert driver into database
-                cursor.execute('''
-                    INSERT INTO drivers (
-                        driver_id, name, phone, email, address, 
-                        reference_number, license_number, guardian_id, 
-                        registration_date, is_active
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ''', (
-                    driver_id, 
-                    driver_name, 
-                    driver_phone, 
-                    driver_email, 
-                    driver_address,
-                    reference_number,
-                    license_number,
-                    guardian_id,
-                    datetime.now(),
-                    True
-                ))
-                
-                cursor.execute('''
-                    INSERT INTO activity_log (guardian_id, action, details)
-                    VALUES (%s, %s, %s)
-                ''', (
-                    guardian_id,
-                    'DRIVER_REGISTERED',
-                    f'Registered driver: {driver_name} (ID: {driver_id}) with {len(saved_images)} face images'
-                ))
-                
-                conn.commit()
-
-            except Exception as db_error:
-                print(f"❌ [DRIVER REGISTRATION] Database insertion failed: {db_error}")
-                return jsonify({
-                    'success': False,
-                    'error': f'Database error: {str(db_error)}'
-                }), 500
-            
-            # ==================== IMAGE UPLOAD SECTION ====================
-            saved_images = []
-            upload_errors = []
-            
-            if cloudinary_enabled:
-                print(f"\n☁️ [DRIVER REGISTRATION] Cloudinary enabled. Starting upload for {len(face_images)} images...")
-                
-                for i, face_image_data in enumerate(face_images[:3], 1):
-                    if i <= len(capture_angles):
-                        capture_angle = capture_angles[i-1]
-                    else:
-                        capture_angle = f"angle_{i}"
-                    
-                    print(f"\n📤 [DRIVER REGISTRATION] Uploading image {i}/{len(face_images)} to Cloudinary (angle: {capture_angle})...")
-                    
-                    # Clean base64 data
-                    image_base64 = face_image_data
-                    if ',' in image_base64:
-                        image_base64 = image_base64.split(',')[1]
-                    
-                    if not image_base64 or len(image_base64) < 100:
-                        upload_errors.append(f"Image {i} is empty or invalid")
-                        continue
-                    
-                    try:
-                        timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-                        public_id = f"driver_faces/{driver_id}/{capture_angle}_{timestamp_str}"
-                        upload_start = time.time()
-                        upload_result = cloudinary.uploader.upload(
-                            f"data:image/jpeg;base64,{image_base64}",
-                            public_id=public_id,
-                            folder=f"driver_faces/{driver_id}",
-                            resource_type="image",
-                            overwrite=False,
-                            faces=True,
-                            quality="auto:good",
-                            format="jpg",
-                            timeout=30
-                        )
-                        
-                        upload_time = time.time() - upload_start
-                        
-                        cloudinary_url = upload_result.get('secure_url')
-                        public_id = upload_result.get('public_id')
-                        
-                        cursor.execute('''
-                            INSERT INTO face_images (driver_id, image_path, capture_date)
-                            VALUES (%s, %s, %s)
-                        ''', (driver_id, cloudinary_url, datetime.now()))
-                        
-                        saved_images.append({
-                            'angle': capture_angle,
-                            'public_id': public_id,
-                            'url': cloudinary_url,
-                            'upload_time': upload_time,
-                            'upload_method': 'cloudinary'
-                        })
-                        
-                        if i < len(face_images):
-                            time.sleep(1)
-                        
-                    except cloudinary.exceptions.Error as cloudinary_error:  
-                        error_msg = f"Cloudinary API error for image {i} ({capture_angle}): {str(cloudinary_error)}"
-                        print(f"Cloudinary is not available: {error_msg}")
-                        upload_errors.append(error_msg)
-                        
-                    except Exception as upload_error:
-                        error_msg = f"Error uploading image {i} ({capture_angle}): {str(upload_error)}"
-                        upload_errors.append(error_msg)
-                        continue
-                
-                if len(saved_images) == 0 and len(upload_errors) > 0:
-                    print(f"⚠️ [DRIVER REGISTRATION] All Cloudinary uploads failed, falling back to local storage")
-                    cloudinary_enabled = False  # Force fallback
-                    
-            # ==================== LOCAL STORAGE FALLBACK ====================
-            if not cloudinary_enabled or len(saved_images) == 0:
-                print(f"\n💾 [DRIVER REGISTRATION] Using LOCAL storage (Cloudinary disabled or failed)...")
-                
-                # Clear any previous saved images if Cloudinary failed
-                if saved_images:
-                    saved_images = []
-                    upload_errors = []
-                
-                for i, face_image_data in enumerate(face_images[:3], 1):
-                    if i <= len(capture_angles):
-                        capture_angle = capture_angles[i-1]
-                    else:
-                        capture_angle = f"angle_{i}"
-                    
-                    print(f"\n💾 [DRIVER REGISTRATION] Saving image {i}/{len(face_images)} locally (angle: {capture_angle})...")
-                    
-                    # Clean base64 data
-                    image_base64 = face_image_data
-                    if ',' in image_base64:
-                        image_base64 = image_base64.split(',')[1]
-                    
-                    if not image_base64 or len(image_base64) < 100:
-                        print(f"⚠️ [DRIVER REGISTRATION] Skipping empty/invalid image")
-                        upload_errors.append(f"Image {i} is empty or invalid")
-                        continue
-                    
-                    try:
-                        # Generate filename
-                        timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-                        filename = f"{driver_id}_{capture_angle}_{timestamp_str}.jpg"
-                        
-                        # Create directory if it doesn't exist
-                        import os
-                        uploads_dir = os.path.join(BASE_DIR, 'uploads', 'driver_faces')
-                        os.makedirs(uploads_dir, exist_ok=True)
-                        
-                        # Save locally
-                        filepath = os.path.join(uploads_dir, filename)
-                        import base64
-                        with open(filepath, 'wb') as f:
-                            f.write(base64.b64decode(image_base64))
-                        
-                        # Create a URL path for the saved image
-                        image_url = f"/uploads/driver_faces/{filename}"
-                        
-                        print(f"✅ [DRIVER REGISTRATION] Image {i} saved locally: {filename}")
-                        print(f"   File size: {os.path.getsize(filepath) / 1024:.1f} KB")
-                        
-                        # Store in database
-                        cursor.execute('''
-                            INSERT INTO face_images (driver_id, image_path, capture_date)
-                            VALUES (%s, %s, %s)
-                        ''', (driver_id, image_url, datetime.now()))
-                        
-                        saved_images.append({
-                            'angle': capture_angle,
-                            'url': image_url,
-                            'filepath': filepath,
-                            'upload_method': 'local'
-                        })
-                        
-                    except Exception as save_error:
-                        error_msg = f"Error saving image {i} locally: {str(save_error)}"
-                        print(f"❌ [DRIVER REGISTRATION] {error_msg}")
-                        upload_errors.append(error_msg)
-                
-                print(f"\n📊 [DRIVER REGISTRATION] Local storage summary:")
-                print(f"   Successfully saved: {len(saved_images)}")
-                print(f"   Save errors: {len(upload_errors)}")
-            
-            # ==================== REGISTRATION COMPLETION ====================
-            if len(saved_images) == 0:
-                print(f"❌ [DRIVER REGISTRATION] NO face images were saved for driver {driver_id}")
-                print(f"   Errors: {upload_errors}")
-                
-                # Rollback driver registration if no images were saved
-                cursor.execute('DELETE FROM drivers WHERE driver_id = %s', (driver_id,))
-                print(f"   Rolled back driver registration")
-                
-                return jsonify({
-                    'success': False,
-                    'error': 'Failed to save any face images. Registration cancelled.',
-                    'upload_errors': upload_errors if upload_errors else ['Unknown error occurred']
-                }), 500
-            
-            if len(upload_errors) > 0:
-                print(f"⚠️ [DRIVER REGISTRATION] Some images failed:")
-                for error in upload_errors:
-                    print(f"   - {error}")
-            
-            # Log activity
-            cursor.execute('''
-                INSERT INTO activity_log (guardian_id, action, details)
-                VALUES (%s, %s, %s)
-            ''', (guardian_id, 'DRIVER_REGISTERED', 
-                f'Registered driver: {driver_name} (ID: {driver_id}) with {len(saved_images)} face images'))
-            
-            # Get guardian info
-            cursor.execute('SELECT full_name FROM guardians WHERE guardian_id = %s', 
-                         (guardian_id,))
-            guardian_info = cursor.fetchone()
-            
-            if isinstance(guardian_info, dict):
-                guardian_name = guardian_info['full_name']
-            else:
-                guardian_name = guardian_info[0] if guardian_info else 'Unknown Guardian'
-            
-            print(f"\n✅ [DRIVER REGISTRATION] Registration COMPLETE!")
-            print(f"   Driver: {driver_name} (ID: {driver_id})")
-            print(f"   Images saved: {len(saved_images)}")
-            print(f"   Storage method: {'Cloudinary' if cloudinary_enabled and saved_images and saved_images[0].get('upload_method') == 'cloudinary' else 'Local'}")
-            
-            # Prepare success response
-            response_data = {
-                'success': True,
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        # Check if phone already exists
+        phone_check = supabase.table('drivers') \
+            .select('driver_id') \
+            .eq('phone', driver_phone) \
+            .execute()
+        
+        if phone_check.data and len(phone_check.data) > 0:
+            print(f"❌ [DRIVER REGISTRATION] Phone already registered: {driver_phone}")
+            return jsonify({
+                'success': False,
+                'error': f'Phone number {driver_phone} is already registered for another driver.'
+            }), 409
+        
+        # Check if reference number already exists
+        ref_check = supabase.table('drivers') \
+            .select('driver_id') \
+            .eq('reference_number', reference_number) \
+            .execute()
+        
+        if ref_check.data and len(ref_check.data) > 0:
+            # Generate new reference number
+            new_ref_number = f"REF{str(uuid.uuid4().int)[:8].upper()}"
+            print(f"🔧 [DRIVER REGISTRATION] Reference number already exists. Generated new: {new_ref_number}")
+            reference_number = new_ref_number
+        
+        print(f"\n🗄️ [DRIVER REGISTRATION] Inserting driver into Supabase...")
+        
+        try:
+            # Insert driver into database
+            new_driver = {
                 'driver_id': driver_id,
-                'driver_name': driver_name,
-                'driver_phone': driver_phone,
+                'name': driver_name,
+                'phone': driver_phone,
+                'email': driver_email,
+                'address': driver_address,
                 'reference_number': reference_number,
-                'face_images_saved': len(saved_images),
-                'image_urls': [img['url'] for img in saved_images],
+                'license_number': license_number,
+                'guardian_id': guardian_id,
                 'registration_date': datetime.now().isoformat(),
-                'guardian_name': guardian_name,
-                'storage_method': 'cloudinary' if cloudinary_enabled and saved_images and saved_images[0].get('upload_method') == 'cloudinary' else 'local',
-                'message': f'Driver registered successfully with {len(saved_images)} face images'
+                'is_active': True
             }
             
-            # Send real-time notification to guardian
-            try:
-                notification_data = {
-                    'type': 'driver_registered',
-                    'driver_id': driver_id,
-                    'driver_name': driver_name,
-                    'guardian_id': guardian_id,
-                    'face_images_count': len(saved_images),
-                    'timestamp': datetime.now().isoformat(),
-                    'message': f'New driver registered: {driver_name}'
-                }
-                
-                print(f"🔔 [DRIVER REGISTRATION] Sending notification...")
-                
-                # Emit socket event
-                for client_id, client_info in connected_clients.items():
-                    if client_info.get('guardian_id') == guardian_id and client_info.get('authenticated'):
-                        socketio.emit('guardian_notification', notification_data, room=client_id)
-                
-            except Exception as notify_error:
-                print(f"⚠️ [DRIVER REGISTRATION] Error sending notification: {notify_error}")
+            driver_result = supabase.table('drivers').insert(new_driver).execute()
             
-            print(f"\n✅ [DRIVER REGISTRATION] ===== REGISTRATION SUCCESSFUL =====")
-            return jsonify(response_data)
+            if not driver_result.data:
+                raise Exception("Failed to insert driver")
+            
+        except Exception as db_error:
+            print(f"❌ [DRIVER REGISTRATION] Database insertion failed: {db_error}")
+            return jsonify({
+                'success': False,
+                'error': f'Database error: {str(db_error)}'
+            }), 500
+        
+        # ==================== IMAGE UPLOAD SECTION ====================
+        saved_images = []
+        upload_errors = []
+        
+        if cloudinary_enabled:
+            print(f"\n☁️ [DRIVER REGISTRATION] Cloudinary enabled. Starting upload for {len(face_images)} images...")
+            
+            for i, face_image_data in enumerate(face_images[:3], 1):
+                if i <= len(capture_angles):
+                    capture_angle = capture_angles[i-1]
+                else:
+                    capture_angle = f"angle_{i}"
+                
+                print(f"\n📤 [DRIVER REGISTRATION] Uploading image {i}/{len(face_images)} to Cloudinary (angle: {capture_angle})...")
+                
+                # Clean base64 data
+                image_base64 = face_image_data
+                if ',' in image_base64:
+                    image_base64 = image_base64.split(',')[1]
+                
+                if not image_base64 or len(image_base64) < 100:
+                    upload_errors.append(f"Image {i} is empty or invalid")
+                    continue
+                
+                try:
+                    timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    public_id = f"driver_faces/{driver_id}/{capture_angle}_{timestamp_str}"
+                    upload_start = time.time()
+                    upload_result = cloudinary.uploader.upload(
+                        f"data:image/jpeg;base64,{image_base64}",
+                        public_id=public_id,
+                        folder=f"driver_faces/{driver_id}",
+                        resource_type="image",
+                        overwrite=False,
+                        faces=True,
+                        quality="auto:good",
+                        format="jpg",
+                        timeout=30
+                    )
+                    
+                    upload_time = time.time() - upload_start
+                    
+                    cloudinary_url = upload_result.get('secure_url')
+                    public_id = upload_result.get('public_id')
+                    
+                    # Insert face image record
+                    face_image_data = {
+                        'driver_id': driver_id,
+                        'image_path': cloudinary_url,
+                        'capture_date': datetime.now().isoformat()
+                    }
+                    supabase.table('face_images').insert(face_image_data).execute()
+                    
+                    saved_images.append({
+                        'angle': capture_angle,
+                        'public_id': public_id,
+                        'url': cloudinary_url,
+                        'upload_time': upload_time,
+                        'upload_method': 'cloudinary'
+                    })
+                    
+                    if i < len(face_images):
+                        time.sleep(1)
+                    
+                except cloudinary.exceptions.Error as cloudinary_error:  
+                    error_msg = f"Cloudinary API error for image {i} ({capture_angle}): {str(cloudinary_error)}"
+                    print(f"Cloudinary is not available: {error_msg}")
+                    upload_errors.append(error_msg)
+                    
+                except Exception as upload_error:
+                    error_msg = f"Error uploading image {i} ({capture_angle}): {str(upload_error)}"
+                    upload_errors.append(error_msg)
+                    continue
+            
+            if len(saved_images) == 0 and len(upload_errors) > 0:
+                print(f"⚠️ [DRIVER REGISTRATION] All Cloudinary uploads failed, falling back to local storage")
+                cloudinary_enabled = False  # Force fallback
+                
+        # ==================== LOCAL STORAGE FALLBACK ====================
+        if not cloudinary_enabled or len(saved_images) == 0:
+            print(f"\n💾 [DRIVER REGISTRATION] Using LOCAL storage (Cloudinary disabled or failed)...")
+            
+            # Clear any previous saved images if Cloudinary failed
+            if saved_images:
+                saved_images = []
+                upload_errors = []
+            
+            for i, face_image_data in enumerate(face_images[:3], 1):
+                if i <= len(capture_angles):
+                    capture_angle = capture_angles[i-1]
+                else:
+                    capture_angle = f"angle_{i}"
+                
+                print(f"\n💾 [DRIVER REGISTRATION] Saving image {i}/{len(face_images)} locally (angle: {capture_angle})...")
+                
+                # Clean base64 data
+                image_base64 = face_image_data
+                if ',' in image_base64:
+                    image_base64 = image_base64.split(',')[1]
+                
+                if not image_base64 or len(image_base64) < 100:
+                    print(f"⚠️ [DRIVER REGISTRATION] Skipping empty/invalid image")
+                    upload_errors.append(f"Image {i} is empty or invalid")
+                    continue
+                
+                try:
+                    # Generate filename
+                    timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    filename = f"{driver_id}_{capture_angle}_{timestamp_str}.jpg"
+                    
+                    # Create directory if it doesn't exist
+                    import os
+                    uploads_dir = os.path.join(BASE_DIR, 'uploads', 'driver_faces')
+                    os.makedirs(uploads_dir, exist_ok=True)
+                    
+                    # Save locally
+                    filepath = os.path.join(uploads_dir, filename)
+                    import base64
+                    with open(filepath, 'wb') as f:
+                        f.write(base64.b64decode(image_base64))
+                    
+                    # Create a URL path for the saved image
+                    image_url = f"/uploads/driver_faces/{filename}"
+                    
+                    print(f"✅ [DRIVER REGISTRATION] Image {i} saved locally: {filename}")
+                    print(f"   File size: {os.path.getsize(filepath) / 1024:.1f} KB")
+                    
+                    # Store in database
+                    face_image_data = {
+                        'driver_id': driver_id,
+                        'image_path': image_url,
+                        'capture_date': datetime.now().isoformat()
+                    }
+                    supabase.table('face_images').insert(face_image_data).execute()
+                    
+                    saved_images.append({
+                        'angle': capture_angle,
+                        'url': image_url,
+                        'filepath': filepath,
+                        'upload_method': 'local'
+                    })
+                    
+                except Exception as save_error:
+                    error_msg = f"Error saving image {i} locally: {str(save_error)}"
+                    print(f"❌ [DRIVER REGISTRATION] {error_msg}")
+                    upload_errors.append(error_msg)
+            
+            print(f"\n📊 [DRIVER REGISTRATION] Local storage summary:")
+            print(f"   Successfully saved: {len(saved_images)}")
+            print(f"   Save errors: {len(upload_errors)}")
+        
+        # ==================== REGISTRATION COMPLETION ====================
+        if len(saved_images) == 0:
+            print(f"❌ [DRIVER REGISTRATION] NO face images were saved for driver {driver_id}")
+            print(f"   Errors: {upload_errors}")
+            
+            # Rollback driver registration if no images were saved
+            supabase.table('drivers').delete().eq('driver_id', driver_id).execute()
+            print(f"   Rolled back driver registration")
+            
+            return jsonify({
+                'success': False,
+                'error': 'Failed to save any face images. Registration cancelled.',
+                'upload_errors': upload_errors if upload_errors else ['Unknown error occurred']
+            }), 500
+        
+        if len(upload_errors) > 0:
+            print(f"⚠️ [DRIVER REGISTRATION] Some images failed:")
+            for error in upload_errors:
+                print(f"   - {error}")
+        
+        # Log activity
+        log_data = {
+            'guardian_id': guardian_id,
+            'action': 'DRIVER_REGISTERED',
+            'details': f'Registered driver: {driver_name} (ID: {driver_id}) with {len(saved_images)} face images',
+            'timestamp': datetime.now().isoformat()
+        }
+        supabase.table('activity_log').insert(log_data).execute()
+        
+        # Get guardian info
+        guardian_result = supabase.table('guardians') \
+            .select('full_name') \
+            .eq('guardian_id', guardian_id) \
+            .execute()
+        
+        guardian_name = guardian_result.data[0]['full_name'] if guardian_result.data else 'Unknown Guardian'
+        
+        print(f"\n✅ [DRIVER REGISTRATION] Registration COMPLETE!")
+        print(f"   Driver: {driver_name} (ID: {driver_id})")
+        print(f"   Images saved: {len(saved_images)}")
+        print(f"   Storage method: {'Cloudinary' if cloudinary_enabled and saved_images and saved_images[0].get('upload_method') == 'cloudinary' else 'Local'}")
+        
+        # Prepare success response
+        response_data = {
+            'success': True,
+            'driver_id': driver_id,
+            'driver_name': driver_name,
+            'driver_phone': driver_phone,
+            'reference_number': reference_number,
+            'face_images_saved': len(saved_images),
+            'image_urls': [img['url'] for img in saved_images],
+            'registration_date': datetime.now().isoformat(),
+            'guardian_name': guardian_name,
+            'storage_method': 'cloudinary' if cloudinary_enabled and saved_images and saved_images[0].get('upload_method') == 'cloudinary' else 'local',
+            'message': f'Driver registered successfully with {len(saved_images)} face images'
+        }
+        
+        # Send real-time notification to guardian
+        try:
+            notification_data = {
+                'type': 'driver_registered',
+                'driver_id': driver_id,
+                'driver_name': driver_name,
+                'guardian_id': guardian_id,
+                'face_images_count': len(saved_images),
+                'timestamp': datetime.now().isoformat(),
+                'message': f'New driver registered: {driver_name}'
+            }
+            
+            print(f"🔔 [DRIVER REGISTRATION] Sending notification...")
+            
+            # Emit socket event
+            for client_id, client_info in connected_clients.items():
+                if client_info.get('guardian_id') == guardian_id and client_info.get('authenticated'):
+                    socketio.emit('guardian_notification', notification_data, room=client_id)
+                
+        except Exception as notify_error:
+            print(f"⚠️ [DRIVER REGISTRATION] Error sending notification: {notify_error}")
+        
+        print(f"\n✅ [DRIVER REGISTRATION] ===== REGISTRATION SUCCESSFUL =====")
+        return jsonify(response_data)
         
     except Exception as e:
         print(f"\n❌❌❌ [DRIVER REGISTRATION] UNEXPECTED ERROR: {e}")
@@ -3323,41 +3171,34 @@ def test_driver_registration():
 @app.route('/api/driver/<driver_id>/face-images', methods=['GET'])
 def get_driver_face_images(driver_id):
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT image_id, image_path, capture_date
-                FROM face_images
-                WHERE driver_id = %s
-                ORDER BY capture_date DESC
-            ''', (driver_id,))
-            
-            images = cursor.fetchall()
-            
-            # Return Cloudinary URLs directly
-            images_data = []
-            for img in images:
-                if isinstance(img, dict):
-                    image_url = img['image_path']
-                    capture_date = img['capture_date']
-                    image_id = img['image_id']
-                else:
-                    image_id, image_url, capture_date = img
-                
-                images_data.append({
-                    'image_id': image_id,
-                    'url': image_url,
-                    'capture_date': capture_date.isoformat() if hasattr(capture_date, 'isoformat') else str(capture_date),
-                    'is_cloudinary': 'cloudinary' in image_url.lower()
-                })
-            
-            return jsonify({
-                'success': True,
-                'driver_id': driver_id,
-                'image_count': len(images_data),
-                'images': images_data,
-                'cloudinary_enabled': CLOUDINARY_ENABLED
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        result = supabase.table('face_images') \
+            .select('image_id, image_path, capture_date') \
+            .eq('driver_id', driver_id) \
+            .order('capture_date', desc=True) \
+            .execute()
+        
+        images = result.data if result.data else []
+        
+        # Return Cloudinary URLs directly
+        images_data = []
+        for img in images:
+            images_data.append({
+                'image_id': img['image_id'],
+                'url': img['image_path'],
+                'capture_date': img['capture_date'],
+                'is_cloudinary': 'cloudinary' in img['image_path'].lower()
             })
+        
+        return jsonify({
+            'success': True,
+            'driver_id': driver_id,
+            'image_count': len(images_data),
+            'images': images_data,
+            'cloudinary_enabled': CLOUDINARY_ENABLED
+        })
             
     except Exception as e:
         print(f"❌ Error in get_driver_face_images: {e}")
@@ -3370,47 +3211,56 @@ def get_driver_face_images(driver_id):
 def get_driver_details(driver_id):
     """Get detailed information about a specific driver"""
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Get driver details
-            cursor.execute('''
-                SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone, g.email as guardian_email
-                FROM drivers d
-                JOIN guardians g ON d.guardian_id = g.guardian_id
-                WHERE d.driver_id = %s
-            ''', (driver_id,))
-            
-            driver_result = cursor.fetchone()
-            
-            if not driver_result:
-                return jsonify({
-                    'success': False,
-                    'error': 'Driver not found'
-                }), 404
-            
-            driver = dict(driver_result)
-            
-            # Get alert count
-            cursor.execute('SELECT COUNT(*) FROM alerts WHERE driver_id = %s', (driver_id,))
-            alert_count_result = cursor.fetchone()
-            driver['alert_count'] = alert_count_result['count'] if isinstance(alert_count_result, dict) else alert_count_result[0]
-            
-            # Get unacknowledged alert count
-            cursor.execute('SELECT COUNT(*) FROM alerts WHERE driver_id = %s AND acknowledged = FALSE', 
-                         (driver_id,))
-            unread_alerts_result = cursor.fetchone()
-            driver['unread_alerts'] = unread_alerts_result['count'] if isinstance(unread_alerts_result, dict) else unread_alerts_result[0]
-            
-            # Get face image count
-            cursor.execute('SELECT COUNT(*) FROM face_images WHERE driver_id = %s', (driver_id,))
-            face_count_result = cursor.fetchone()
-            driver['face_image_count'] = face_count_result['count'] if isinstance(face_count_result, dict) else face_count_result[0]
-            
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        # Get driver details with guardian info
+        result = supabase.table('drivers') \
+            .select('*, guardians!inner(full_name, phone, email)') \
+            .eq('driver_id', driver_id) \
+            .execute()
+        
+        if not result.data or len(result.data) == 0:
             return jsonify({
-                'success': True,
-                'driver': driver
-            })
+                'success': False,
+                'error': 'Driver not found'
+            }), 404
+        
+        driver = result.data[0]
+        
+        # Extract guardian info
+        if 'guardians' in driver:
+            driver['guardian_name'] = driver['guardians']['full_name']
+            driver['guardian_phone'] = driver['guardians']['phone']
+            driver['guardian_email'] = driver['guardians']['email']
+            del driver['guardians']
+        
+        # Get alert count
+        alert_result = supabase.table('alerts') \
+            .select('*', count='exact') \
+            .eq('driver_id', driver_id) \
+            .execute()
+        driver['alert_count'] = alert_result.count if hasattr(alert_result, 'count') else 0
+        
+        # Get unacknowledged alert count
+        unread_result = supabase.table('alerts') \
+            .select('*', count='exact') \
+            .eq('driver_id', driver_id) \
+            .eq('acknowledged', False) \
+            .execute()
+        driver['unread_alerts'] = unread_result.count if hasattr(unread_result, 'count') else 0
+        
+        # Get face image count
+        face_result = supabase.table('face_images') \
+            .select('*', count='exact') \
+            .eq('driver_id', driver_id) \
+            .execute()
+        driver['face_image_count'] = face_result.count if hasattr(face_result, 'count') else 0
+        
+        return jsonify({
+            'success': True,
+            'driver': driver
+        })
             
     except Exception as e:
         print(f"❌ Error in get_driver_details: {e}")
@@ -3428,18 +3278,25 @@ def get_drivers_with_embeddings():
     if not validate_session(guardian_id, token):
         return jsonify({'success': False, 'error': 'Invalid session'}), 401
 
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cursor.execute('''
-            SELECT driver_id, name, face_embedding
-            FROM drivers
-            WHERE guardian_id = %s AND face_embedding IS NOT NULL
-        ''', (guardian_id,))
-        drivers = cursor.fetchall()
-        # Convert embedding from JSON string to Python list
-        for d in drivers:
-            if d['face_embedding']:
+    if not supabase:
+        return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+
+    result = supabase.table('drivers') \
+        .select('driver_id, name, face_embedding') \
+        .eq('guardian_id', guardian_id) \
+        .not_.is_('face_embedding', 'null') \
+        .execute()
+
+    drivers = result.data if result.data else []
+    
+    # Parse embedding from JSON string to Python list
+    for d in drivers:
+        if d.get('face_embedding') and isinstance(d['face_embedding'], str):
+            try:
                 d['face_embedding'] = json.loads(d['face_embedding'])
+            except:
+                pass
+
     return jsonify({'success': True, 'drivers': drivers})
 
 @app.route('/api/driver/<driver_id>/store-embedding', methods=['POST'])
@@ -3453,18 +3310,25 @@ def store_embedding(driver_id):
     if not validate_session(guardian_id, token):
         return jsonify({'success': False, 'error': 'Invalid session'}), 401
 
-    # Verify driver belongs to guardian
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT driver_id FROM drivers WHERE driver_id = %s AND guardian_id = %s',
-                       (driver_id, guardian_id))
-        if not cursor.fetchone():
-            return jsonify({'success': False, 'error': 'Driver not found'}), 404
+    if not supabase:
+        return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
 
-        embedding_json = json.dumps(embedding)
-        cursor.execute('UPDATE drivers SET face_embedding = %s WHERE driver_id = %s',
-                       (embedding_json, driver_id))
-        conn.commit()
+    # Verify driver belongs to guardian
+    driver_check = supabase.table('drivers') \
+        .select('driver_id') \
+        .eq('driver_id', driver_id) \
+        .eq('guardian_id', guardian_id) \
+        .execute()
+
+    if not driver_check.data or len(driver_check.data) == 0:
+        return jsonify({'success': False, 'error': 'Driver not found'}), 404
+
+    embedding_json = json.dumps(embedding)
+    supabase.table('drivers') \
+        .update({'face_embedding': embedding_json}) \
+        .eq('driver_id', driver_id) \
+        .execute()
+
     return jsonify({'success': True, 'message': 'Embedding stored'})
 
 @app.route('/api/driver/<identifier>/name', methods=['GET'])
@@ -3477,39 +3341,39 @@ def get_driver_name(identifier):
         if api_key != expected_api_key:
             return jsonify({'success': False, 'error': 'Unauthorized'}), 401
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-            
-            # Try by driver_id first
-            cursor.execute('''
-                SELECT name, guardian_id, driver_id 
-                FROM drivers 
-                WHERE driver_id = %s AND is_active = TRUE
-            ''', (identifier,))
-            
-            driver = cursor.fetchone()
-            
-            # If not found, try by reference_number
-            if not driver:
-                cursor.execute('''
-                    SELECT name, guardian_id, driver_id 
-                    FROM drivers 
-                    WHERE reference_number = %s AND is_active = TRUE
-                ''', (identifier,))
-                driver = cursor.fetchone()
-            
-            if driver:
-                return jsonify({
-                    'success': True,
-                    'name': driver['name'],
-                    'guardian_id': driver['guardian_id'],
-                    'driver_id': driver['driver_id']
-                })
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': 'Driver not found'
-                }), 404
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        # Try by driver_id first
+        result = supabase.table('drivers') \
+            .select('name, guardian_id, driver_id') \
+            .eq('driver_id', identifier) \
+            .eq('is_active', True) \
+            .execute()
+        
+        driver = result.data[0] if result.data else None
+        
+        # If not found, try by reference_number
+        if not driver:
+            result = supabase.table('drivers') \
+                .select('name, guardian_id, driver_id') \
+                .eq('reference_number', identifier) \
+                .eq('is_active', True) \
+                .execute()
+            driver = result.data[0] if result.data else None
+        
+        if driver:
+            return jsonify({
+                'success': True,
+                'name': driver['name'],
+                'guardian_id': driver['guardian_id'],
+                'driver_id': driver['driver_id']
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Driver not found'
+            }), 404
                 
     except Exception as e:
         logger.error(f"Error in get_driver_name: {e}")
@@ -3529,48 +3393,48 @@ def get_driver_by_reference(identifier):
         if api_key != expected_api_key:
             return jsonify({'success': False, 'error': 'Unauthorized'}), 401
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        # Try to find by driver_id first
+        result = supabase.table('drivers') \
+            .select('driver_id, name, guardian_id, phone, email, license_number, reference_number') \
+            .eq('driver_id', identifier) \
+            .eq('is_active', True) \
+            .execute()
+        
+        driver = result.data[0] if result.data else None
+        
+        # If not found, try by reference_number
+        if not driver:
+            result = supabase.table('drivers') \
+                .select('driver_id, name, guardian_id, phone, email, license_number, reference_number') \
+                .eq('reference_number', identifier) \
+                .eq('is_active', True) \
+                .execute()
+            driver = result.data[0] if result.data else None
+        
+        if driver:
+            logger.info(f"Found driver: {driver.get('name')} (ID: {driver.get('driver_id')})")
+            return jsonify({
+                'success': True,
+                'driver': driver
+            })
+        else:
+            # Debug: Show what's in the database
+            sample = supabase.table('drivers') \
+                .select('driver_id, name, reference_number') \
+                .limit(5) \
+                .execute()
+            sample_list = sample.data if sample.data else []
+            logger.info(f"Sample drivers in DB: {sample_list}")
             
-            # Try to find by driver_id first (since that's where your data is)
-            cursor.execute('''
-                SELECT driver_id, name, guardian_id, phone, email, license_number, reference_number
-                FROM drivers 
-                WHERE driver_id = %s AND is_active = TRUE
-            ''', (identifier,))
-            
-            driver = cursor.fetchone()
-            
-            # If not found, try by reference_number
-            if not driver:
-                cursor.execute('''
-                    SELECT driver_id, name, guardian_id, phone, email, license_number, reference_number
-                    FROM drivers 
-                    WHERE reference_number = %s AND is_active = TRUE
-                ''', (identifier,))
-                driver = cursor.fetchone()
-            
-            if driver:
-                # Convert to dict for JSON response
-                driver_dict = dict(driver)
-                logger.info(f"Found driver: {driver_dict.get('name')} (ID: {driver_dict.get('driver_id')})")
-                return jsonify({
-                    'success': True,
-                    'driver': driver_dict
-                })
-            else:
-                # Debug: Show what's in the database
-                cursor.execute('SELECT driver_id, name, reference_number FROM drivers LIMIT 5')
-                sample_drivers = cursor.fetchall()
-                sample_list = [dict(d) for d in sample_drivers]
-                logger.info(f"Sample drivers in DB: {sample_list}")
-                
-                return jsonify({
-                    'success': False,
-                    'error': 'Driver not found',
-                    'identifier_searched': identifier,
-                    'sample_drivers': sample_list
-                }), 404
+            return jsonify({
+                'success': False,
+                'error': 'Driver not found',
+                'identifier_searched': identifier,
+                'sample_drivers': sample_list
+            }), 404
                 
     except Exception as e:
         logger.error(f"Error in get_driver_by_reference: {e}")
@@ -3583,35 +3447,29 @@ def get_driver_by_reference(identifier):
 def get_driver_guardian(driver_id):
     """Get guardian ID for a driver (for WebRTC connection)"""
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT guardian_id, name 
-                FROM drivers 
-                WHERE driver_id = %s AND is_active = TRUE
-            ''', (driver_id,))
-            
-            result = cursor.fetchone()
-            
-            if not result:
-                return jsonify({
-                    'success': False,
-                    'error': 'Driver not found'
-                }), 404
-            
-            if isinstance(result, dict):
-                guardian_id = result['guardian_id']
-                driver_name = result['name']
-            else:
-                guardian_id = result[0]
-                driver_name = result[1]
-            
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        result = supabase.table('drivers') \
+            .select('guardian_id, name') \
+            .eq('driver_id', driver_id) \
+            .eq('is_active', True) \
+            .execute()
+        
+        if not result.data or len(result.data) == 0:
             return jsonify({
-                'success': True,
-                'guardian_id': guardian_id,
-                'driver_name': driver_name,
-                'driver_id': driver_id
-            })
+                'success': False,
+                'error': 'Driver not found'
+            }), 404
+        
+        driver_data = result.data[0]
+        
+        return jsonify({
+            'success': True,
+            'guardian_id': driver_data['guardian_id'],
+            'driver_name': driver_data['name'],
+            'driver_id': driver_id
+        })
             
     except Exception as e:
         print(f"❌ Error getting driver guardian: {e}")
@@ -3633,28 +3491,28 @@ def verify_driver_access(driver_id):
                 'error': 'Guardian ID required'
             }), 400
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT guardian_id, name 
-                FROM drivers 
-                WHERE driver_id = %s AND guardian_id = %s AND is_active = TRUE
-            ''', (driver_id, provided_guardian_id))
-            
-            result = cursor.fetchone()
-            
-            if result:
-                return jsonify({
-                    'success': True,
-                    'verified': True,
-                    'message': 'Driver verified'
-                })
-            else:
-                return jsonify({
-                    'success': False,
-                    'verified': False,
-                    'error': 'Driver not associated with this guardian'
-                }), 403
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        result = supabase.table('drivers') \
+            .select('guardian_id, name') \
+            .eq('driver_id', driver_id) \
+            .eq('guardian_id', provided_guardian_id) \
+            .eq('is_active', True) \
+            .execute()
+        
+        if result.data and len(result.data) > 0:
+            return jsonify({
+                'success': True,
+                'verified': True,
+                'message': 'Driver verified'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'verified': False,
+                'error': 'Driver not associated with this guardian'
+            }), 403
                 
     except Exception as e:
         print(f"❌ Error verifying driver: {e}")
@@ -3688,97 +3546,80 @@ def update_driver():
                 'error': 'Invalid or expired session'
             }), 401
 
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
 
-            # Check if driver belongs to this guardian
-            cursor.execute('''
-                SELECT driver_id FROM drivers 
-                WHERE driver_id = %s AND guardian_id = %s
-            ''', (driver_id, guardian_id))
+        # Check if driver belongs to this guardian
+        driver_check = supabase.table('drivers') \
+            .select('driver_id') \
+            .eq('driver_id', driver_id) \
+            .eq('guardian_id', guardian_id) \
+            .execute()
 
-            if not cursor.fetchone():
-                return jsonify({
-                    'success': False,
-                    'error': 'Driver not found or not authorized'
-                }), 404
-
-            # Build dynamic update fields
-            update_fields = []
-            update_values = []
-
-            # --- PHONE UPDATE ---
-            new_phone = data.get('phone')
-            if new_phone:
-                phone_clean = re.sub(r'[\s\-\(\)\+]', '', new_phone)
-
-                cursor.execute('''
-                    SELECT driver_id FROM drivers 
-                    WHERE phone = %s AND driver_id != %s
-                ''', (phone_clean, driver_id))
-
-                if cursor.fetchone():
-                    return jsonify({
-                        'success': False,
-                        'error': f'Phone number {phone_clean} is already registered'
-                    }), 409
-
-                update_fields.append('phone = %s')
-                update_values.append(phone_clean)
-
-            # --- OTHER FIELDS ---
-            fields_to_update = ['name', 'email', 'address', 'license_number']
-
-            for field in fields_to_update:
-                if field in data:
-                    update_fields.append(f'{field} = %s')
-                    update_values.append(data[field])
-
-            if not update_fields:
-                return jsonify({
-                    'success': False,
-                    'error': 'No fields to update'
-                }), 400
-
-            # Build final query
-            query = f'''
-                UPDATE drivers 
-                SET {', '.join(update_fields)}, updated_at = %s
-                WHERE driver_id = %s
-            '''
-
-            # ✅ CORRECT PARAMETER ORDER
-            cursor.execute(
-                query,
-                (*update_values, datetime.now(), driver_id)
-            )
-
-            conn.commit()
-
-            # Get updated driver
-            cursor.execute('''
-                SELECT * FROM drivers WHERE driver_id = %s
-            ''', (driver_id,))
-
-            driver = dict(cursor.fetchone())
-
-            # Log activity
-            cursor.execute('''
-                INSERT INTO activity_log (guardian_id, action, details)
-                VALUES (%s, %s, %s)
-            ''', (
-                guardian_id,
-                'DRIVER_UPDATED',
-                f'Updated driver: {driver.get("name")} (ID: {driver_id})'
-            ))
-
-            conn.commit()
-
+        if not driver_check.data or len(driver_check.data) == 0:
             return jsonify({
-                'success': True,
-                'driver': driver,
-                'message': 'Driver updated successfully'
-            })
+                'success': False,
+                'error': 'Driver not found or not authorized'
+            }), 404
+
+        # Build update dictionary
+        update_data = {}
+        
+        # --- PHONE UPDATE ---
+        new_phone = data.get('phone')
+        if new_phone:
+            phone_clean = re.sub(r'[\s\-\(\)\+]', '', new_phone)
+
+            phone_check = supabase.table('drivers') \
+                .select('driver_id') \
+                .eq('phone', phone_clean) \
+                .neq('driver_id', driver_id) \
+                .execute()
+
+            if phone_check.data and len(phone_check.data) > 0:
+                return jsonify({
+                    'success': False,
+                    'error': f'Phone number {phone_clean} is already registered'
+                }), 409
+
+            update_data['phone'] = phone_clean
+
+        # --- OTHER FIELDS ---
+        fields_to_update = ['name', 'email', 'address', 'license_number']
+
+        for field in fields_to_update:
+            if field in data:
+                update_data[field] = data[field]
+
+        if not update_data:
+            return jsonify({
+                'success': False,
+                'error': 'No fields to update'
+            }), 400
+
+        update_data['updated_at'] = datetime.now().isoformat()
+
+        supabase.table('drivers') \
+            .update(update_data) \
+            .eq('driver_id', driver_id) \
+            .execute()
+
+        # Get updated driver
+        driver_result = supabase.table('drivers') \
+            .select('*') \
+            .eq('driver_id', driver_id) \
+            .execute()
+        
+        driver = driver_result.data[0] if driver_result.data else {}
+
+        # Log activity
+        log_activity(guardian_id, 'DRIVER_UPDATED', f'Updated driver: {driver.get("name")} (ID: {driver_id})')
+
+        return jsonify({
+            'success': True,
+            'driver': driver,
+            'message': 'Driver updated successfully'
+        })
 
     except Exception as e:
         print(f"❌ Error in update_driver: {e}")
@@ -3810,86 +3651,73 @@ def update_guardian():
                 'error': 'Invalid or expired session'
             }), 401
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        update_data = {}
+        
+        # Check phone number uniqueness
+        new_phone = data.get('phone')
+        if new_phone:
+            # Clean phone number
+            phone_clean = re.sub(r'[\s\-\(\)\+]', '', new_phone)
             
-            # Build update query dynamically
-            update_fields = []
-            update_values = []
+            # Convert to 09 format if needed
+            if len(phone_clean) == 12 and phone_clean.startswith('639'):
+                phone_clean = '09' + phone_clean[3:]
+            elif len(phone_clean) == 11 and phone_clean.startswith('63'):
+                phone_clean = '09' + phone_clean[2:]
+            elif len(phone_clean) == 10 and phone_clean.startswith('9'):
+                phone_clean = '0' + phone_clean
+            elif len(phone_clean) == 10:
+                phone_clean = '09' + phone_clean
             
-            # Check phone number uniqueness
-            new_phone = data.get('phone')
-            if new_phone:
-                # Clean phone number
-                phone_clean = re.sub(r'[\s\-\(\)\+]', '', new_phone)
-                
-                # Convert to 09 format if needed
-                if len(phone_clean) == 12 and phone_clean.startswith('639'):
-                    phone_clean = '09' + phone_clean[3:]
-                elif len(phone_clean) == 11 and phone_clean.startswith('63'):
-                    phone_clean = '09' + phone_clean[2:]
-                elif len(phone_clean) == 10 and phone_clean.startswith('9'):
-                    phone_clean = '0' + phone_clean
-                elif len(phone_clean) == 10:
-                    phone_clean = '09' + phone_clean
-                
-                # Check if phone already exists for another guardian
-                cursor.execute('''
-                    SELECT guardian_id FROM guardians 
-                    WHERE phone = %s AND guardian_id != %s
-                ''', (phone_clean, guardian_id))
-                
-                if cursor.fetchone():
-                    return jsonify({
-                        'success': False,
-                        'error': f'Phone number {phone_clean} is already registered for another guardian'
-                    }), 409
-                
-                update_fields.append('phone = %s')
-                update_values.append(phone_clean)
+            # Check if phone already exists for another guardian
+            phone_check = supabase.table('guardians') \
+                .select('guardian_id') \
+                .eq('phone', phone_clean) \
+                .neq('guardian_id', guardian_id) \
+                .execute()
             
-            # Other fields that can be updated
-            fields_to_update = ['full_name', 'email', 'address']
-            for field in fields_to_update:
-                if field in data:
-                    update_fields.append(f'{field} = %s')
-                    update_values.append(data[field])
-            
-            if not update_fields:
+            if phone_check.data and len(phone_check.data) > 0:
                 return jsonify({
                     'success': False,
-                    'error': 'No fields to update'
-                }), 400
+                    'error': f'Phone number {phone_clean} is already registered for another guardian'
+                }), 409
             
-            # Add guardian_id to values
-            update_values.append(guardian_id)
-            
-            # Execute update
-            query = f'''
-                UPDATE guardians 
-                SET {', '.join(update_fields)}
-                WHERE guardian_id = %s
-            '''
-            
-            cursor.execute(query, (*update_values,))
-            conn.commit()
-            
-            # Get updated guardian info
-            cursor.execute('''
-                SELECT * FROM guardians WHERE guardian_id = %s
-            ''', (guardian_id,))
-            
-            guardian = dict(cursor.fetchone())
-            
-            # Update localStorage data if needed
-            if 'full_name' in data:
-                # This would be handled by frontend
-            
-                return jsonify({
-                'success': True,
-                'guardian': guardian,
-                'message': 'Profile updated successfully'
-            })
+            update_data['phone'] = phone_clean
+        
+        # Other fields that can be updated
+        fields_to_update = ['full_name', 'email', 'address']
+        for field in fields_to_update:
+            if field in data:
+                update_data[field] = data[field]
+        
+        if not update_data:
+            return jsonify({
+                'success': False,
+                'error': 'No fields to update'
+            }), 400
+        
+        # Execute update
+        supabase.table('guardians') \
+            .update(update_data) \
+            .eq('guardian_id', guardian_id) \
+            .execute()
+        
+        # Get updated guardian info
+        guardian_result = supabase.table('guardians') \
+            .select('*') \
+            .eq('guardian_id', guardian_id) \
+            .execute()
+        
+        guardian = guardian_result.data[0] if guardian_result.data else {}
+        
+        return jsonify({
+            'success': True,
+            'guardian': guardian,
+            'message': 'Profile updated successfully'
+        })
         
     except Exception as e:
         print(f"❌ Error in update_guardian: {e}")
@@ -3920,40 +3748,45 @@ def get_driver_details_api(driver_id):
         if not (valid_api_key or valid_session):
             return jsonify({'success': False, 'error': 'Unauthorized'}), 401
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-            
-            # Get driver details
-            cursor.execute('''
-                SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
-                FROM drivers d
-                LEFT JOIN guardians g ON d.guardian_id = g.guardian_id
-                WHERE d.driver_id = %s AND d.is_active = TRUE
-            ''', (driver_id,))
-            
-            driver = cursor.fetchone()
-            
-            if not driver:
-                return jsonify({
-                    'success': False,
-                    'error': 'Driver not found'
-                }), 404
-            
-            driver_dict = dict(driver)
-            
-            # Get face image count
-            cursor.execute('SELECT COUNT(*) FROM face_images WHERE driver_id = %s', (driver_id,))
-            count_result = cursor.fetchone()
-            driver_dict['face_image_count'] = count_result[0] if count_result else 0
-            
-            # Remove embedding from response if exists
-            if 'face_embedding' in driver_dict:
-                del driver_dict['face_embedding']
-            
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        # Get driver details with guardian info
+        result = supabase.table('drivers') \
+            .select('*, guardians!left(full_name, phone)') \
+            .eq('driver_id', driver_id) \
+            .eq('is_active', True) \
+            .execute()
+        
+        if not result.data or len(result.data) == 0:
             return jsonify({
-                'success': True,
-                'driver': driver_dict
-            })
+                'success': False,
+                'error': 'Driver not found'
+            }), 404
+        
+        driver = result.data[0]
+        
+        # Extract guardian info
+        if 'guardians' in driver and driver['guardians']:
+            driver['guardian_name'] = driver['guardians']['full_name']
+            driver['guardian_phone'] = driver['guardians']['phone']
+            del driver['guardians']
+        
+        # Get face image count
+        face_result = supabase.table('face_images') \
+            .select('*', count='exact') \
+            .eq('driver_id', driver_id) \
+            .execute()
+        driver['face_image_count'] = face_result.count if hasattr(face_result, 'count') else 0
+        
+        # Remove embedding from response if exists
+        if 'face_embedding' in driver:
+            del driver['face_embedding']
+        
+        return jsonify({
+            'success': True,
+            'driver': driver
+        })
             
     except Exception as e:
         logger.error(f"Error in get_driver_details_api: {e}")
@@ -3973,6 +3806,9 @@ def receive_alert():
         if api_key != expected_api_key:
             return jsonify({'success': False, 'error': 'Unauthorized'}), 401
         
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
         driver_id = data.get('driver_id')
         driver_name = data.get('driver_name')
         guardian_id = data.get('guardian_id')
@@ -3988,58 +3824,56 @@ def receive_alert():
                 'error': 'Driver ID required'
             }), 400
         
-        with get_db_cursor() as cursor:
-            # Insert alert
-            cursor.execute('''
-                INSERT INTO alerts (driver_id, guardian_id, severity, message, detection_details, source)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                RETURNING alert_id
-            ''', (
-                driver_id,
-                guardian_id,
-                severity,
-                message,
-                json.dumps(detection_details),
-                'drowsiness_detection'
-            ))
-            
-            result = cursor.fetchone()
-            alert_id = result[0] if result else None
-            
-            # Insert drowsiness event
-            cursor.execute('''
-                INSERT INTO drowsiness_events (driver_id, guardian_id, confidence, ear, mar, perclos)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            ''', (
-                driver_id,
-                guardian_id,
-                confidence,
-                detection_details.get('ear', 0.0),
-                detection_details.get('mar', 0.0),
-                detection_details.get('perclos', 0.0)
-            ))
-            
-            # Notify via WebSocket if guardian connected
-            if guardian_id:
-                alert_data = {
-                    'alert_id': alert_id,
-                    'driver_id': driver_id,
-                    'driver_name': driver_name,
-                    'severity': severity,
-                    'message': message,
-                    'location': location,
-                    'timestamp': datetime.now().isoformat()
-                }
-                # Emit to guardian's room
-                socketio.emit('guardian_alert', alert_data, room=f'guardian_{guardian_id}')
-            
-            logger.info(f"Alert received: {severity} from driver {driver_name} ({driver_id})")
-            
-            return jsonify({
-                'success': True,
+        # Insert alert
+        alert_data = {
+            'driver_id': driver_id,
+            'guardian_id': guardian_id,
+            'severity': severity,
+            'message': message,
+            'detection_details': json.dumps(detection_details),
+            'source': 'drowsiness_detection',
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        alert_result = supabase.table('alerts').insert(alert_data).execute()
+        
+        alert_id = None
+        if alert_result.data and len(alert_result.data) > 0:
+            alert_id = alert_result.data[0].get('alert_id')
+        
+        # Insert drowsiness event
+        event_data = {
+            'driver_id': driver_id,
+            'guardian_id': guardian_id,
+            'confidence': confidence,
+            'ear': detection_details.get('ear', 0.0),
+            'mar': detection_details.get('mar', 0.0),
+            'perclos': detection_details.get('perclos', 0.0),
+            'timestamp': datetime.now().isoformat()
+        }
+        supabase.table('drowsiness_events').insert(event_data).execute()
+        
+        # Notify via WebSocket if guardian connected
+        if guardian_id:
+            alert_notification = {
                 'alert_id': alert_id,
-                'message': 'Alert received and stored'
-            })
+                'driver_id': driver_id,
+                'driver_name': driver_name,
+                'severity': severity,
+                'message': message,
+                'location': location,
+                'timestamp': datetime.now().isoformat()
+            }
+            # Emit to guardian's room
+            socketio.emit('guardian_alert', alert_notification, room=f'guardian_{guardian_id}')
+        
+        logger.info(f"Alert received: {severity} from driver {driver_name} ({driver_id})")
+        
+        return jsonify({
+            'success': True,
+            'alert_id': alert_id,
+            'message': 'Alert received and stored'
+        })
             
     except Exception as e:
         logger.error(f"Error in receive_alert: {e}")
@@ -4070,46 +3904,46 @@ def get_guardian_alerts():
                 'error': 'Session expired or invalid'
             }), 401
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        # Build query
+        query = supabase.table('alerts') \
+            .select('*, drivers!inner(name)') \
+            .eq('guardian_id', guardian_id)
+        
+        if acknowledged is not None:
+            if acknowledged.lower() == 'true':
+                query = query.eq('acknowledged', True)
+            elif acknowledged.lower() == 'false':
+                query = query.eq('acknowledged', False)
+        
+        result = query.order('timestamp', desc=True).limit(limit).execute()
+        
+        alerts = result.data if result.data else []
+        
+        # Process alerts
+        result_alerts = []
+        for alert in alerts:
+            if alert.get('detection_details'):
+                try:
+                    alert['detection_details'] = json.loads(alert['detection_details'])
+                except:
+                    pass
             
-            # Build query based on acknowledged filter
-            base_query = '''
-                SELECT a.*, d.name as driver_name
-                FROM alerts a
-                JOIN drivers d ON a.driver_id = d.driver_id
-                WHERE a.guardian_id = %s
-            '''
-            params = [guardian_id]
+            # Extract driver name
+            if 'drivers' in alert and alert['drivers']:
+                alert['driver_name'] = alert['drivers']['name']
+                del alert['drivers']
             
-            if acknowledged is not None:
-                if acknowledged.lower() == 'true':
-                    base_query += ' AND a.acknowledged = TRUE'
-                elif acknowledged.lower() == 'false':
-                    base_query += ' AND a.acknowledged = FALSE'
-            
-            base_query += ' ORDER BY a.timestamp DESC LIMIT %s'
-            params.append(limit)
-            
-            cursor.execute(base_query, tuple(params))
-            alerts = cursor.fetchall()
-            
-            result_alerts = []
-            for alert in alerts:
-                alert_dict = dict(alert)
-                if alert_dict.get('detection_details'):
-                    try:
-                        alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
-                    except:
-                        pass
-                result_alerts.append(alert_dict)
-            
-            return jsonify({
-                'success': True,
-                'session_valid': True,
-                'count': len(alerts),
-                'alerts': result_alerts
-            })
+            result_alerts.append(alert)
+        
+        return jsonify({
+            'success': True,
+            'session_valid': True,
+            'count': len(alerts),
+            'alerts': result_alerts
+        })
         
     except Exception as e:
         return jsonify({
@@ -4142,16 +3976,18 @@ def get_active_drivers():
     if not auth_header or auth_header != f'Bearer {os.getenv("AI_SERVICE_TOKEN")}':
         return jsonify({'error': 'Unauthorized'}), 401
 
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT driver_id, name as driver_name, guardian_id
-            FROM drivers
-            WHERE is_active = TRUE
-            ORDER BY registration_date DESC
-        ''')
-        drivers = cursor.fetchall()
-    return jsonify({'success': True, 'drivers': [dict(d) for d in drivers]})
+    if not supabase:
+        return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+
+    result = supabase.table('drivers') \
+        .select('driver_id, name as driver_name, guardian_id') \
+        .eq('is_active', True) \
+        .order('registration_date', desc=True) \
+        .execute()
+
+    drivers = result.data if result.data else []
+    
+    return jsonify({'success': True, 'drivers': drivers})
 
 @app.route('/api/guardian/acknowledge-alert', methods=['POST'])
 def acknowledge_alert():
@@ -4175,59 +4011,48 @@ def acknowledge_alert():
                 'error': 'Session expired or invalid'
             }), 401
         
-        with get_db_cursor() as cursor:
-            # Check if alert belongs to this guardian
-            cursor.execute('''
-                SELECT a.*, d.name as driver_name 
-                FROM alerts a
-                JOIN drivers d ON a.driver_id = d.driver_id
-                WHERE a.alert_id = %s AND a.guardian_id = %s
-            ''', (alert_id, guardian_id))
-            
-            alert_result = cursor.fetchone()
-            if not alert_result:
-                return jsonify({
-                    'success': False,
-                    'error': 'Alert not found or not authorized'
-                }), 404
-            
-            alert = dict(alert_result)
-            
-            # Acknowledge the alert
-            cursor.execute('''
-                UPDATE alerts SET acknowledged = TRUE 
-                WHERE alert_id = %s AND guardian_id = %s
-            ''', (alert_id, guardian_id))
-            
-            # Log activity
-            cursor.execute('''
-                INSERT INTO activity_log (guardian_id, action, details)
-                VALUES (%s, %s, %s)
-            ''', (guardian_id, 'ALERT_ACKNOWLEDGED', 
-                f'Acknowledged alert #{alert_id} for driver {alert["driver_name"]}'))
-            
-            # Emit socket event for real-time update
-            socketio.emit('alert_acknowledged', {
-                'alert_id': alert_id,
-                'guardian_id': guardian_id,
-                'timestamp': datetime.now().isoformat()
-            })
-            
-            cursor.execute('''
-                INSERT INTO activity_log (guardian_id, action, details)
-                VALUES (%s, %s, %s)
-            ''', (
-                guardian_id,
-                'ALERT_ACKNOWLEDGED',
-                f'Acknowledged alert #{alert_id} for driver {alert["driver_name"]}'
-            ))
-            
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        # Check if alert belongs to this guardian
+        alert_check = supabase.table('alerts') \
+            .select('*, drivers!inner(name)') \
+            .eq('alert_id', alert_id) \
+            .eq('guardian_id', guardian_id) \
+            .execute()
+        
+        if not alert_check.data or len(alert_check.data) == 0:
             return jsonify({
-                'success': True,
-                'alert_id': alert_id,
-                'acknowledged': True,
-                'message': 'Alert acknowledged successfully'
-            })
+                'success': False,
+                'error': 'Alert not found or not authorized'
+            }), 404
+        
+        alert = alert_check.data[0]
+        
+        # Acknowledge the alert
+        supabase.table('alerts') \
+            .update({'acknowledged': True}) \
+            .eq('alert_id', alert_id) \
+            .eq('guardian_id', guardian_id) \
+            .execute()
+        
+        # Log activity
+        driver_name = alert['drivers']['name'] if 'drivers' in alert else 'Unknown'
+        log_activity(guardian_id, 'ALERT_ACKNOWLEDGED', f'Acknowledged alert #{alert_id} for driver {driver_name}')
+        
+        # Emit socket event for real-time update
+        socketio.emit('alert_acknowledged', {
+            'alert_id': alert_id,
+            'guardian_id': guardian_id,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+        return jsonify({
+            'success': True,
+            'alert_id': alert_id,
+            'acknowledged': True,
+            'message': 'Alert acknowledged successfully'
+        })
         
     except Exception as e:
         return jsonify({
@@ -4297,22 +4122,27 @@ def admin_login():
 def admin_get_drivers():
     """Get all drivers from database - ADMIN ONLY"""
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT d.*, g.full_name as guardian_name, g.phone as guardian_phone
-                FROM drivers d
-                LEFT JOIN guardians g ON d.guardian_id = g.guardian_id
-                ORDER BY d.registration_date DESC
-            ''')
-            
-            drivers = cursor.fetchall()
-            drivers_list = [dict(driver) for driver in drivers]
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        result = supabase.table('drivers') \
+            .select('*, guardians!left(full_name, phone)') \
+            .order('registration_date', desc=True) \
+            .execute()
+        
+        drivers = result.data if result.data else []
+        
+        # Extract guardian info
+        for driver in drivers:
+            if 'guardians' in driver and driver['guardians']:
+                driver['guardian_name'] = driver['guardians']['full_name']
+                driver['guardian_phone'] = driver['guardians']['phone']
+                del driver['guardians']
             
         return jsonify({
             'success': True,
-            'count': len(drivers_list),
-            'drivers': drivers_list
+            'count': len(drivers),
+            'drivers': drivers
         })
         
     except Exception as e:
@@ -4325,33 +4155,39 @@ def admin_get_alerts():
     try:
         limit = request.args.get('limit', 100, type=int)
         
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT a.*, d.name as driver_name, g.full_name as guardian_name
-                FROM alerts a
-                JOIN drivers d ON a.driver_id = d.driver_id
-                JOIN guardians g ON a.guardian_id = g.guardian_id
-                ORDER BY a.timestamp DESC
-                LIMIT %s
-            ''', (limit,))
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        result = supabase.table('alerts') \
+            .select('*, drivers!inner(name), guardians!left(full_name)') \
+            .order('timestamp', desc=True) \
+            .limit(limit) \
+            .execute()
+        
+        alerts = result.data if result.data else []
+        
+        # Process alerts
+        for alert in alerts:
+            if alert.get('detection_details'):
+                try:
+                    alert['detection_details'] = json.loads(alert['detection_details'])
+                except:
+                    pass
             
-            alerts = cursor.fetchall()
+            # Extract driver name
+            if 'drivers' in alert and alert['drivers']:
+                alert['driver_name'] = alert['drivers']['name']
+                del alert['drivers']
             
-            result = []
-            for alert in alerts:
-                alert_dict = dict(alert)
-                if alert_dict.get('detection_details'):
-                    try:
-                        alert_dict['detection_details'] = json.loads(alert_dict['detection_details'])
-                    except:
-                        pass
-                result.append(alert_dict)
+            # Extract guardian name
+            if 'guardians' in alert and alert['guardians']:
+                alert['guardian_name'] = alert['guardians']['full_name']
+                del alert['guardians']
             
         return jsonify({
             'success': True,
-            'count': len(result),
-            'alerts': result
+            'count': len(alerts),
+            'alerts': alerts
         })
         
     except Exception as e:
@@ -4362,23 +4198,36 @@ def admin_get_alerts():
 def admin_get_guardians():
     """Get all guardians from database - ADMIN ONLY"""
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT g.*, 
-                       (SELECT COUNT(*) FROM drivers d WHERE d.guardian_id = g.guardian_id) as driver_count,
-                       (SELECT COUNT(*) FROM alerts a WHERE a.guardian_id = g.guardian_id) as alert_count
-                FROM guardians g
-                ORDER BY g.registration_date DESC
-            ''')
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        result = supabase.table('guardians') \
+            .select('*') \
+            .order('registration_date', desc=True) \
+            .execute()
+        
+        guardians = result.data if result.data else []
+        
+        # Add driver and alert counts
+        for guardian in guardians:
+            # Driver count
+            driver_result = supabase.table('drivers') \
+                .select('*', count='exact') \
+                .eq('guardian_id', guardian['guardian_id']) \
+                .execute()
+            guardian['driver_count'] = driver_result.count if hasattr(driver_result, 'count') else 0
             
-            guardians = cursor.fetchall()
-            guardians_list = [dict(guardian) for guardian in guardians]
+            # Alert count
+            alert_result = supabase.table('alerts') \
+                .select('*', count='exact') \
+                .eq('guardian_id', guardian['guardian_id']) \
+                .execute()
+            guardian['alert_count'] = alert_result.count if hasattr(alert_result, 'count') else 0
             
         return jsonify({
             'success': True,
-            'count': len(guardians_list),
-            'guardians': guardians_list
+            'count': len(guardians),
+            'guardians': guardians
         })
         
     except Exception as e:
@@ -4389,27 +4238,34 @@ def admin_get_guardians():
 def admin_stats():
     """Admin statistics endpoint - ADMIN ONLY"""
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            stats = {}
-            cursor.execute('SELECT COUNT(*) as total_alerts FROM alerts')
-            result = cursor.fetchone()
-            stats['total_alerts'] = result['total_alerts'] if isinstance(result, dict) else result[0]
-            
-            cursor.execute('SELECT COUNT(*) as total_drivers FROM drivers')
-            result = cursor.fetchone()
-            stats['total_drivers'] = result['total_drivers'] if isinstance(result, dict) else result[0]
-            
-            cursor.execute('SELECT COUNT(*) as total_guardians FROM guardians')
-            result = cursor.fetchone()
-            stats['total_guardians'] = result['total_guardians'] if isinstance(result, dict) else result[0]
-            
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        stats = {}
+        
+        # Total alerts
+        alert_result = supabase.table('alerts') \
+            .select('*', count='exact') \
+            .execute()
+        stats['total_alerts'] = alert_result.count if hasattr(alert_result, 'count') else 0
+        
+        # Total drivers
+        driver_result = supabase.table('drivers') \
+            .select('*', count='exact') \
+            .execute()
+        stats['total_drivers'] = driver_result.count if hasattr(driver_result, 'count') else 0
+        
+        # Total guardians
+        guardian_result = supabase.table('guardians') \
+            .select('*', count='exact') \
+            .execute()
+        stats['total_guardians'] = guardian_result.count if hasattr(guardian_result, 'count') else 0
+        
         return jsonify({
             'success': True,
             'statistics': stats,
             'system_status': {
-                'database': 'postgresql',
+                'database': 'supabase',
                 'connected_clients': len(connected_clients),
                 'admin_sessions': len(admin_sessions),
                 'server_time': datetime.now().isoformat(),
@@ -4499,119 +4355,118 @@ def debug_login_flow():
             result['success'] = False
             return jsonify(result)
         
-        # Step 4: Check database
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # First check what's in the database
-            cursor.execute('SELECT phone, guardian_id FROM guardians ORDER BY guardian_id DESC LIMIT 5')
-            all_users = cursor.fetchall()
-            
-            result['steps'].append({
-                'step': 4,
-                'action': 'Database check - all users',
-                'all_users_in_db': [dict(user) for user in all_users]
-            })
-            
-            # Now search for our phone
-            cursor.execute('''
-                SELECT guardian_id, full_name, password_hash, is_active
-                FROM guardians 
-                WHERE phone = %s
-            ''', (lookup_phone,))
-            
-            db_result = cursor.fetchone()
-            
-            if not db_result:
-                result['steps'].append({
-                    'step': 5,
-                    'action': 'User not found in database',
-                    'lookup_phone_used': lookup_phone,
-                    'user_found': False
-                })
-                result['error'] = f'No user found with phone: {lookup_phone}'
-                result['success'] = False
-                return jsonify(result)
-            
-            # Handle both dict and tuple
-            if isinstance(db_result, dict):
-                guardian_id = db_result['guardian_id']
-                full_name = db_result['full_name']
-                stored_hash = db_result['password_hash']
-                is_active = db_result['is_active']
-            else:
-                guardian_id, full_name, stored_hash, is_active = db_result
-            
+        # Step 4: Check database with Supabase
+        if not supabase:
+            result['error'] = 'Supabase not initialized'
+            result['success'] = False
+            return jsonify(result)
+        
+        # First check what's in the database
+        all_users_result = supabase.table('guardians') \
+            .select('phone, guardian_id') \
+            .order('guardian_id', desc=True) \
+            .limit(5) \
+            .execute()
+        
+        result['steps'].append({
+            'step': 4,
+            'action': 'Database check - all users',
+            'all_users_in_db': all_users_result.data if all_users_result.data else []
+        })
+        
+        # Now search for our phone
+        user_result = supabase.table('guardians') \
+            .select('guardian_id, full_name, password_hash, is_active') \
+            .eq('phone', lookup_phone) \
+            .execute()
+        
+        if not user_result.data or len(user_result.data) == 0:
             result['steps'].append({
                 'step': 5,
-                'action': 'User found in database',
-                'guardian_id': guardian_id,
-                'full_name': full_name,
-                'is_active': is_active,
-                'stored_hash_preview': stored_hash[:30] + '...' if stored_hash else 'None',
-                'hash_length': len(stored_hash) if stored_hash else 0,
-                'is_bcrypt': stored_hash.startswith('$2') if stored_hash else False
+                'action': 'User not found in database',
+                'lookup_phone_used': lookup_phone,
+                'user_found': False
             })
+            result['error'] = f'No user found with phone: {lookup_phone}'
+            result['success'] = False
+            return jsonify(result)
+        
+        user_data = user_result.data[0]
+        guardian_id = user_data['guardian_id']
+        full_name = user_data['full_name']
+        stored_hash = user_data['password_hash']
+        is_active = user_data['is_active']
+        
+        result['steps'].append({
+            'step': 5,
+            'action': 'User found in database',
+            'guardian_id': guardian_id,
+            'full_name': full_name,
+            'is_active': is_active,
+            'stored_hash_preview': stored_hash[:30] + '...' if stored_hash else 'None',
+            'hash_length': len(stored_hash) if stored_hash else 0,
+            'is_bcrypt': stored_hash.startswith('$2') if stored_hash else False
+        })
+        
+        if not is_active:
+            result['error'] = 'Account is not active'
+            result['success'] = False
+            return jsonify(result)
+        
+        # Step 6: Clean password
+        cleaned_password = clean_password(password)
+        result['steps'].append({
+            'step': 6,
+            'action': 'Clean password',
+            'cleaned_password': '***' + cleaned_password[-3:] if len(cleaned_password) > 3 else '***',
+            'cleaned_length': len(cleaned_password)
+        })
+        
+        # Step 7: Manual verification
+        try:
+            password_bytes = cleaned_password.encode('utf-8')
+            hash_bytes = stored_hash.encode('utf-8')
             
-            if not is_active:
-                result['error'] = 'Account is not active'
-                result['success'] = False
-                return jsonify(result)
+            manual_verify = bcrypt.checkpw(password_bytes, hash_bytes)
             
-            # Step 6: Clean password
-            cleaned_password = clean_password(password)
             result['steps'].append({
-                'step': 6,
-                'action': 'Clean password',
-                'cleaned_password': '***' + cleaned_password[-3:] if len(cleaned_password) > 3 else '***',
-                'cleaned_length': len(cleaned_password)
+                'step': 7,
+                'action': 'Manual bcrypt.checkpw verification',
+                'result': manual_verify,
+                'method': 'bcrypt.checkpw(password_bytes, hash_bytes)'
             })
             
-            # Step 7: Manual verification
-            try:
-                password_bytes = cleaned_password.encode('utf-8')
-                hash_bytes = stored_hash.encode('utf-8')
-                
-                manual_verify = bcrypt.checkpw(password_bytes, hash_bytes)
-                
-                result['steps'].append({
-                    'step': 7,
-                    'action': 'Manual bcrypt.checkpw verification',
-                    'result': manual_verify,
-                    'method': 'bcrypt.checkpw(password_bytes, hash_bytes)'
-                })
-                
-                # Step 8: Use verify_password function
-                func_verify = verify_password(password, stored_hash)
-                
-                result['steps'].append({
-                    'step': 8,
-                    'action': 'verify_password() function',
-                    'result': func_verify,
-                    'method': 'verify_password(password, stored_hash)'
-                })
-                
-                result['final_verification'] = {
-                    'manual_bcrypt': manual_verify,
-                    'verify_password_func': func_verify,
-                    'should_login_succeed': manual_verify and func_verify
-                }
-                
-                if manual_verify and func_verify:
-                    result['login_possible'] = True
-                    result['message'] = 'Password verification successful - login should work'
-                else:
-                    result['login_possible'] = False
-                    result['message'] = 'Password verification failed'
-                
-            except Exception as verify_error:
-                result['steps'].append({
-                    'step': 7,
-                    'action': 'Verification error',
-                    'error': str(verify_error)
-                })
-                result['error'] = f'Verification error: {verify_error}'
-                result['success'] = False
+            # Step 8: Use verify_password function
+            func_verify = verify_password(password, stored_hash)
+            
+            result['steps'].append({
+                'step': 8,
+                'action': 'verify_password() function',
+                'result': func_verify,
+                'method': 'verify_password(password, stored_hash)'
+            })
+            
+            result['final_verification'] = {
+                'manual_bcrypt': manual_verify,
+                'verify_password_func': func_verify,
+                'should_login_succeed': manual_verify and func_verify
+            }
+            
+            if manual_verify and func_verify:
+                result['login_possible'] = True
+                result['message'] = 'Password verification successful - login should work'
+            else:
+                result['login_possible'] = False
+                result['message'] = 'Password verification failed'
+            
+        except Exception as verify_error:
+            result['steps'].append({
+                'step': 7,
+                'action': 'Verification error',
+                'error': str(verify_error)
+            })
+            result['error'] = f'Verification error: {verify_error}'
+            result['success'] = False
             
         return jsonify(result)
                 
@@ -4624,51 +4479,18 @@ def debug_login_flow():
 
 @app.route('/api/fix-db-schema', methods=['POST'])
 def fix_db_schema():
-    """Fix database schema by adding missing columns"""
-    try:
-        with get_db_cursor() as cursor:
-            # Check current schema
-            cursor.execute('''
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'guardians'
-            ''')
-            columns = [row[0] for row in cursor.fetchall()]
-            
-            fixes = []
-            
-            # Add google_id if missing
-            if 'google_id' not in columns:
-                cursor.execute('ALTER TABLE guardians ADD COLUMN google_id TEXT UNIQUE')
-                fixes.append('Added google_id column')
-            
-            # Add auth_provider if missing
-            if 'auth_provider' not in columns:
-                cursor.execute('ALTER TABLE guardians ADD COLUMN auth_provider TEXT DEFAULT \'phone\'')
-                fixes.append('Added auth_provider column')
-            
-            # Check again
-            cursor.execute('''
-                SELECT column_name, data_type, is_nullable
-                FROM information_schema.columns 
-                WHERE table_name = 'guardians'
-                ORDER BY ordinal_position
-            ''')
-            final_schema = cursor.fetchall()
-            
-            return jsonify({
-                'success': True,
-                'fixes_applied': fixes,
-                'final_schema': [dict(zip(['column_name', 'data_type', 'is_nullable'], row)) for row in final_schema],
-                'message': 'Schema fixes applied successfully'
-            })
-            
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }), 500
+    """Check Supabase schema - tables should be created via SQL editor"""
+    return jsonify({
+        'success': True,
+        'message': 'Schema fixes should be applied via Supabase SQL editor',
+        'instructions': [
+            'ALTER TABLE guardians ADD COLUMN IF NOT EXISTS google_id TEXT UNIQUE;',
+            'ALTER TABLE guardians ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT \'phone\';',
+            'ALTER TABLE drivers ADD COLUMN IF NOT EXISTS face_embedding JSONB;',
+            'CREATE INDEX IF NOT EXISTS idx_guardians_google ON guardians(google_id);',
+            'CREATE INDEX IF NOT EXISTS idx_drivers_face_embedding ON drivers((face_embedding IS NOT NULL)) WHERE face_embedding IS NOT NULL;'
+        ]
+    })
 
 # ==================== CLOUDINARY TEST ENDPOINT ====================
 @app.route('/api/test-cloudinary', methods=['POST'])
@@ -4737,18 +4559,16 @@ def test_cloudinary():
 def add_face_embedding_column():
     """Add face_embedding column to drivers table if it doesn't exist"""
     try:
-        with get_db_cursor() as cursor:
-            cursor.execute("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name='drivers' AND column_name='face_embedding'
-            """)
-            if not cursor.fetchone():
-                print("📝 Adding face_embedding column to drivers table...")
-                cursor.execute("ALTER TABLE drivers ADD COLUMN face_embedding JSONB")
-                print("✅ face_embedding column added")
+        if not supabase:
+            print("⚠️ Supabase not initialized, can't add column")
+            return
+            
+        # This should be done via SQL editor, but we'll check if it exists
+        result = supabase.table('drivers').select('face_embedding').limit(1).execute()
+        print("✅ face_embedding column exists in drivers table")
     except Exception as e:
-        print(f"⚠️ Could not add face_embedding column: {e}")
+        print(f"⚠️ Could not verify face_embedding column: {e}")
+        print("   Please run in Supabase SQL editor: ALTER TABLE drivers ADD COLUMN face_embedding JSONB;")
 
 
 #region Start Task
@@ -4759,7 +4579,7 @@ def startup_tasks():
     print(f"{'='*70}")
     
     print("🌐 DEPLOYMENT: Firebase Hosting + Render Backend")
-    print("📊 Database: PostgreSQL (Persistent)")
+    print("📊 Database: Supabase PostgreSQL")
     print("🔒 Security: bcrypt password hashing enabled")
     print("☁️  Cloudinary: Image storage enabled" if CLOUDINARY_ENABLED else "⚠️  Cloudinary: Not configured")
     print("🔥 Firebase: Hosting integration enabled")
@@ -4767,21 +4587,12 @@ def startup_tasks():
     # Check environment variables
     print("\n🔧 Environment Check:")
     
-    # Get and mask database URL for security
-    database_url = os.environ.get('DATABASE_URL')
-    if database_url:
-        try:
-            # Parse URL to mask password
-            parsed_url = urllib.parse.urlparse(database_url)
-            if parsed_url.password:
-                masked_url = database_url.replace(parsed_url.password, '******')
-                print(f"   ✅ DATABASE_URL: {masked_url}")
-            else:
-                print(f"   ✅ DATABASE_URL: [configured]")
-        except:
-            print(f"   ✅ DATABASE_URL: [configured]")
+    # Check Supabase config
+    if SUPABASE_URL and SUPABASE_KEY:
+        print(f"   ✅ SUPABASE_URL: [configured]")
+        print(f"   ✅ SUPABASE_KEY: [configured]")
     else:
-        print("❌ DATABASE_URL not found")
+        print("❌ Supabase configuration missing")
     
     # Check Google OAuth config
     google_client_id = os.environ.get('GOOGLE_CLIENT_ID')
@@ -4808,7 +4619,7 @@ def startup_tasks():
     print(f"   ✅ Frontend URL: https://guardian-drive-app.web.app")
     print(f"   ✅ Allowed Origins: {len(ALLOWED_ORIGINS)} domains configured")
     
-    # ===== NEW: Add face embedding column =====
+    # Face recognition setup
     print("\n🔧 Face Recognition Setup:")
     try:
         add_face_embedding_column()
@@ -4823,17 +4634,16 @@ def startup_tasks():
             print(f"   ⚠️ DeepFace not available: {e}")
     except Exception as e:
         print(f"   ⚠️ Face recognition setup error: {e}")
-    # ==========================================
     
     # Database initialization
     print("\n🗄️  Database Initialization:")
     try:
         if init_db():
-            print("✅ Database initialized successfully")
+            print("✅ Supabase connection verified")
         else:
-            print("⚠️ Database initialization had issues")
+            print("⚠️ Supabase connection had issues")
         
-        # Update schema for google_id column
+        # Update schema check
         print("\n🔧 Schema Updates:")
         update_db_schema()
     except Exception as e:
@@ -4855,7 +4665,7 @@ def startup_tasks():
     # Check if running in Render
     render_env = os.environ.get('RENDER', '')
     if render_env:
-        print(f"   ✅ Running on Render.com")
+        print(f"   ✅ Running on Render.com with Supabase")
         print(f"   Firebase Frontend: https://guardian-drive-app.web.app")
     else:
         print(f"   ⚠️  Not running on Render (local development)")
@@ -4872,10 +4682,8 @@ def startup_tasks():
         ("GET", "/api/guardian/dashboard", "Guardian dashboard"),
         ("POST", "/api/admin/login", "Admin login"),
         ("POST", "/api/test-cloudinary", "Test Cloudinary upload"),
-        # ===== NEW: Face recognition endpoints =====
         ("POST", "/api/identify-driver", "Identify driver by face"),
         ("POST", "/api/driver/<driver_id>/generate-embedding", "Generate face embedding"),
-        # ===========================================
     ]
     
     for method, path, desc in endpoints:
@@ -4893,29 +4701,6 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     host = '0.0.0.0'
     
-    print(f"\n{'='*70}")
-    print("🚀 STARTING DRIVER ALERT SYSTEM BACKEND")
-    print(f"{'='*70}")
-    print(f"📡 REST API: https://driver-drowsiness-with-alert.onrender.com/api/")
-    print(f"🔌 WebSocket: wss://driver-drowsiness-with-alert.onrender.com/socket.io/")
-    print(f"🔥 Firebase Frontend: https://guardian-drive-app.web.app")
-    print(f"🐍 Python Version: 3.10.11")
-    print(f"📦 Flask Version: 2.3.3")
-    print(f"📦 Flask-SocketIO: 5.3.4")
-    print(f"📦 Eventlet: 0.33.3")
-    print(f"📦 dnspython: 2.3.0 (Python 3.10 compatible)")
-    print(f"🌐 Host: {host}")
-    print(f"🔌 Port: {port}")
-    print(f"🔐 Google OAuth: {'Enabled' if GOOGLE_CLIENT_ID else 'Disabled'}")
-    print(f"☁️  Cloudinary: {'Enabled' if CLOUDINARY_ENABLED else 'Disabled'}")
-    print(f"📊 Database: PostgreSQL")
-    print(f"⚡ Async Mode: eventlet")
-    print(f"📡 WebSocket Transports: polling → websocket")
-    print(f"📡 WebSocket Path: /socket.io/")
-    print(f"🔌 Allowed Origins: {len(ALLOWED_ORIGINS)} domains")
-    print(f"{'='*70}\n")
-    
-    # Force DNS resolution for Render - FIX for Python 3.10
     try:
         import dns.resolver
         dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
@@ -5033,6 +4818,8 @@ if __name__ == '__main__':
             print("   Make sure the following environment variables are set:")
             print("   - PYTHON_VERSION=3.10.11")
             print("   - PORT=5000")
+            print("   - SUPABASE_URL=your-supabase-url")
+            print("   - SUPABASE_KEY=your-supabase-key")
             print("   - WEBSOCKET_ENABLED=true")
             sys.exit(1)
             
