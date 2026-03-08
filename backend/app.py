@@ -1290,7 +1290,7 @@ def handle_disconnect():
 
 @socketio.on('guardian_authenticate')
 def handle_guardian_auth(data):
-    """Guardian authentication via WebSocket - COMPLETE FIXED VERSION"""
+    """Guardian authentication via WebSocket - FIXED VERSION"""
     client_id = request.sid
     guardian_id = data.get('guardian_id')
     token = data.get('token')
@@ -1309,62 +1309,40 @@ def handle_guardian_auth(data):
         emit('auth_failed', {'error': 'Missing guardian_id or token'})
         return
     
-    # Validate session (works for both phone and Google auth)
+    # Validate session
     is_valid = validate_session(guardian_id, token)
     
     if is_valid:
         print(f"   ✅ Session validated successfully")
         
-        # Check for existing connection and disconnect it
-        for existing_id, client_info in list(connected_clients.items()):
-            if (client_info.get('guardian_id') == guardian_id and 
-                client_info.get('authenticated') and 
-                existing_id != client_id):
-                print(f"   Disconnecting old connection: {existing_id}")
-                try:
-                    socketio.disconnect(existing_id, silent=True)
-                except:
-                    pass
-                if existing_id in connected_clients:
-                    del connected_clients[existing_id]
+        # CRITICAL: Store in connected_clients BEFORE joining room
+        connected_clients[client_id] = {
+            'connected_at': datetime.now(),
+            'ip': request.remote_addr,
+            'type': 'guardian',
+            'guardian_id': guardian_id,
+            'authenticated': True,
+            'auth_time': datetime.now(),
+            'auth_provider': auth_provider,
+            'last_ping': datetime.now(),
+            'user_agent': request.headers.get('User-Agent', 'Unknown'),
+            'origin': request.headers.get('Origin', 'Unknown'),
+            'transport': request.environ.get('HTTP_UPGRADE', 'polling')
+        }
         
-        # Update client info
-        if client_id in connected_clients:
-            connected_clients[client_id].update({
-                'type': 'guardian',
-                'guardian_id': guardian_id,
-                'authenticated': True,
-                'auth_time': datetime.now(),
-                'auth_provider': auth_provider,
-                'last_ping': datetime.now()
-            })
-        else:
-            # Create new client entry
-            connected_clients[client_id] = {
-                'connected_at': datetime.now(),
-                'ip': request.remote_addr,
-                'type': 'guardian',
-                'guardian_id': guardian_id,
-                'authenticated': True,
-                'auth_time': datetime.now(),
-                'auth_provider': auth_provider,
-                'last_ping': datetime.now(),
-                'user_agent': request.headers.get('User-Agent', 'Unknown'),
-                'origin': request.headers.get('Origin', 'Unknown'),
-                'transport': request.environ.get('HTTP_UPGRADE', 'polling')
-            }
+        print(f"   ✅ Client added to connected_clients: {client_id}")
         
-        # CRITICAL: Join guardian room for targeted messages
+        # CRITICAL: Join guardian room
         room_name = f"guardian_{guardian_id}"
         try:
+            # Try both methods to ensure room joining
             socketio.server.enter_room(client_id, room_name)
-            print(f"   ✅ Joined room: {room_name}")
+            print(f"   ✅ Joined room via server.enter_room: {room_name}")
         except Exception as e:
-            print(f"   ⚠️ Error joining room: {e}")
-            # Fallback method
+            print(f"   ⚠️ Error with server.enter_room: {e}")
             try:
                 socketio.enter_room(client_id, room_name)
-                print(f"   ✅ Joined room (fallback): {room_name}")
+                print(f"   ✅ Joined room via socketio.enter_room: {room_name}")
             except Exception as e2:
                 print(f"   ⚠️ Fallback also failed: {e2}")
         
@@ -1389,6 +1367,12 @@ def handle_guardian_auth(data):
                 'timestamp': datetime.now().isoformat(),
                 'message': 'WebSocket authentication successful'
             })
+        
+        # Broadcast to all clients that guardian is online (optional)
+        socketio.emit('guardian_online', {
+            'guardian_id': guardian_id,
+            'timestamp': datetime.now().isoformat()
+        })
         
         print(f"   Current connected clients: {len(connected_clients)}")
         for cid, info in connected_clients.items():
@@ -4825,6 +4809,37 @@ def admin_stats():
             'error': str(e)
         }), 500
 
+@app.route('/api/debug/connected-clients', methods=['GET'])
+def debug_connected_clients():
+    """Debug endpoint to see all connected clients"""
+    try:
+        api_key = request.args.get('api_key')
+        expected_api_key = os.environ.get('CLIENT_API_KEY', 'your_secret_key')
+        
+        if api_key != expected_api_key:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        clients_info = []
+        for client_id, info in connected_clients.items():
+            clients_info.append({
+                'client_id': client_id,
+                'type': info.get('type'),
+                'guardian_id': info.get('guardian_id'),
+                'driver_id': info.get('driver_id'),
+                'driver_name': info.get('driver_name'),
+                'authenticated': info.get('authenticated'),
+                'connected_at': info.get('connected_at').isoformat() if info.get('connected_at') else None,
+                'last_ping': info.get('last_ping').isoformat() if info.get('last_ping') else None,
+                'ip': info.get('ip')
+            })
+        
+        return jsonify({
+            'success': True,
+            'total_clients': len(connected_clients),
+            'clients': clients_info
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 # ==================== DEBUG ENDPOINTS ====================
 @app.route('/api/debug/login-flow', methods=['POST'])
 def debug_login_flow():
