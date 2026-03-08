@@ -1532,51 +1532,6 @@ def handle_driver_auth(data):
     except Exception as e:
         print(f"⚠️ Could not broadcast driver_online: {e}")
     
-@socketio.on('webrtc_ready')
-def handle_webrtc_ready(data):
-    """Handle driver ready signal and notify guardian"""
-    client_id = request.sid
-    client_info = connected_clients.get(client_id, {})
-    
-    print(f"\n📢 WEBRTC READY SIGNAL RECEIVED")
-    print(f"{'='*60}")
-    print(f"   From client: {client_id}")
-    print(f"   Client type: {client_info.get('type')}")
-    print(f"   Full data: {data}")
-    
-    if client_info.get('type') == 'driver':
-        guardian_id = client_info.get('guardian_id')
-        driver_id = client_info.get('driver_id')
-        driver_name = client_info.get('driver_name', 'Unknown')
-        
-        print(f"   Driver: {driver_name} (ID: {driver_id})")
-        print(f"   Notifying guardian: {guardian_id}")
-        
-        # Emit to guardian's room
-        try:
-            room_name = f"guardian_{guardian_id}"
-            socketio.emit('webrtc_ready', {
-                'driver_id': driver_id,
-                'driver_name': driver_name,
-                'guardian_id': guardian_id
-            }, room=room_name)
-            print(f"✅ Notification sent to room {room_name}")
-            
-            # Also try to find direct connections
-            for cid, info in connected_clients.items():
-                if info.get('type') == 'guardian' and info.get('guardian_id') == guardian_id:
-                    print(f"   Also sending directly to guardian client: {cid}")
-                    socketio.emit('webrtc_ready', {
-                        'driver_id': driver_id,
-                        'driver_name': driver_name,
-                        'guardian_id': guardian_id
-                    }, room=cid)
-                    
-        except Exception as e:
-            print(f"⚠️ Error sending to guardian: {e}")
-    else:
-        print(f"❌ Not a driver client (type: {client_info.get('type')})")
-
 @socketio.on('webrtc_offer')
 def handle_webrtc_offer(data):
     """Forward WebRTC offer from driver to guardian or vice versa"""
@@ -1736,7 +1691,11 @@ def handle_webrtc_ready(data):
     client_id = request.sid
     client_info = connected_clients.get(client_id, {})
     
-    print(f"\n📢 WebRTC READY signal received from {client_id}")
+    print(f"\n📢 WEBRTC READY SIGNAL RECEIVED")
+    print(f"{'='*60}")
+    print(f"   From client: {client_id}")
+    print(f"   Client type: {client_info.get('type')}")
+    print(f"   Full data: {data}")
     
     if client_info.get('type') == 'driver':
         guardian_id = client_info.get('guardian_id')
@@ -1747,15 +1706,34 @@ def handle_webrtc_ready(data):
         print(f"   Notifying guardian: {guardian_id}")
         
         # Emit to guardian's room
-        socketio.emit('webrtc_ready', {
-            'driver_id': driver_id,
-            'driver_name': driver_name,
-            'guardian_id': guardian_id
-        }, room=f'guardian_{guardian_id}')
-        
-        print(f"✅ Notification sent to guardian_{guardian_id}")
+        try:
+            room_name = f"guardian_{guardian_id}"
+            
+            # First try room
+            socketio.emit('webrtc_ready', {
+                'driver_id': driver_id,
+                'driver_name': driver_name,
+                'guardian_id': guardian_id
+            }, room=room_name)
+            print(f"✅ Notification sent to room {room_name}")
+            
+            # Also send directly to any guardian connections
+            for cid, info in connected_clients.items():
+                if info.get('type') == 'guardian' and str(info.get('guardian_id')) == str(guardian_id):
+                    print(f"   Also sending directly to guardian client: {cid}")
+                    socketio.emit('webrtc_ready', {
+                        'driver_id': driver_id,
+                        'driver_name': driver_name,
+                        'guardian_id': guardian_id
+                    }, room=cid)
+                    
+        except Exception as e:
+            print(f"⚠️ Error sending to guardian: {e}")
+            import traceback
+            traceback.print_exc()
     else:
-        print(f"❌ Not a driver client")
+        print(f"❌ Not a driver client (type: {client_info.get('type')})")
+    print(f"{'='*60}\n")
 
 @socketio.on('webrtc_stop')
 def handle_webrtc_stop(data):
@@ -4008,31 +3986,7 @@ def verify_driver_access(driver_id):
             'error': str(e)
         }), 500
         
-@app.route('/api/webrtc-config', methods=['GET'])
-def get_webrtc_config():
-    """Get WebRTC configuration including TURN servers"""
-    return jsonify({
-        'success': True,
-        'iceServers': [
-            {'urls': 'stun:stun.l.google.com:19302'},
-            {'urls': 'stun:stun1.l.google.com:19302'},
-            {'urls': 'stun:stun2.l.google.com:19302'},
-            {'urls': 'stun:stun3.l.google.com:19302'},
-            {'urls': 'stun:stun4.l.google.com:19302'},
-            # Public TURN servers (for development - replace with your own in production)
-            {
-                'urls': 'turn:openrelay.metered.ca:80',
-                'username': 'openrelayproject',
-                'credential': 'openrelayproject'
-            },
-            {
-                'urls': 'turn:openrelay.metered.ca:443',
-                'username': 'openrelayproject',
-                'credential': 'openrelayproject'
-            }
-        ],
-        'iceCandidatePoolSize': 10
-    })
+        
 
 # ==================== UPDATE GUARDIAN ENDPOINT ====================
 
@@ -4494,6 +4448,13 @@ def debug_guardian_connections(guardian_id):
         guardian_connections = []
         for client_id, info in connected_clients.items():
             if info.get('guardian_id') == guardian_id:
+                # Get room memberships
+                rooms = []
+                try:
+                    rooms = list(socketio.rooms(client_id))
+                except:
+                    pass
+                
                 guardian_connections.append({
                     'client_id': client_id,
                     'type': info.get('type'),
@@ -4501,19 +4462,56 @@ def debug_guardian_connections(guardian_id):
                     'connected_at': info.get('connected_at').isoformat() if info.get('connected_at') else None,
                     'last_ping': info.get('last_ping').isoformat() if info.get('last_ping') else None,
                     'transport': info.get('transport', 'unknown'),
-                    'room_memberships': list(socketio.rooms(client_id)) if hasattr(socketio, 'rooms') else []
+                    'room_memberships': rooms
                 })
         
         return jsonify({
             'success': True,
             'guardian_id': guardian_id,
             'total_connections': len(guardian_connections),
-            'connections': guardian_connections,
-            'all_rooms': list(socketio.rooms(request.sid)) if hasattr(socketio, 'rooms') else []
+            'connections': guardian_connections
         })
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/webrtc-config', methods=['GET'])
+def get_webrtc_config():
+    """Get WebRTC configuration including STUN/TURN servers"""
+    return jsonify({
+        'success': True,
+        'iceServers': [
+            {'urls': 'stun:stun.l.google.com:19302'},
+            {'urls': 'stun:stun1.l.google.com:19302'},
+            {'urls': 'stun:stun2.l.google.com:19302'},
+            {'urls': 'stun:stun3.l.google.com:19302'},
+            {'urls': 'stun:stun4.l.google.com:19302'},
+            {'urls': 'stun:stun.ekiga.net'},
+            {'urls': 'stun:stun.ideasip.com'},
+            {'urls': 'stun:stun.schlund.de'},
+            {'urls': 'stun:stun.stunprotocol.org:3478'},
+            {'urls': 'stun:stun.voiparound.com'},
+            {'urls': 'stun:stun.voipbuster.com'},
+            # Free TURN servers for development
+            {
+                'urls': 'turn:openrelay.metered.ca:80',
+                'username': 'openrelayproject',
+                'credential': 'openrelayproject'
+            },
+            {
+                'urls': 'turn:openrelay.metered.ca:443',
+                'username': 'openrelayproject',
+                'credential': 'openrelayproject'
+            },
+            {
+                'urls': 'turn:openrelay.metered.ca:443?transport=tcp',
+                'username': 'openrelayproject',
+                'credential': 'openrelayproject'
+            }
+        ],
+        'iceCandidatePoolSize': 10,
+        'iceTransportPolicy': 'all'
+    })
 
 @app.route('/api/guardian/active-drivers', methods=['GET'])
 def get_active_drivers():
