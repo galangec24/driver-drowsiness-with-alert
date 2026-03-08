@@ -1303,7 +1303,6 @@ def handle_guardian_auth(data):
     print(f"   Guardian ID: {guardian_id}")
     print(f"   Auth Provider: {auth_provider}")
     print(f"   Token present: {bool(token)}")
-    print(f"   Token length: {len(token) if token else 0}")
     
     if not guardian_id or not token:
         print(f"❌ Missing credentials from client {client_id}")
@@ -1331,12 +1330,14 @@ def handle_guardian_auth(data):
         
         # Update client info
         if client_id in connected_clients:
-            connected_clients[client_id]['type'] = 'guardian'
-            connected_clients[client_id]['guardian_id'] = guardian_id
-            connected_clients[client_id]['authenticated'] = True
-            connected_clients[client_id]['auth_time'] = datetime.now()
-            connected_clients[client_id]['auth_provider'] = auth_provider
-            connected_clients[client_id]['last_ping'] = datetime.now()
+            connected_clients[client_id].update({
+                'type': 'guardian',
+                'guardian_id': guardian_id,
+                'authenticated': True,
+                'auth_time': datetime.now(),
+                'auth_provider': auth_provider,
+                'last_ping': datetime.now()
+            })
         else:
             # Create new client entry
             connected_clients[client_id] = {
@@ -1353,16 +1354,17 @@ def handle_guardian_auth(data):
                 'transport': request.environ.get('HTTP_UPGRADE', 'polling')
             }
         
-        # Join guardian room for targeted messages - FIXED: use server.enter_room
+        # CRITICAL: Join guardian room for targeted messages
+        room_name = f"guardian_{guardian_id}"
         try:
-            socketio.server.enter_room(client_id, f"guardian_{guardian_id}")
-            print(f"   ✅ Joined room: guardian_{guardian_id}")
+            socketio.server.enter_room(client_id, room_name)
+            print(f"   ✅ Joined room: {room_name}")
         except Exception as e:
             print(f"   ⚠️ Error joining room: {e}")
             # Fallback method
             try:
-                socketio.enter_room(client_id, f"guardian_{guardian_id}")
-                print(f"   ✅ Joined room (fallback): guardian_{guardian_id}")
+                socketio.enter_room(client_id, room_name)
+                print(f"   ✅ Joined room (fallback): {room_name}")
             except Exception as e2:
                 print(f"   ⚠️ Fallback also failed: {e2}")
         
@@ -1540,6 +1542,7 @@ def handle_webrtc_ready(data):
     print(f"{'='*60}")
     print(f"   From client: {client_id}")
     print(f"   Client type: {client_info.get('type')}")
+    print(f"   Full data: {data}")
     
     if client_info.get('type') == 'driver':
         guardian_id = client_info.get('guardian_id')
@@ -1551,12 +1554,24 @@ def handle_webrtc_ready(data):
         
         # Emit to guardian's room
         try:
+            room_name = f"guardian_{guardian_id}"
             socketio.emit('webrtc_ready', {
                 'driver_id': driver_id,
                 'driver_name': driver_name,
                 'guardian_id': guardian_id
-            }, room=f'guardian_{guardian_id}')
-            print(f"✅ Notification sent to guardian_{guardian_id}")
+            }, room=room_name)
+            print(f"✅ Notification sent to room {room_name}")
+            
+            # Also try to find direct connections
+            for cid, info in connected_clients.items():
+                if info.get('type') == 'guardian' and info.get('guardian_id') == guardian_id:
+                    print(f"   Also sending directly to guardian client: {cid}")
+                    socketio.emit('webrtc_ready', {
+                        'driver_id': driver_id,
+                        'driver_name': driver_name,
+                        'guardian_id': guardian_id
+                    }, room=cid)
+                    
         except Exception as e:
             print(f"⚠️ Error sending to guardian: {e}")
     else:
@@ -4465,6 +4480,40 @@ def debug_check_key():
         'environment': os.environ.get('RENDER', 'local'),
         'all_env_keys': list(os.environ.keys())  # See what env vars are available
     })
+
+@app.route('/api/debug/guardian/<guardian_id>/connections', methods=['GET'])
+def debug_guardian_connections(guardian_id):
+    """Debug endpoint to check guardian's socket connections"""
+    try:
+        api_key = request.args.get('api_key')
+        expected_api_key = os.environ.get('CLIENT_API_KEY', 'your_secret_key')
+        
+        if api_key != expected_api_key:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        guardian_connections = []
+        for client_id, info in connected_clients.items():
+            if info.get('guardian_id') == guardian_id:
+                guardian_connections.append({
+                    'client_id': client_id,
+                    'type': info.get('type'),
+                    'authenticated': info.get('authenticated'),
+                    'connected_at': info.get('connected_at').isoformat() if info.get('connected_at') else None,
+                    'last_ping': info.get('last_ping').isoformat() if info.get('last_ping') else None,
+                    'transport': info.get('transport', 'unknown'),
+                    'room_memberships': list(socketio.rooms(client_id)) if hasattr(socketio, 'rooms') else []
+                })
+        
+        return jsonify({
+            'success': True,
+            'guardian_id': guardian_id,
+            'total_connections': len(guardian_connections),
+            'connections': guardian_connections,
+            'all_rooms': list(socketio.rooms(request.sid)) if hasattr(socketio, 'rooms') else []
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/guardian/active-drivers', methods=['GET'])
 def get_active_drivers():
