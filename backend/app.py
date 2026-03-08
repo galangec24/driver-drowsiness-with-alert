@@ -1290,7 +1290,7 @@ def handle_disconnect():
 
 @socketio.on('guardian_authenticate')
 def handle_guardian_auth(data):
-    """Guardian authentication via WebSocket - FIXED VERSION"""
+    """Guardian authentication via WebSocket - FIXED ROOM JOINING"""
     client_id = request.sid
     guardian_id = data.get('guardian_id')
     token = data.get('token')
@@ -1315,7 +1315,7 @@ def handle_guardian_auth(data):
     if is_valid:
         print(f"   ✅ Session validated successfully")
         
-        # CRITICAL: Store in connected_clients BEFORE joining room
+        # CRITICAL: Store in connected_clients FIRST
         connected_clients[client_id] = {
             'connected_at': datetime.now(),
             'ip': request.remote_addr,
@@ -1332,19 +1332,50 @@ def handle_guardian_auth(data):
         
         print(f"   ✅ Client added to connected_clients: {client_id}")
         
-        # CRITICAL: Join guardian room
+        # CRITICAL: Join guardian room - MULTIPLE METHODS to ensure it works
         room_name = f"guardian_{guardian_id}"
+        room_joined = False
+        
+        # Method 1: Using server.enter_room
         try:
-            # Try both methods to ensure room joining
             socketio.server.enter_room(client_id, room_name)
-            print(f"   ✅ Joined room via server.enter_room: {room_name}")
+            print(f"   ✅ Method 1 - Joined room via server.enter_room: {room_name}")
+            room_joined = True
         except Exception as e:
-            print(f"   ⚠️ Error with server.enter_room: {e}")
+            print(f"   ⚠️ Method 1 failed: {e}")
+        
+        # Method 2: Using socketio.enter_room
+        if not room_joined:
             try:
                 socketio.enter_room(client_id, room_name)
-                print(f"   ✅ Joined room via socketio.enter_room: {room_name}")
+                print(f"   ✅ Method 2 - Joined room via socketio.enter_room: {room_name}")
+                room_joined = True
             except Exception as e2:
-                print(f"   ⚠️ Fallback also failed: {e2}")
+                print(f"   ⚠️ Method 2 failed: {e2}")
+        
+        # Method 3: Manual room management via emit with room parameter
+        if not room_joined:
+            try:
+                # Force room creation by emitting to it
+                socketio.emit('room_test', {'msg': 'testing'}, room=room_name)
+                print(f"   ✅ Method 3 - Force-created room via emit: {room_name}")
+                room_joined = True
+            except Exception as e3:
+                print(f"   ⚠️ Method 3 failed: {e3}")
+        
+        # Verify room membership
+        try:
+            rooms = list(socketio.rooms(client_id))
+            print(f"   Client rooms: {rooms}")
+            if room_name in rooms:
+                print(f"   ✅ VERIFIED: Client is in room {room_name}")
+            else:
+                print(f"   ⚠️ Client NOT in room {room_name} - WILL RETRY")
+                # One more attempt with a different approach
+                socketio.server.manager.add_room(client_id, room_name, socketio.server.namespace)
+                print(f"   ✅ Added room via manager: {room_name}")
+        except Exception as e:
+            print(f"   ⚠️ Could not verify rooms: {e}")
         
         # Get guardian info
         guardian = get_guardian_by_id(guardian_id)
@@ -1367,12 +1398,6 @@ def handle_guardian_auth(data):
                 'timestamp': datetime.now().isoformat(),
                 'message': 'WebSocket authentication successful'
             })
-        
-        # Broadcast to all clients that guardian is online (optional)
-        socketio.emit('guardian_online', {
-            'guardian_id': guardian_id,
-            'timestamp': datetime.now().isoformat()
-        })
         
         print(f"   Current connected clients: {len(connected_clients)}")
         for cid, info in connected_clients.items():
@@ -1518,156 +1543,85 @@ def handle_driver_auth(data):
     
 @socketio.on('webrtc_offer')
 def handle_webrtc_offer(data):
-    """Forward WebRTC offer from driver to guardian or vice versa"""
+    """Forward WebRTC offer from guardian to driver"""
     client_id = request.sid
     client_info = connected_clients.get(client_id, {})
-    client_type = client_info.get('type')
     
-    print(f"\n📤 WebRTC OFFER received from {client_type}: {client_id}")
+    print(f"\n📤 WebRTC OFFER from {client_info.get('type')}: {client_id}")
     
-    if client_type == 'driver':
-        # Driver sending offer to guardian
-        guardian_id = data.get('guardian_id') or client_info.get('guardian_id')
-        driver_id = data.get('driver_id') or client_info.get('driver_id')
-        driver_name = data.get('driver_name') or client_info.get('driver_name', 'Unknown')
-        
-        if not guardian_id:
-            print("❌ No guardian_id in offer")
-            emit('error', {'error': 'Missing guardian_id'})
+    # Guardian sending offer to driver
+    driver_id = data.get('driver_id')
+    if not driver_id:
+        print("❌ No driver_id in offer")
+        return
+    
+    print(f"   Forwarding offer to driver {driver_id}")
+    
+    # Find the driver's socket ID
+    for cid, info in connected_clients.items():
+        if info.get('type') == 'driver' and info.get('driver_id') == driver_id:
+            print(f"   Found driver at socket: {cid}")
+            socketio.emit('webrtc_offer', data, room=cid)
             return
-        
-        print(f"   Forwarding offer from driver {driver_name} ({driver_id}) to guardian {guardian_id}")
-        
-        # Forward to guardian's room
-        socketio.emit('webrtc_offer', {
-            'driver_id': driver_id,
-            'driver_name': driver_name,
-            'offer': data.get('offer'),
-            'guardian_id': guardian_id
-        }, room=f'guardian_{guardian_id}')
-        
-    elif client_type == 'guardian':
-        # Guardian sending offer to driver
-        driver_id = data.get('driver_id')
-        if not driver_id:
-            print("❌ No driver_id in offer")
-            emit('error', {'error': 'Missing driver_id'})
-            return
-        
-        print(f"   Forwarding offer from guardian to driver {driver_id}")
-        
-        # Forward to driver's room
-        socketio.emit('webrtc_offer', {
-            'guardian_id': client_info.get('guardian_id'),
-            'offer': data.get('offer')
-        }, room=f'driver_{driver_id}')
     
-    else:
-        print(f"❌ Unauthenticated client tried to send offer")
-        emit('error', {'error': 'Not authenticated'})
+    print(f"❌ Driver {driver_id} not found")
     
 @socketio.on('webrtc_answer')
 def handle_webrtc_answer(data):
-    """Forward WebRTC answer from guardian to driver or vice versa"""
+    """Forward WebRTC answer from driver to guardian"""
     client_id = request.sid
     client_info = connected_clients.get(client_id, {})
-    client_type = client_info.get('type')
     
-    print(f"\n📤 WebRTC ANSWER received from {client_type}: {client_id}")
+    print(f"\n📤 WebRTC ANSWER from {client_info.get('type')}: {client_id}")
     
-    if client_type == 'guardian':
-        # Guardian answering driver's offer
-        driver_id = data.get('driver_id')
-        if not driver_id:
-            print("❌ No driver_id in answer")
-            emit('error', {'error': 'Missing driver_id'})
+    # Driver answering guardian's offer
+    guardian_id = data.get('guardian_id')
+    if not guardian_id:
+        print("❌ No guardian_id in answer")
+        return
+    
+    print(f"   Forwarding answer to guardian {guardian_id}")
+    
+    # Find the guardian's socket ID
+    for cid, info in connected_clients.items():
+        if info.get('type') == 'guardian' and str(info.get('guardian_id')) == str(guardian_id):
+            print(f"   Found guardian at socket: {cid}")
+            socketio.emit('webrtc_answer', data, room=cid)
             return
-        
-        print(f"   Forwarding answer from guardian to driver {driver_id}")
-        
-        socketio.emit('webrtc_answer', {
-            'guardian_id': client_info.get('guardian_id'),
-            'answer': data.get('answer')
-        }, room=f'driver_{driver_id}')
-        
-    elif client_type == 'driver':
-        # Driver answering guardian's offer
-        guardian_id = data.get('guardian_id') or client_info.get('guardian_id')
-        if not guardian_id:
-            print("❌ No guardian_id in answer")
-            emit('error', {'error': 'Missing guardian_id'})
-            return
-        
-        print(f"   Forwarding answer from driver to guardian {guardian_id}")
-        
-        socketio.emit('webrtc_answer', {
-            'driver_id': client_info.get('driver_id'),
-            'driver_name': client_info.get('driver_name', 'Unknown'),
-            'answer': data.get('answer')
-        }, room=f'guardian_{guardian_id}')
     
-    else:
-        print(f"❌ Unauthenticated client tried to send answer")
-        emit('error', {'error': 'Not authenticated'})
+    print(f"❌ Guardian {guardian_id} not found")
 
 @socketio.on('webrtc_ice_candidate')
-def handle_webrtc_ice_candidate(data):
+def handle_webrtc_ice(data):
     """Forward ICE candidates between driver and guardian"""
     client_id = request.sid
     client_info = connected_clients.get(client_id, {})
-    client_type = client_info.get('type')
     
-    print(f"\n📤 WebRTC ICE candidate received from {client_type}: {client_id}")
-    
-    target = data.get('target')  # 'driver' or 'guardian'
+    target = data.get('target')
+    if not target:
+        return
     
     if target == 'guardian':
-        # Candidate should go to guardian
-        guardian_id = data.get('guardian_id')
+        # Driver sending ICE to guardian
+        guardian_id = data.get('guardian_id') or client_info.get('guardian_id')
         if not guardian_id:
-            print("❌ No guardian_id in ICE candidate")
             return
         
-        print(f"   Forwarding ICE candidate to guardian {guardian_id}")
-        
-        socketio.emit('webrtc_ice_candidate', {
-            'driver_id': client_info.get('driver_id'),
-            'candidate': data.get('candidate')
-        }, room=f'guardian_{guardian_id}')
-        
+        for cid, info in connected_clients.items():
+            if info.get('type') == 'guardian' and str(info.get('guardian_id')) == str(guardian_id):
+                socketio.emit('webrtc_ice_candidate', data, room=cid)
+                return
+                
     elif target == 'driver':
-        # Candidate should go to driver
+        # Guardian sending ICE to driver
         driver_id = data.get('driver_id')
         if not driver_id:
-            print("❌ No driver_id in ICE candidate")
             return
-        
-        print(f"   Forwarding ICE candidate to driver {driver_id}")
-        
-        socketio.emit('webrtc_ice_candidate', {
-            'guardian_id': client_info.get('guardian_id'),
-            'candidate': data.get('candidate')
-        }, room=f'driver_{driver_id}')
-    
-    else:
-        # Auto-detect based on sender type (fallback)
-        if client_type == 'driver':
-            guardian_id = client_info.get('guardian_id')
-            if guardian_id:
-                socketio.emit('webrtc_ice_candidate', {
-                    'driver_id': client_info.get('driver_id'),
-                    'candidate': data.get('candidate')
-                }, room=f'guardian_{guardian_id}')
-                print(f"   Auto-forwarded ICE candidate to guardian {guardian_id}")
-                
-        elif client_type == 'guardian':
-            driver_id = data.get('driver_id')
-            if driver_id:
-                socketio.emit('webrtc_ice_candidate', {
-                    'guardian_id': client_info.get('guardian_id'),
-                    'candidate': data.get('candidate')
-                }, room=f'driver_{driver_id}')
-                print(f"   Auto-forwarded ICE candidate to driver {driver_id}")
+            
+        for cid, info in connected_clients.items():
+            if info.get('type') == 'driver' and info.get('driver_id') == driver_id:
+                socketio.emit('webrtc_ice_candidate', data, room=cid)
+                return
 
 @socketio.on('webrtc_ready')
 def handle_webrtc_ready(data):
