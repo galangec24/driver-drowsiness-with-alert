@@ -196,6 +196,42 @@ socketio = SocketIO(
     websocket_ping_interval=25,
     websocket_ping_timeout=60
 )
+
+def monitor_webrtc_connections():
+    """Background task to monitor WebRTC connections and clean up stale ones"""
+    while True:
+        time.sleep(30)  # Check every 30 seconds
+        try:
+            current_time = datetime.now()
+            stale_connections = []
+            
+            for client_id, info in connected_clients.items():
+                # Check if connection is stale (no ping for 60 seconds)
+                last_ping = info.get('last_ping')
+                if last_ping and (current_time - last_ping) > timedelta(seconds=60):
+                    if info.get('type') in ['driver', 'guardian']:
+                        print(f"🧹 Found stale {info.get('type')} connection: {client_id}")
+                        stale_connections.append(client_id)
+            
+            # Remove stale connections
+            for client_id in stale_connections:
+                try:
+                    socketio.disconnect(client_id, silent=True)
+                    if client_id in connected_clients:
+                        del connected_clients[client_id]
+                except:
+                    pass
+            
+            if stale_connections:
+                print(f"   Cleaned up {len(stale_connections)} stale connections")
+                
+        except Exception as e:
+            print(f"⚠️ Error in connection monitor: {e}")
+
+# Start the monitor thread
+threading.Thread(target=monitor_webrtc_connections, daemon=True).start()
+print("✅ WebRTC connection monitor started")
+
 #end Region
 
 @app.route('/socket.io/', methods=['OPTIONS'])
@@ -1525,67 +1561,159 @@ def handle_webrtc_ready(data):
             print(f"⚠️ Error sending to guardian: {e}")
     else:
         print(f"❌ Not a driver client (type: {client_info.get('type')})")
+
+@socketio.on('webrtc_offer')
+def handle_webrtc_offer(data):
+    """Forward WebRTC offer from driver to guardian or vice versa"""
+    client_id = request.sid
+    client_info = connected_clients.get(client_id, {})
+    client_type = client_info.get('type')
+    
+    print(f"\n📤 WebRTC OFFER received from {client_type}: {client_id}")
+    
+    if client_type == 'driver':
+        # Driver sending offer to guardian
+        guardian_id = data.get('guardian_id') or client_info.get('guardian_id')
+        driver_id = data.get('driver_id') or client_info.get('driver_id')
+        driver_name = data.get('driver_name') or client_info.get('driver_name', 'Unknown')
+        
+        if not guardian_id:
+            print("❌ No guardian_id in offer")
+            emit('error', {'error': 'Missing guardian_id'})
+            return
+        
+        print(f"   Forwarding offer from driver {driver_name} ({driver_id}) to guardian {guardian_id}")
+        
+        # Forward to guardian's room
+        socketio.emit('webrtc_offer', {
+            'driver_id': driver_id,
+            'driver_name': driver_name,
+            'offer': data.get('offer'),
+            'guardian_id': guardian_id
+        }, room=f'guardian_{guardian_id}')
+        
+    elif client_type == 'guardian':
+        # Guardian sending offer to driver
+        driver_id = data.get('driver_id')
+        if not driver_id:
+            print("❌ No driver_id in offer")
+            emit('error', {'error': 'Missing driver_id'})
+            return
+        
+        print(f"   Forwarding offer from guardian to driver {driver_id}")
+        
+        # Forward to driver's room
+        socketio.emit('webrtc_offer', {
+            'guardian_id': client_info.get('guardian_id'),
+            'offer': data.get('offer')
+        }, room=f'driver_{driver_id}')
+    
+    else:
+        print(f"❌ Unauthenticated client tried to send offer")
+        emit('error', {'error': 'Not authenticated'})
     
 @socketio.on('webrtc_answer')
 def handle_webrtc_answer(data):
-    """Forward a WebRTC answer from guardian to driver."""
+    """Forward WebRTC answer from guardian to driver or vice versa"""
     client_id = request.sid
     client_info = connected_clients.get(client_id, {})
     client_type = client_info.get('type')
-
+    
+    print(f"\n📤 WebRTC ANSWER received from {client_type}: {client_id}")
+    
     if client_type == 'guardian':
-        # Guardian answering a driver's offer
+        # Guardian answering driver's offer
         driver_id = data.get('driver_id')
         if not driver_id:
+            print("❌ No driver_id in answer")
             emit('error', {'error': 'Missing driver_id'})
             return
-        socketio.emit('webrtc_answer', data, room=f'driver_{driver_id}')
-        print(f"📤 Forwarded answer from guardian to driver {driver_id}")
-
-    elif client_type == 'driver':
-        # Driver answering a guardian's offer (rare, but symmetric)
-        guardian_id = client_info.get('guardian_id')
-        if not guardian_id:
-            emit('error', {'error': 'Unknown guardian'})
-            return
-        socketio.emit('webrtc_answer', data, room=f'guardian_{guardian_id}')
-        print(f"📤 Forwarded answer from driver to guardian {guardian_id}")
-
-    else:
-        emit('error', {'error': 'Unauthenticated client'})
         
-@socketio.on('webrtc_ice_candidate')
-def handle_webrtc_ice(data):
-    """Forward ICE candidates between driver and guardian."""
-    client_id = request.sid
-    client_info = connected_clients.get(client_id, {})
-    client_type = client_info.get('type')
-    target = data.get('target')  # 'driver' or 'guardian'
-
-    if not target:
-        emit('error', {'error': 'Missing target'})
-        return
-
-    if target == 'driver':
-        # Candidate should go to the driver
-        driver_id = data.get('driver_id')
-        if not driver_id:
-            emit('error', {'error': 'Missing driver_id'})
-            return
-        socketio.emit('webrtc_ice_candidate', data, room=f'driver_{driver_id}')
-        print(f"📤 Forwarded ICE candidate to driver {driver_id}")
-
-    elif target == 'guardian':
-        # Candidate should go to the guardian
+        print(f"   Forwarding answer from guardian to driver {driver_id}")
+        
+        socketio.emit('webrtc_answer', {
+            'guardian_id': client_info.get('guardian_id'),
+            'answer': data.get('answer')
+        }, room=f'driver_{driver_id}')
+        
+    elif client_type == 'driver':
+        # Driver answering guardian's offer
         guardian_id = data.get('guardian_id') or client_info.get('guardian_id')
         if not guardian_id:
+            print("❌ No guardian_id in answer")
             emit('error', {'error': 'Missing guardian_id'})
             return
-        socketio.emit('webrtc_ice_candidate', data, room=f'guardian_{guardian_id}')
-        print(f"📤 Forwarded ICE candidate to guardian {guardian_id}")
-
+        
+        print(f"   Forwarding answer from driver to guardian {guardian_id}")
+        
+        socketio.emit('webrtc_answer', {
+            'driver_id': client_info.get('driver_id'),
+            'driver_name': client_info.get('driver_name', 'Unknown'),
+            'answer': data.get('answer')
+        }, room=f'guardian_{guardian_id}')
+    
     else:
-        emit('error', {'error': 'Invalid target'})
+        print(f"❌ Unauthenticated client tried to send answer")
+        emit('error', {'error': 'Not authenticated'})
+
+@socketio.on('webrtc_ice_candidate')
+def handle_webrtc_ice_candidate(data):
+    """Forward ICE candidates between driver and guardian"""
+    client_id = request.sid
+    client_info = connected_clients.get(client_id, {})
+    client_type = client_info.get('type')
+    
+    print(f"\n📤 WebRTC ICE candidate received from {client_type}: {client_id}")
+    
+    target = data.get('target')  # 'driver' or 'guardian'
+    
+    if target == 'guardian':
+        # Candidate should go to guardian
+        guardian_id = data.get('guardian_id')
+        if not guardian_id:
+            print("❌ No guardian_id in ICE candidate")
+            return
+        
+        print(f"   Forwarding ICE candidate to guardian {guardian_id}")
+        
+        socketio.emit('webrtc_ice_candidate', {
+            'driver_id': client_info.get('driver_id'),
+            'candidate': data.get('candidate')
+        }, room=f'guardian_{guardian_id}')
+        
+    elif target == 'driver':
+        # Candidate should go to driver
+        driver_id = data.get('driver_id')
+        if not driver_id:
+            print("❌ No driver_id in ICE candidate")
+            return
+        
+        print(f"   Forwarding ICE candidate to driver {driver_id}")
+        
+        socketio.emit('webrtc_ice_candidate', {
+            'guardian_id': client_info.get('guardian_id'),
+            'candidate': data.get('candidate')
+        }, room=f'driver_{driver_id}')
+    
+    else:
+        # Auto-detect based on sender type (fallback)
+        if client_type == 'driver':
+            guardian_id = client_info.get('guardian_id')
+            if guardian_id:
+                socketio.emit('webrtc_ice_candidate', {
+                    'driver_id': client_info.get('driver_id'),
+                    'candidate': data.get('candidate')
+                }, room=f'guardian_{guardian_id}')
+                print(f"   Auto-forwarded ICE candidate to guardian {guardian_id}")
+                
+        elif client_type == 'guardian':
+            driver_id = data.get('driver_id')
+            if driver_id:
+                socketio.emit('webrtc_ice_candidate', {
+                    'guardian_id': client_info.get('guardian_id'),
+                    'candidate': data.get('candidate')
+                }, room=f'driver_{driver_id}')
+                print(f"   Auto-forwarded ICE candidate to driver {driver_id}")
 
 @socketio.on('webrtc_ready')
 def handle_webrtc_ready(data):
@@ -1613,6 +1741,31 @@ def handle_webrtc_ready(data):
         print(f"✅ Notification sent to guardian_{guardian_id}")
     else:
         print(f"❌ Not a driver client")
+
+@socketio.on('webrtc_stop')
+def handle_webrtc_stop(data):
+    """Handle WebRTC stop signal from either side"""
+    client_id = request.sid
+    client_info = connected_clients.get(client_id, {})
+    client_type = client_info.get('type')
+    
+    print(f"\n🛑 WebRTC STOP received from {client_type}: {client_id}")
+    
+    if client_type == 'guardian':
+        driver_id = data.get('driver_id')
+        if driver_id:
+            socketio.emit('webrtc_stop', {
+                'guardian_id': client_info.get('guardian_id')
+            }, room=f'driver_{driver_id}')
+            print(f"   Sent stop signal to driver {driver_id}")
+            
+    elif client_type == 'driver':
+        guardian_id = client_info.get('guardian_id')
+        if guardian_id:
+            socketio.emit('webrtc_stop', {
+                'driver_id': client_info.get('driver_id')
+            }, room=f'guardian_{guardian_id}')
+            print(f"   Sent stop signal to guardian {guardian_id}")
 
 @socketio.on('driver_alert')
 def handle_driver_alert(data):
@@ -2488,7 +2641,7 @@ def troubleshoot_google_auth():
         
 @app.route('/api/guardian/<guardian_id>/active-streams', methods=['GET'])
 def get_active_streams(guardian_id):
-    """Get list of active streams/drivers for a guardian"""
+    """Get list of active streams/drivers for a guardian with connection info"""
     try:
         token = request.args.get('token')
         
@@ -2507,18 +2660,26 @@ def get_active_streams(guardian_id):
             client_guardian = info.get('guardian_id')
             client_auth = info.get('authenticated')
             
-            print(f"   Client {client_id}: type={client_type}, guardian={client_guardian}, auth={client_auth}")
-            
             if (client_type == 'driver' and 
                 str(client_guardian) == str(guardian_id) and 
                 client_auth == True):
                 
+                connected_at = info.get('connected_at')
+                connected_seconds = 0
+                if connected_at:
+                    if isinstance(connected_at, datetime):
+                        connected_seconds = (datetime.now() - connected_at).total_seconds()
+                    else:
+                        connected_seconds = 0
+                
                 active_streams.append({
                     'driver_id': info.get('driver_id'),
                     'driver_name': info.get('driver_name', 'Unknown'),
-                    'connected_at': info.get('connected_at').isoformat() if info.get('connected_at') else None,
-                    'connected_seconds': (datetime.now() - info.get('connected_at')).total_seconds() if info.get('connected_at') else 0,
-                    'client_id': client_id
+                    'connected_at': connected_at.isoformat() if connected_at else None,
+                    'connected_seconds': int(connected_seconds),
+                    'client_id': client_id,
+                    'transport': info.get('transport', 'unknown'),
+                    'last_ping': info.get('last_ping').isoformat() if info.get('last_ping') else None
                 })
         
         print(f"   Found {len(active_streams)} active streams for guardian {guardian_id}")
@@ -2531,7 +2692,9 @@ def get_active_streams(guardian_id):
         })
         
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Error in get_active_streams: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)}), 500
         
 #end Region
@@ -3804,6 +3967,32 @@ def verify_driver_access(driver_id):
             'success': False,
             'error': str(e)
         }), 500
+        
+@app.route('/api/webrtc-config', methods=['GET'])
+def get_webrtc_config():
+    """Get WebRTC configuration including TURN servers"""
+    return jsonify({
+        'success': True,
+        'iceServers': [
+            {'urls': 'stun:stun.l.google.com:19302'},
+            {'urls': 'stun:stun1.l.google.com:19302'},
+            {'urls': 'stun:stun2.l.google.com:19302'},
+            {'urls': 'stun:stun3.l.google.com:19302'},
+            {'urls': 'stun:stun4.l.google.com:19302'},
+            # Public TURN servers (for development - replace with your own in production)
+            {
+                'urls': 'turn:openrelay.metered.ca:80',
+                'username': 'openrelayproject',
+                'credential': 'openrelayproject'
+            },
+            {
+                'urls': 'turn:openrelay.metered.ca:443',
+                'username': 'openrelayproject',
+                'credential': 'openrelayproject'
+            }
+        ],
+        'iceCandidatePoolSize': 10
+    })
 
 # ==================== UPDATE GUARDIAN ENDPOINT ====================
 
