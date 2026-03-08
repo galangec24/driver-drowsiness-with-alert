@@ -1547,24 +1547,16 @@ def handle_webrtc_offer(data):
     client_id = request.sid
     client_info = connected_clients.get(client_id, {})
     
-    print(f"\n📤 WebRTC OFFER from {client_info.get('type')}: {client_id}")
-    
     # Guardian sending offer to driver
     driver_id = data.get('driver_id')
     if not driver_id:
-        print("❌ No driver_id in offer")
         return
-    
-    print(f"   Forwarding offer to driver {driver_id}")
     
     # Find the driver's socket ID
     for cid, info in connected_clients.items():
         if info.get('type') == 'driver' and info.get('driver_id') == driver_id:
-            print(f"   Found driver at socket: {cid}")
             socketio.emit('webrtc_offer', data, room=cid)
             return
-    
-    print(f"❌ Driver {driver_id} not found")
     
 @socketio.on('webrtc_answer')
 def handle_webrtc_answer(data):
@@ -1572,24 +1564,16 @@ def handle_webrtc_answer(data):
     client_id = request.sid
     client_info = connected_clients.get(client_id, {})
     
-    print(f"\n📤 WebRTC ANSWER from {client_info.get('type')}: {client_id}")
-    
     # Driver answering guardian's offer
     guardian_id = data.get('guardian_id')
     if not guardian_id:
-        print("❌ No guardian_id in answer")
         return
-    
-    print(f"   Forwarding answer to guardian {guardian_id}")
     
     # Find the guardian's socket ID
     for cid, info in connected_clients.items():
         if info.get('type') == 'guardian' and str(info.get('guardian_id')) == str(guardian_id):
-            print(f"   Found guardian at socket: {cid}")
             socketio.emit('webrtc_answer', data, room=cid)
             return
-    
-    print(f"❌ Guardian {guardian_id} not found")
 
 @socketio.on('webrtc_ice_candidate')
 def handle_webrtc_ice(data):
@@ -1598,9 +1582,6 @@ def handle_webrtc_ice(data):
     client_info = connected_clients.get(client_id, {})
     
     target = data.get('target')
-    if not target:
-        return
-    
     if target == 'guardian':
         # Driver sending ICE to guardian
         guardian_id = data.get('guardian_id') or client_info.get('guardian_id')
@@ -3112,40 +3093,6 @@ def get_guardian_activity():
 
 #end Region
 
-#region Clients
-@app.route('/api/debug/connected-clients', methods=['GET'])
-def debug_connected_clients():
-    """Debug endpoint to see all connected clients"""
-    try:
-        api_key = request.args.get('api_key')
-        expected_api_key = os.environ.get('CLIENT_API_KEY', 'your_secret_key')
-        
-        if api_key != expected_api_key:
-            return jsonify({'error': 'Unauthorized'}), 401
-        
-        clients_info = []
-        for client_id, info in connected_clients.items():
-            clients_info.append({
-                'client_id': client_id,
-                'type': info.get('type'),
-                'guardian_id': info.get('guardian_id'),
-                'driver_id': info.get('driver_id'),
-                'driver_name': info.get('driver_name'),
-                'authenticated': info.get('authenticated'),
-                'connected_at': info.get('connected_at').isoformat() if info.get('connected_at') else None,
-                'ip': info.get('ip')
-            })
-        
-        return jsonify({
-            'success': True,
-            'total_clients': len(connected_clients),
-            'clients': clients_info
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-#end Region
-
 #region Driver Management
 @app.route('/api/register-driver', methods=['POST'])
 def register_driver():
@@ -4371,84 +4318,6 @@ def debug_check_key():
         'received_key_length': len(received_key),
         'environment': os.environ.get('RENDER', 'local'),
         'all_env_keys': list(os.environ.keys())  # See what env vars are available
-    })
-
-@app.route('/api/debug/guardian/<guardian_id>/connections', methods=['GET'])
-def debug_guardian_connections(guardian_id):
-    """Debug endpoint to check guardian's socket connections"""
-    try:
-        api_key = request.args.get('api_key')
-        expected_api_key = os.environ.get('CLIENT_API_KEY', 'your_secret_key')
-        
-        if api_key != expected_api_key:
-            return jsonify({'error': 'Unauthorized'}), 401
-        
-        guardian_connections = []
-        for client_id, info in connected_clients.items():
-            if info.get('guardian_id') == guardian_id:
-                # Get room memberships
-                rooms = []
-                try:
-                    rooms = list(socketio.rooms(client_id))
-                except:
-                    pass
-                
-                guardian_connections.append({
-                    'client_id': client_id,
-                    'type': info.get('type'),
-                    'authenticated': info.get('authenticated'),
-                    'connected_at': info.get('connected_at').isoformat() if info.get('connected_at') else None,
-                    'last_ping': info.get('last_ping').isoformat() if info.get('last_ping') else None,
-                    'transport': info.get('transport', 'unknown'),
-                    'room_memberships': rooms
-                })
-        
-        return jsonify({
-            'success': True,
-            'guardian_id': guardian_id,
-            'total_connections': len(guardian_connections),
-            'connections': guardian_connections
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/webrtc-config', methods=['GET'])
-def get_webrtc_config():
-    """Get WebRTC configuration including STUN/TURN servers"""
-    return jsonify({
-        'success': True,
-        'iceServers': [
-            {'urls': 'stun:stun.l.google.com:19302'},
-            {'urls': 'stun:stun1.l.google.com:19302'},
-            {'urls': 'stun:stun2.l.google.com:19302'},
-            {'urls': 'stun:stun3.l.google.com:19302'},
-            {'urls': 'stun:stun4.l.google.com:19302'},
-            {'urls': 'stun:stun.ekiga.net'},
-            {'urls': 'stun:stun.ideasip.com'},
-            {'urls': 'stun:stun.schlund.de'},
-            {'urls': 'stun:stun.stunprotocol.org:3478'},
-            {'urls': 'stun:stun.voiparound.com'},
-            {'urls': 'stun:stun.voipbuster.com'},
-            # Free TURN servers for development
-            {
-                'urls': 'turn:openrelay.metered.ca:80',
-                'username': 'openrelayproject',
-                'credential': 'openrelayproject'
-            },
-            {
-                'urls': 'turn:openrelay.metered.ca:443',
-                'username': 'openrelayproject',
-                'credential': 'openrelayproject'
-            },
-            {
-                'urls': 'turn:openrelay.metered.ca:443?transport=tcp',
-                'username': 'openrelayproject',
-                'credential': 'openrelayproject'
-            }
-        ],
-        'iceCandidatePoolSize': 10,
-        'iceTransportPolicy': 'all'
     })
 
 @app.route('/api/guardian/active-drivers', methods=['GET'])
