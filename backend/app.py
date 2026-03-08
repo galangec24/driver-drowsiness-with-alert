@@ -2641,7 +2641,7 @@ def troubleshoot_google_auth():
         
 @app.route('/api/guardian/<guardian_id>/active-streams', methods=['GET'])
 def get_active_streams(guardian_id):
-    """Get list of active streams/drivers for a guardian with connection stability info"""
+    """Get list of active streams/drivers for a guardian - ALWAYS RETURN ALL CONNECTED DRIVERS"""
     try:
         token = request.args.get('token')
         
@@ -2662,6 +2662,7 @@ def get_active_streams(guardian_id):
             client_guardian = info.get('guardian_id')
             client_auth = info.get('authenticated')
             
+            # Return ALL drivers for this guardian, regardless of stability
             if (client_type == 'driver' and 
                 str(client_guardian) == str(guardian_id) and 
                 client_auth == True):
@@ -2674,7 +2675,7 @@ def get_active_streams(guardian_id):
                     else:
                         connected_seconds = 0
                 
-                # Check last ping time - if more than 10 seconds, driver might be unstable
+                # Check last ping time
                 last_ping = info.get('last_ping')
                 seconds_since_ping = 0
                 if last_ping:
@@ -2683,8 +2684,12 @@ def get_active_streams(guardian_id):
                     else:
                         seconds_since_ping = 0
                 
-                # Determine stability
+                # Determine stability but ALWAYS include the driver
                 is_stable = seconds_since_ping < 15  # Stable if pinged in last 15 seconds
+                
+                # Log warning if unstable but STILL INCLUDE
+                if not is_stable:
+                    print(f"⚠️ Driver {info.get('driver_name')} is unstable - {seconds_since_ping}s since last ping")
                 
                 active_streams.append({
                     'driver_id': info.get('driver_id'),
@@ -2693,6 +2698,7 @@ def get_active_streams(guardian_id):
                     'connected_seconds': int(connected_seconds),
                     'seconds_since_ping': int(seconds_since_ping),
                     'is_stable': is_stable,
+                    'status': 'connected',  # Always connected, just maybe unstable
                     'client_id': client_id,
                     'transport': info.get('transport', 'unknown'),
                     'last_ping': last_ping.isoformat() if last_ping else None
@@ -2700,12 +2706,13 @@ def get_active_streams(guardian_id):
                 
                 print(f"   Driver {info.get('driver_name')}: connected={connected_seconds}s, ping={seconds_since_ping}s ago, stable={is_stable}")
         
+        # IMPORTANT: Always return the count based on ALL drivers found
         print(f"   Found {len(active_streams)} active streams for guardian {guardian_id}")
         
         return jsonify({
             'success': True,
             'guardian_id': guardian_id,
-            'count': len(active_streams),
+            'count': len(active_streams),  
             'streams': active_streams
         })
         
