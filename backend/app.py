@@ -4809,37 +4809,6 @@ def admin_stats():
             'error': str(e)
         }), 500
 
-@app.route('/api/debug/connected-clients', methods=['GET'])
-def debug_connected_clients():
-    """Debug endpoint to see all connected clients"""
-    try:
-        api_key = request.args.get('api_key')
-        expected_api_key = os.environ.get('CLIENT_API_KEY', 'your_secret_key')
-        
-        if api_key != expected_api_key:
-            return jsonify({'error': 'Unauthorized'}), 401
-        
-        clients_info = []
-        for client_id, info in connected_clients.items():
-            clients_info.append({
-                'client_id': client_id,
-                'type': info.get('type'),
-                'guardian_id': info.get('guardian_id'),
-                'driver_id': info.get('driver_id'),
-                'driver_name': info.get('driver_name'),
-                'authenticated': info.get('authenticated'),
-                'connected_at': info.get('connected_at').isoformat() if info.get('connected_at') else None,
-                'last_ping': info.get('last_ping').isoformat() if info.get('last_ping') else None,
-                'ip': info.get('ip')
-            })
-        
-        return jsonify({
-            'success': True,
-            'total_clients': len(connected_clients),
-            'clients': clients_info
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 # ==================== DEBUG ENDPOINTS ====================
 @app.route('/api/debug/login-flow', methods=['POST'])
 def debug_login_flow():
