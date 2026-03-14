@@ -489,6 +489,67 @@ def init_db():
         traceback.print_exc()
         return False
 
+def create_location_tables():
+    """Create location tracking tables if they don't exist"""
+    if not supabase:
+        print("⚠️ [DB] Supabase not initialized, skipping table creation")
+        return
+    
+    try:
+        # Note: In Supabase, tables should be created via SQL editor
+        # This function just checks if they exist
+        print("\n🗄️ [DB] Checking location tables...")
+        
+        # Check guardian_locations table
+        try:
+            result = supabase.table('guardian_locations').select('*').limit(1).execute()
+            print("   ✅ guardian_locations table exists")
+        except Exception as e:
+            print("   ⚠️ guardian_locations table may not exist")
+            print("   Please create it in Supabase SQL editor with:")
+            print("""
+            CREATE TABLE guardian_locations (
+                id BIGSERIAL PRIMARY KEY,
+                guardian_id TEXT NOT NULL,
+                latitude FLOAT NOT NULL,
+                longitude FLOAT NOT NULL,
+                timestamp TIMESTAMPTZ NOT NULL,
+                accuracy FLOAT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                INDEX idx_guardian_locations_guardian (guardian_id),
+                INDEX idx_guardian_locations_timestamp (timestamp)
+            );
+            """)
+        
+        # Check driver_locations table
+        try:
+            result = supabase.table('driver_locations').select('*').limit(1).execute()
+            print("   ✅ driver_locations table exists")
+        except Exception as e:
+            print("   ⚠️ driver_locations table may not exist")
+            print("   Please create it in Supabase SQL editor with:")
+            print("""
+            CREATE TABLE driver_locations (
+                id BIGSERIAL PRIMARY KEY,
+                driver_id TEXT NOT NULL,
+                guardian_id TEXT NOT NULL,
+                latitude FLOAT NOT NULL,
+                longitude FLOAT NOT NULL,
+                timestamp TIMESTAMPTZ NOT NULL,
+                drowsiness FLOAT DEFAULT 0,
+                drowsiness_level TEXT DEFAULT 'ALERT',
+                accuracy FLOAT,
+                method TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                INDEX idx_driver_locations_driver (driver_id),
+                INDEX idx_driver_locations_guardian (guardian_id),
+                INDEX idx_driver_locations_timestamp (timestamp)
+            );
+            """)
+        
+    except Exception as e:
+        print(f"⚠️ [DB] Error checking location tables: {e}")
+
 def update_db_schema():
     """Check Supabase schema - migrations should be done via SQL editor"""
     print("🔧 Checking Supabase schema...")
@@ -1678,6 +1739,76 @@ def handle_webrtc_stop(data):
                 'driver_id': client_info.get('driver_id')
             }, room=f'guardian_{guardian_id}')
             print(f"   Sent stop signal to guardian {guardian_id}")
+
+@socketio.on('driver_location')
+def handle_driver_location(data):
+    """Handle real-time location updates from drivers"""
+    client_id = request.sid
+    client_info = connected_clients.get(client_id, {})
+    
+    try:
+        driver_id = data.get('driver_id') or client_info.get('driver_id')
+        driver_name = data.get('driver_name') or client_info.get('driver_name', 'Unknown')
+        guardian_id = data.get('guardian_id') or client_info.get('guardian_id')
+        location = data.get('location')
+        timestamp = data.get('timestamp', datetime.now().isoformat())
+        drowsiness = data.get('drowsiness', 0)
+        drowsiness_level = data.get('drowsiness_level', 'ALERT')
+        
+        if not driver_id or not guardian_id or not location:
+            print(f"⚠️ [SOCKET] Missing location data from driver {driver_id}")
+            return
+        
+        print(f"\n📍 [SOCKET] Location update from driver {driver_name} ({driver_id})")
+        print(f"   Location: {location.get('lat')}, {location.get('lng')}")
+        print(f"   Drowsiness: {drowsiness}% ({drowsiness_level})")
+        
+        # Update client info with location
+        if client_id in connected_clients:
+            connected_clients[client_id]['last_location'] = location
+            connected_clients[client_id]['last_location_time'] = timestamp
+            connected_clients[client_id]['drowsiness'] = drowsiness
+            connected_clients[client_id]['drowsiness_level'] = drowsiness_level
+        
+        # Store in database if Supabase available
+        if supabase:
+            try:
+                # Create driver_locations table if it doesn't exist
+                location_data = {
+                    'driver_id': driver_id,
+                    'guardian_id': guardian_id,
+                    'latitude': location.get('lat'),
+                    'longitude': location.get('lng'),
+                    'timestamp': timestamp,
+                    'drowsiness': drowsiness,
+                    'drowsiness_level': drowsiness_level,
+                    'accuracy': location.get('accuracy', 0),
+                    'method': location.get('method', 'gps')
+                }
+                
+                supabase.table('driver_locations').insert(location_data).execute()
+                print(f"✅ [SOCKET] Location stored in database")
+            except Exception as db_error:
+                print(f"⚠️ [SOCKET] Database error: {db_error}")
+        
+        # Forward to guardian in real-time
+        guardian_update = {
+            'driver_id': driver_id,
+            'driver_name': driver_name,
+            'guardian_id': guardian_id,
+            'location': location,
+            'timestamp': timestamp,
+            'drowsiness': drowsiness,
+            'drowsiness_level': drowsiness_level
+        }
+        
+        socketio.emit('driver_location_update', guardian_update, room=f'guardian_{guardian_id}')
+        print(f"✅ [SOCKET] Forwarded to guardian {guardian_id}")
+        
+    except Exception as e:
+        print(f"❌ [SOCKET] Error handling driver location: {e}")
+        import traceback
+        traceback.print_exc()
 
 @socketio.on('driver_alert')
 def handle_driver_alert(data):
@@ -3091,6 +3222,196 @@ def get_guardian_activity():
         print(f"❌ Error in get_guardian_activity: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+#end Region
+
+#region Location
+@app.route('/api/guardian/location', methods=['POST', 'OPTIONS'])
+def update_guardian_location():
+    """Update guardian's current location"""
+    # Handle preflight OPTIONS request
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST,OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response, 200
+    
+    try:
+        data = request.json
+        guardian_id = data.get('guardian_id')
+        token = data.get('token')
+        location = data.get('location')
+        
+        print(f"\n📍 [LOCATION] Updating guardian location for {guardian_id}")
+        print(f"   Location: {location}")
+        
+        if not guardian_id or not token:
+            return jsonify({
+                'success': False,
+                'error': 'Missing guardian_id or token'
+            }), 400
+        
+        # Validate session
+        if not validate_session(guardian_id, token):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid or expired session'
+            }), 401
+        
+        if not location:
+            return jsonify({
+                'success': False,
+                'error': 'Location data required'
+            }), 400
+        
+        # Store in database if Supabase is available
+        if supabase:
+            try:
+                # Check if table exists, create if not
+                location_data = {
+                    'guardian_id': guardian_id,
+                    'latitude': location.get('lat'),
+                    'longitude': location.get('lng'),
+                    'timestamp': location.get('timestamp', datetime.now().isoformat()),
+                    'accuracy': location.get('accuracy', 0)
+                }
+                
+                # Insert into guardian_locations table
+                supabase.table('guardian_locations').insert(location_data).execute()
+                print(f"✅ [LOCATION] Stored in database")
+            except Exception as db_error:
+                print(f"⚠️ [LOCATION] Database error: {db_error}")
+                # Continue even if DB fails - location is still processed
+        
+        # Broadcast to connected clients if needed
+        socketio.emit('guardian_location_response', {
+            'success': True,
+            'guardian_id': guardian_id,
+            'timestamp': datetime.now().isoformat()
+        }, room=f'guardian_{guardian_id}')
+        
+        return jsonify({
+            'success': True,
+            'message': 'Location updated successfully'
+        })
+        
+    except Exception as e:
+        print(f"❌ [LOCATION] Error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+ 
+@app.route('/api/guardian/<guardian_id>/driver-locations', methods=['GET', 'OPTIONS'])
+def get_driver_locations(guardian_id):
+    """Get latest locations for all drivers of a guardian"""
+    # Handle preflight OPTIONS request
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response, 200
+    
+    try:
+        token = request.args.get('token')
+        
+        if not token:
+            return jsonify({
+                'success': False,
+                'error': 'Authentication token required'
+            }), 401
+        
+        # Validate session
+        if not validate_session(guardian_id, token):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid or expired session'
+            }), 401
+        
+        print(f"\n📍 [LOCATION] Getting driver locations for guardian {guardian_id}")
+        
+        # Get all drivers for this guardian
+        drivers = get_guardian_drivers(guardian_id)
+        
+        locations = {}
+        
+        # First, check WebSocket connected drivers for real-time locations
+        current_time = datetime.now()
+        for client_id, info in connected_clients.items():
+            if (info.get('type') == 'driver' and 
+                str(info.get('guardian_id')) == str(guardian_id)):
+                
+                driver_id = info.get('driver_id')
+                driver_name = info.get('driver_name', 'Unknown')
+                
+                # Check if driver has location data in memory
+                driver_location = info.get('last_location')
+                if driver_location:
+                    locations[driver_id] = {
+                        'driver_name': driver_name,
+                        'location': driver_location,
+                        'timestamp': info.get('last_location_time', current_time.isoformat()),
+                        'drowsiness': info.get('drowsiness', 0),
+                        'drowsiness_level': info.get('drowsiness_level', 'ALERT'),
+                        'source': 'websocket_realtime'
+                    }
+        
+        # Then check database for latest locations
+        if supabase:
+            try:
+                for driver in drivers:
+                    driver_id = driver['driver_id']
+                    
+                    # Skip if we already have real-time location
+                    if driver_id in locations:
+                        continue
+                    
+                    # Get latest location from database
+                    result = supabase.table('driver_locations') \
+                        .select('*') \
+                        .eq('driver_id', driver_id) \
+                        .eq('guardian_id', guardian_id) \
+                        .order('timestamp', desc=True) \
+                        .limit(1) \
+                        .execute()
+                    
+                    if result.data and len(result.data) > 0:
+                        loc_data = result.data[0]
+                        locations[driver_id] = {
+                            'driver_name': driver['name'],
+                            'location': {
+                                'lat': loc_data.get('latitude'),
+                                'lng': loc_data.get('longitude')
+                            },
+                            'timestamp': loc_data.get('timestamp'),
+                            'drowsiness': loc_data.get('drowsiness', 0),
+                            'drowsiness_level': loc_data.get('drowsiness_level', 'ALERT'),
+                            'source': 'database'
+                        }
+            except Exception as db_error:
+                print(f"⚠️ [LOCATION] Database query error: {db_error}")
+        
+        print(f"   Found {len(locations)} driver locations")
+        
+        return jsonify({
+            'success': True,
+            'guardian_id': guardian_id,
+            'count': len(locations),
+            'locations': locations
+        })
+        
+    except Exception as e:
+        print(f"❌ [LOCATION] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+    
 #end Region
 
 #region Driver Management
@@ -5039,15 +5360,14 @@ def startup_tasks():
     for method, path, desc in endpoints:
         print(f"   • {method:6} {path:30} - {desc}")
     
+
     
 #end Region
 
 #region Main Entry
 if __name__ == '__main__':
-    # Run startup tasks
     startup_tasks()
-    
-    # Get port from environment or use default
+    create_location_tables()
     port = int(os.environ.get('PORT', 5000))
     host = '0.0.0.0'
     
