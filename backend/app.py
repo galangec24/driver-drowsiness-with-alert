@@ -1786,6 +1786,10 @@ def handle_driver_location(data):
     client_id = request.sid
     client_info = connected_clients.get(client_id, {})
     
+    # ADD THIS DEBUG LINE
+    print(f"\n📍📍📍 RECEIVED LOCATION UPDATE 📍📍📍")
+    print(f"   Data: {json.dumps(data, indent=2)}")
+    
     try:
         driver_id = data.get('driver_id') or client_info.get('driver_id')
         driver_name = data.get('driver_name') or client_info.get('driver_name', 'Unknown')
@@ -1813,7 +1817,6 @@ def handle_driver_location(data):
         # Store in database if Supabase available
         if supabase:
             try:
-                # Create driver_locations table if it doesn't exist
                 location_data = {
                     'driver_id': driver_id,
                     'guardian_id': guardian_id,
@@ -2465,6 +2468,54 @@ def google_login_simple():
         }), 500
 
 #end Region Gmail Auth
+
+@app.route('/api/debug/driver-status/<driver_id>', methods=['GET'])
+def debug_driver_status(driver_id):
+    """Check if a specific driver is connected and sending data"""
+    try:
+        driver_info = None
+        location_count = 0
+        
+        # Check connected clients
+        for sid, info in connected_clients.items():
+            if info.get('driver_id') == driver_id:
+                driver_info = {
+                    'sid': sid,
+                    'driver_name': info.get('driver_name'),
+                    'guardian_id': info.get('guardian_id'),
+                    'authenticated': info.get('authenticated'),
+                    'connected_at': info.get('connected_at').isoformat() if info.get('connected_at') else None,
+                    'last_ping': info.get('last_ping').isoformat() if info.get('last_ping') else None,
+                    'last_location': info.get('last_location'),
+                    'last_location_time': info.get('last_location_time')
+                }
+                break
+        
+        # Check database for recent locations
+        if supabase:
+            result = supabase.table('driver_locations') \
+                .select('*') \
+                .eq('driver_id', driver_id) \
+                .order('timestamp', desc=True) \
+                .limit(5) \
+                .execute()
+            recent_locations = result.data if result.data else []
+            location_count = len(recent_locations)
+        else:
+            recent_locations = []
+        
+        return jsonify({
+            'success': True,
+            'driver_id': driver_id,
+            'connected': driver_info is not None,
+            'driver_info': driver_info,
+            'recent_locations_count': location_count,
+            'recent_locations': recent_locations,
+            'server_time': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/debug/guardian-room/<guardian_id>', methods=['GET'])
 def debug_guardian_room(guardian_id):
