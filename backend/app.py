@@ -2466,6 +2466,25 @@ def google_login_simple():
 
 #end Region Gmail Auth
 
+@app.route('/api/debug/guardian-room/<guardian_id>', methods=['GET'])
+def debug_guardian_room(guardian_id):
+    """Check if guardian is in the correct room"""
+    clients_in_room = []
+    for sid, info in connected_clients.items():
+        if info.get('guardian_id') == str(guardian_id) and info.get('type') == 'guardian':
+            clients_in_room.append({
+                'sid': sid,
+                'authenticated': info.get('authenticated'),
+                'connected_at': info.get('connected_at').isoformat() if info.get('connected_at') else None
+            })
+    
+    return jsonify({
+        'success': True,
+        'guardian_id': guardian_id,
+        'clients_in_room': clients_in_room,
+        'count': len(clients_in_room)
+    })
+    
 @app.route('/api/debug-google-certs', methods=['GET'])
 def debug_google_certs():
     """Debug endpoint to check Google certificates"""
