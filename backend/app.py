@@ -4683,6 +4683,31 @@ def get_guardian_alerts():
             'error': str(e)
         }), 500
 #end Region
+@app.route('/api/debug/active-connections', methods=['GET'])
+def debug_active_connections():
+    """Debug endpoint to see all active WebSocket connections"""
+    try:
+        connections = []
+        for sid, info in connected_clients.items():
+            connections.append({
+                'sid': sid,
+                'type': info.get('type'),
+                'guardian_id': info.get('guardian_id'),
+                'driver_id': info.get('driver_id'),
+                'driver_name': info.get('driver_name'),
+                'authenticated': info.get('authenticated'),
+                'connected_at': info.get('connected_at').isoformat() if info.get('connected_at') else None,
+                'last_ping': info.get('last_ping').isoformat() if info.get('last_ping') else None
+            })
+        
+        return jsonify({
+            'success': True,
+            'total_connections': len(connections),
+            'connections': connections
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @app.route('/api/debug/connections', methods=['GET'])
 def debug_connections():
