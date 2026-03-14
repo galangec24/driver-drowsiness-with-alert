@@ -1287,16 +1287,24 @@ def handle_bad_request(e):
 def handle_connect():
     """Handle client connection with better error handling"""
     client_id = request.sid
+    
+    # ← NEW: Extract query parameters from the connection
+    query_string = request.args.to_dict() if hasattr(request, 'args') else {}
+    driver_id = query_string.get('driver_id')
+    guardian_id = query_string.get('guardian_id')
+    
     connected_clients[client_id] = {
         'connected_at': datetime.now(),
         'ip': request.remote_addr,
         'type': None,
-        'guardian_id': None,
+        'guardian_id': guardian_id,           
+        'driver_id': driver_id,                
         'authenticated': False,
         'last_ping': datetime.now(),
         'user_agent': request.headers.get('User-Agent', 'Unknown'),
         'origin': request.headers.get('Origin', 'Unknown'),
-        'transport': request.environ.get('HTTP_UPGRADE', 'polling')
+        'transport': request.environ.get('HTTP_UPGRADE', 'polling'),
+        'query_params': query_string           
     }
     
     print(f"\n{'='*60}")
@@ -1304,10 +1312,14 @@ def handle_connect():
     print(f"   IP: {request.remote_addr}")
     print(f"   Origin: {request.headers.get('Origin', 'Unknown')}")
     print(f"   Transport: {request.environ.get('HTTP_UPGRADE', 'polling')}")
-    print(f"   User-Agent: {request.headers.get('User-Agent', 'Unknown')[:50]}...")
-    print(f"{'='*60}\n")
+    print(f"   Query params: {query_string}")  # ← Log the params
+    if driver_id:
+        print(f"   Driver ID from URL: {driver_id}")
+    if guardian_id:
+        print(f"   Guardian ID from URL: {guardian_id}")
+   
     
-    # Send immediate acknowledgment with connection details
+    # Send immediate acknowledgment
     emit('connected', {
         'status': 'connected',
         'client_id': client_id,
@@ -1476,26 +1488,52 @@ def handle_guardian_auth(data):
         
 @socketio.on('driver_authenticate')
 def handle_driver_auth(data):
-    """Driver authentication via WebSocket - COMPLETE FIXED VERSION"""
+    """Driver authentication via WebSocket - COMPLETE FIXED VERSION with URL param fallback"""
     client_id = request.sid
+    
+    # Get IDs from message
     driver_id = data.get('driver_id')
     driver_name = data.get('driver_name', 'Unknown')
-
+    guardian_id = data.get('guardian_id')
+    
     print(f"\n{'='*60}")
     print(f"🔐 DRIVER AUTHENTICATION ATTEMPT")
     print(f"{'='*60}")
     print(f"   Client ID: {client_id}")
-    print(f"   Driver ID: {driver_id}")
-    print(f"   Driver Name: {driver_name}")
-    print(f"   Full data received: {data}")
+    print(f"   Driver ID from message: {driver_id}")
+    print(f"   Driver Name from message: {driver_name}")
+    print(f"   Guardian ID from message: {guardian_id}")
+    
+    # ← NEW: Check if we have query params from the connection
+    if client_id in connected_clients:
+        query_params = connected_clients[client_id].get('query_params', {})
+        url_driver_id = query_params.get('driver_id')
+        url_guardian_id = query_params.get('guardian_id')
+        
+        print(f"   URL Driver ID: {url_driver_id}")
+        print(f"   URL Guardian ID: {url_guardian_id}")
+        
+        # Use URL params as fallback if message missing IDs
+        if not driver_id and url_driver_id:
+            driver_id = url_driver_id
+            print(f"   ✅ Using driver_id from URL: {driver_id}")
+        
+        if not guardian_id and url_guardian_id:
+            guardian_id = url_guardian_id
+            print(f"   ✅ Using guardian_id from URL: {guardian_id}")
+    
+    print(f"   Final Driver ID: {driver_id}")
+    print(f"   Final Guardian ID: {guardian_id}")
 
     if not driver_id:
-        print("❌ Missing driver_id")
+        print("❌ Missing driver_id (neither in message nor URL)")
         emit('auth_failed', {'error': 'Missing driver_id'})
         return
 
-    # Verify driver exists and is active, get guardian_id
-    guardian_id = get_guardian_for_driver(driver_id)
+    # Verify driver exists and is active, get guardian_id if not already known
+    if not guardian_id:
+        print(f"   Looking up guardian for driver {driver_id}...")
+        guardian_id = get_guardian_for_driver(driver_id)
     
     if not guardian_id:
         print(f"❌ No guardian found for driver {driver_id}")
@@ -1549,7 +1587,7 @@ def handle_driver_auth(data):
         }
         print(f"✅ Created new client entry for {client_id}")
 
-    # Join driver's personal room - FIXED: use server.enter_room
+    # Join driver's personal room
     try:
         socketio.server.enter_room(client_id, f'driver_{driver_id}')
         print(f"   ✅ Joined room: driver_{driver_id}")
@@ -1562,7 +1600,7 @@ def handle_driver_auth(data):
         except Exception as e2:
             print(f"   ⚠️ Fallback also failed: {e2}")
 
-    # Join guardian's room to receive broadcasts - FIXED: use server.enter_room
+    # Join guardian's room to receive broadcasts
     try:
         socketio.server.enter_room(client_id, f'guardian_{guardian_id}')
         print(f"   ✅ Joined room: guardian_{guardian_id}")
@@ -1601,6 +1639,8 @@ def handle_driver_auth(data):
         print(f"📢 Broadcast driver_online to guardian_{guardian_id}")
     except Exception as e:
         print(f"⚠️ Could not broadcast driver_online: {e}")
+    
+    print(f"{'='*60}\n")
     
 @socketio.on('webrtc_offer')
 def handle_webrtc_offer(data):
@@ -4624,6 +4664,36 @@ def get_guardian_alerts():
             'error': str(e)
         }), 500
 #end Region
+
+@app.route('/api/debug/connections', methods=['GET'])
+def debug_connections():
+    """Debug endpoint to see all connected WebSocket clients"""
+    if not supabase:
+        return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+    
+    clients_info = []
+    for sid, info in connected_clients.items():
+        clients_info.append({
+            'sid': sid,
+            'type': info.get('type'),
+            'guardian_id': info.get('guardian_id'),
+            'driver_id': info.get('driver_id'),
+            'driver_name': info.get('driver_name'),
+            'authenticated': info.get('authenticated'),
+            'connected_at': info.get('connected_at').isoformat() if info.get('connected_at') else None,
+            'last_ping': info.get('last_ping').isoformat() if info.get('last_ping') else None,
+            'transport': info.get('transport'),
+            'query_params': info.get('query_params', {})
+        })
+    
+    return jsonify({
+        'success': True,
+        'total_connections': len(connected_clients),
+        'clients': clients_info,
+        'guardians_online': len([c for c in clients_info if c.get('type') == 'guardian']),
+        'drivers_online': len([c for c in clients_info if c.get('type') == 'driver'])
+    })
+    
 @app.route('/api/debug/check-key', methods=['GET'])
 def debug_check_key():
     """Check if API key is properly set in environment"""
