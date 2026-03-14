@@ -1285,10 +1285,10 @@ def handle_bad_request(e):
 #region Socket IO
 @socketio.on('connect')
 def handle_connect():
-    """Handle client connection with better error handling"""
+    """Handle client connection with better error tracking"""
     client_id = request.sid
     
-    # ← NEW: Extract query parameters from the connection
+    # Extract query parameters
     query_string = request.args.to_dict() if hasattr(request, 'args') else {}
     driver_id = query_string.get('driver_id')
     guardian_id = query_string.get('guardian_id')
@@ -1297,34 +1297,35 @@ def handle_connect():
         'connected_at': datetime.now(),
         'ip': request.remote_addr,
         'type': None,
-        'guardian_id': guardian_id,           
-        'driver_id': driver_id,                
+        'guardian_id': guardian_id,
+        'driver_id': driver_id,
         'authenticated': False,
         'last_ping': datetime.now(),
+        'last_message': datetime.now(),  # ← ADD THIS
+        'last_location': None,
+        'last_location_time': None,
+        'location_count': 0,  # ← ADD THIS
         'user_agent': request.headers.get('User-Agent', 'Unknown'),
         'origin': request.headers.get('Origin', 'Unknown'),
         'transport': request.environ.get('HTTP_UPGRADE', 'polling'),
-        'query_params': query_string           
+        'query_params': query_string,
+        'reconnect_count': 0  # ← ADD THIS
     }
     
     print(f"\n{'='*60}")
     print(f"✅ WebSocket client connected: {client_id}")
     print(f"   IP: {request.remote_addr}")
-    print(f"   Origin: {request.headers.get('Origin', 'Unknown')}")
-    print(f"   Transport: {request.environ.get('HTTP_UPGRADE', 'polling')}")
-    print(f"   Query params: {query_string}")  # ← Log the params
+    print(f"   Query params: {query_string}")
     if driver_id:
         print(f"   Driver ID from URL: {driver_id}")
     if guardian_id:
         print(f"   Guardian ID from URL: {guardian_id}")
-   
+    print(f"{'='*60}\n")
     
-    # Send immediate acknowledgment
     emit('connected', {
         'status': 'connected',
         'client_id': client_id,
         'timestamp': datetime.now().isoformat(),
-        'transport': 'websocket' if request.environ.get('HTTP_UPGRADE') == 'websocket' else 'polling',
         'server_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     })
 
@@ -1488,10 +1489,9 @@ def handle_guardian_auth(data):
         
 @socketio.on('driver_authenticate')
 def handle_driver_auth(data):
-    """Driver authentication via WebSocket - COMPLETE FIXED VERSION with URL param fallback"""
+    """Driver authentication via WebSocket - with reconnection tracking"""
     client_id = request.sid
     
-    # Get IDs from message
     driver_id = data.get('driver_id')
     driver_name = data.get('driver_name', 'Unknown')
     guardian_id = data.get('guardian_id')
@@ -1500,39 +1500,16 @@ def handle_driver_auth(data):
     print(f"🔐 DRIVER AUTHENTICATION ATTEMPT")
     print(f"{'='*60}")
     print(f"   Client ID: {client_id}")
-    print(f"   Driver ID from message: {driver_id}")
-    print(f"   Driver Name from message: {driver_name}")
-    print(f"   Guardian ID from message: {guardian_id}")
-    
-    # ← NEW: Check if we have query params from the connection
-    if client_id in connected_clients:
-        query_params = connected_clients[client_id].get('query_params', {})
-        url_driver_id = query_params.get('driver_id')
-        url_guardian_id = query_params.get('guardian_id')
-        
-        print(f"   URL Driver ID: {url_driver_id}")
-        print(f"   URL Guardian ID: {url_guardian_id}")
-        
-        # Use URL params as fallback if message missing IDs
-        if not driver_id and url_driver_id:
-            driver_id = url_driver_id
-            print(f"   ✅ Using driver_id from URL: {driver_id}")
-        
-        if not guardian_id and url_guardian_id:
-            guardian_id = url_guardian_id
-            print(f"   ✅ Using guardian_id from URL: {guardian_id}")
-    
-    print(f"   Final Driver ID: {driver_id}")
-    print(f"   Final Guardian ID: {guardian_id}")
+    print(f"   Driver ID: {driver_id}")
+    print(f"   Driver Name: {driver_name}")
 
     if not driver_id:
-        print("❌ Missing driver_id (neither in message nor URL)")
+        print("❌ Missing driver_id")
         emit('auth_failed', {'error': 'Missing driver_id'})
         return
 
-    # Verify driver exists and is active, get guardian_id if not already known
+    # Verify driver exists and get guardian_id
     if not guardian_id:
-        print(f"   Looking up guardian for driver {driver_id}...")
         guardian_id = get_guardian_for_driver(driver_id)
     
     if not guardian_id:
@@ -1542,7 +1519,7 @@ def handle_driver_auth(data):
 
     print(f"✅ Found guardian_id: {guardian_id} for driver {driver_id}")
 
-    # Fetch driver name from database if not provided
+    # Fetch driver name from database if needed
     if driver_name == 'Unknown' or not driver_name:
         try:
             if supabase:
@@ -1556,9 +1533,24 @@ def handle_driver_auth(data):
         except Exception as e:
             print(f"⚠️ Could not fetch driver name: {e}")
 
-    # Update or create client info in connected_clients
+    # Check if this driver was previously connected (for reconnection tracking)
+    old_client_id = None
+    reconnect_count = 0
+    for sid, info in connected_clients.items():
+        if info.get('driver_id') == driver_id and sid != client_id:
+            old_client_id = sid
+            reconnect_count = info.get('reconnect_count', 0) + 1
+            print(f"🔄 Driver {driver_name} reconnecting (was {old_client_id})")
+            # Remove old connection
+            try:
+                socketio.server.disconnect(old_client_id, silent=True)
+            except:
+                pass
+            del connected_clients[old_client_id]
+            break
+
+    # Update or create client info
     if client_id in connected_clients:
-        # Update existing entry
         connected_clients[client_id].update({
             'type': 'driver',
             'driver_id': driver_id,
@@ -1566,11 +1558,13 @@ def handle_driver_auth(data):
             'driver_name': driver_name,
             'authenticated': True,
             'auth_time': datetime.now(),
-            'last_ping': datetime.now()
+            'last_ping': datetime.now(),
+            'last_message': datetime.now(),
+            'reconnect_count': reconnect_count,
+            'location_count': connected_clients[client_id].get('location_count', 0)
         })
         print(f"✅ Updated existing client info for {client_id}")
     else:
-        # Create new entry
         connected_clients[client_id] = {
             'connected_at': datetime.now(),
             'ip': request.remote_addr,
@@ -1581,37 +1575,24 @@ def handle_driver_auth(data):
             'authenticated': True,
             'auth_time': datetime.now(),
             'last_ping': datetime.now(),
+            'last_message': datetime.now(),
+            'last_location': None,
+            'last_location_time': None,
+            'location_count': 0,
+            'reconnect_count': reconnect_count,
             'user_agent': request.headers.get('User-Agent', 'Unknown'),
             'origin': request.headers.get('Origin', 'Unknown'),
             'transport': request.environ.get('HTTP_UPGRADE', 'polling')
         }
         print(f"✅ Created new client entry for {client_id}")
 
-    # Join driver's personal room
+    # Join rooms
     try:
         socketio.server.enter_room(client_id, f'driver_{driver_id}')
-        print(f"   ✅ Joined room: driver_{driver_id}")
-    except Exception as e:
-        print(f"   ⚠️ Error joining driver room: {e}")
-        # Fallback method
-        try:
-            socketio.enter_room(client_id, f'driver_{driver_id}')
-            print(f"   ✅ Joined driver room (fallback): driver_{driver_id}")
-        except Exception as e2:
-            print(f"   ⚠️ Fallback also failed: {e2}")
-
-    # Join guardian's room to receive broadcasts
-    try:
         socketio.server.enter_room(client_id, f'guardian_{guardian_id}')
-        print(f"   ✅ Joined room: guardian_{guardian_id}")
+        print(f"   ✅ Joined rooms: driver_{driver_id}, guardian_{guardian_id}")
     except Exception as e:
-        print(f"   ⚠️ Error joining guardian room: {e}")
-        # Fallback method
-        try:
-            socketio.enter_room(client_id, f'guardian_{guardian_id}')
-            print(f"   ✅ Joined guardian room (fallback): guardian_{guardian_id}")
-        except Exception as e2:
-            print(f"   ⚠️ Fallback also failed: {e2}")
+        print(f"   ⚠️ Error joining rooms: {e}")
 
     # Send confirmation
     response = {
@@ -1619,22 +1600,21 @@ def handle_driver_auth(data):
         'driver_id': driver_id,
         'guardian_id': guardian_id,
         'driver_name': driver_name,
+        'reconnected': reconnect_count > 0,
+        'reconnect_count': reconnect_count,
         'message': 'Driver authenticated successfully'
     }
     
-    print(f"✅ Driver {driver_name} authenticated successfully for guardian {guardian_id}")
-    print(f"   Current connected clients: {len(connected_clients)}")
-    for cid, info in connected_clients.items():
-        print(f"      {cid}: type={info.get('type')}, guardian={info.get('guardian_id')}, driver={info.get('driver_id')}")
-    
+    print(f"✅ Driver {driver_name} authenticated (reconnect #{reconnect_count})")
     emit('auth_confirmed', response)
     
-    # Broadcast to guardian that driver is online
+    # Broadcast driver online
     try:
         socketio.emit('driver_online', {
             'driver_id': driver_id,
             'driver_name': driver_name,
-            'guardian_id': guardian_id
+            'guardian_id': guardian_id,
+            'reconnected': reconnect_count > 0
         }, room=f'guardian_{guardian_id}')
         print(f"📢 Broadcast driver_online to guardian_{guardian_id}")
     except Exception as e:
@@ -1782,13 +1762,9 @@ def handle_webrtc_stop(data):
 
 @socketio.on('driver_location')
 def handle_driver_location(data):
-    """Handle real-time location updates from drivers"""
+    """Handle real-time location updates from drivers with better tracking"""
     client_id = request.sid
     client_info = connected_clients.get(client_id, {})
-    
-    # ADD THIS DEBUG LINE
-    print(f"\n📍📍📍 RECEIVED LOCATION UPDATE 📍📍📍")
-    print(f"   Data: {json.dumps(data, indent=2)}")
     
     try:
         driver_id = data.get('driver_id') or client_info.get('driver_id')
@@ -1803,18 +1779,19 @@ def handle_driver_location(data):
             print(f"⚠️ [SOCKET] Missing location data from driver {driver_id}")
             return
         
-        print(f"\n📍 [SOCKET] Location update from driver {driver_name} ({driver_id})")
-        print(f"   Location: {location.get('lat')}, {location.get('lng')}")
-        print(f"   Drowsiness: {drowsiness}% ({drowsiness_level})")
-        
-        # Update client info with location
+        # Update client info with location and timestamp
         if client_id in connected_clients:
             connected_clients[client_id]['last_location'] = location
             connected_clients[client_id]['last_location_time'] = timestamp
             connected_clients[client_id]['drowsiness'] = drowsiness
             connected_clients[client_id]['drowsiness_level'] = drowsiness_level
+            connected_clients[client_id]['last_message'] = datetime.now()
+            connected_clients[client_id]['location_count'] = connected_clients[client_id].get('location_count', 0) + 1
         
-        # Store in database if Supabase available
+        print(f"\n📍 [SOCKET] Location update #{connected_clients[client_id].get('location_count', 0)} from {driver_name}")
+        print(f"   Location: {location.get('lat')}, {location.get('lng')}")
+        
+        # Store in database
         if supabase:
             try:
                 location_data = {
@@ -1830,11 +1807,10 @@ def handle_driver_location(data):
                 }
                 
                 supabase.table('driver_locations').insert(location_data).execute()
-                print(f"✅ [SOCKET] Location stored in database")
             except Exception as db_error:
                 print(f"⚠️ [SOCKET] Database error: {db_error}")
         
-        # Forward to guardian in real-time
+        # Forward to guardian
         guardian_update = {
             'driver_id': driver_id,
             'driver_name': driver_name,
@@ -1846,7 +1822,6 @@ def handle_driver_location(data):
         }
         
         socketio.emit('driver_location_update', guardian_update, room=f'guardian_{guardian_id}')
-        print(f"✅ [SOCKET] Forwarded to guardian {guardian_id}")
         
     except Exception as e:
         print(f"❌ [SOCKET] Error handling driver location: {e}")
@@ -2794,7 +2769,7 @@ def troubleshoot_google_auth():
         
 @app.route('/api/guardian/<guardian_id>/active-streams', methods=['GET'])
 def get_active_streams(guardian_id):
-    """Get list of active streams/drivers for a guardian - ALWAYS RETURN ALL CONNECTED DRIVERS"""
+    """Get list of active streams/drivers for a guardian - MORE LENIENT"""
     try:
         token = request.args.get('token')
         
@@ -2815,57 +2790,50 @@ def get_active_streams(guardian_id):
             client_guardian = info.get('guardian_id')
             client_auth = info.get('authenticated')
             
-            # Return ALL drivers for this guardian, regardless of stability
             if (client_type == 'driver' and 
                 str(client_guardian) == str(guardian_id) and 
                 client_auth == True):
                 
                 connected_at = info.get('connected_at')
-                connected_seconds = 0
-                if connected_at:
-                    if isinstance(connected_at, datetime):
-                        connected_seconds = (current_time - connected_at).total_seconds()
-                    else:
-                        connected_seconds = 0
-                
-                # Check last ping time
+                last_message = info.get('last_message', connected_at)
                 last_ping = info.get('last_ping')
-                seconds_since_ping = 0
-                if last_ping:
-                    if isinstance(last_ping, datetime):
-                        seconds_since_ping = (current_time - last_ping).total_seconds()
-                    else:
-                        seconds_since_ping = 0
+                last_location = info.get('last_location')
+                last_location_time = info.get('last_location_time')
+                location_count = info.get('location_count', 0)
                 
-                # Determine stability but ALWAYS include the driver
-                is_stable = seconds_since_ping < 15  # Stable if pinged in last 15 seconds
+                # Calculate times
+                seconds_since_message = 0
+                if last_message:
+                    if isinstance(last_message, datetime):
+                        seconds_since_message = (current_time - last_message).total_seconds()
                 
-                # Log warning if unstable but STILL INCLUDE
-                if not is_stable:
-                    print(f"⚠️ Driver {info.get('driver_name')} is unstable - {seconds_since_ping}s since last ping")
+                # MORE LENIENT: Consider stable if message received in last 30 seconds
+                is_stable = seconds_since_message < 30
+                
+                print(f"   Driver {info.get('driver_name')}: {seconds_since_message:.1f}s since last message, locations: {location_count}")
                 
                 active_streams.append({
                     'driver_id': info.get('driver_id'),
                     'driver_name': info.get('driver_name', 'Unknown'),
                     'connected_at': connected_at.isoformat() if connected_at else None,
-                    'connected_seconds': int(connected_seconds),
-                    'seconds_since_ping': int(seconds_since_ping),
+                    'connected_seconds': int((current_time - connected_at).total_seconds()) if connected_at else 0,
+                    'seconds_since_message': int(seconds_since_message),
+                    'seconds_since_ping': int((current_time - last_ping).total_seconds()) if last_ping else 999,
                     'is_stable': is_stable,
-                    'status': 'connected',  # Always connected, just maybe unstable
+                    'has_location': last_location is not None,
+                    'location_count': location_count,
+                    'last_location_time': last_location_time,
+                    'status': 'connected',
                     'client_id': client_id,
-                    'transport': info.get('transport', 'unknown'),
-                    'last_ping': last_ping.isoformat() if last_ping else None
+                    'transport': info.get('transport', 'unknown')
                 })
-                
-                print(f"   Driver {info.get('driver_name')}: connected={connected_seconds}s, ping={seconds_since_ping}s ago, stable={is_stable}")
         
-        # IMPORTANT: Always return the count based on ALL drivers found
         print(f"   Found {len(active_streams)} active streams for guardian {guardian_id}")
         
         return jsonify({
             'success': True,
             'guardian_id': guardian_id,
-            'count': len(active_streams),  
+            'count': len(active_streams),
             'streams': active_streams
         })
         
@@ -3413,98 +3381,101 @@ def update_guardian_location():
             'error': str(e)
         }), 500
  
-@app.route('/api/guardian/<guardian_id>/driver-locations', methods=['GET', 'OPTIONS'])
+@app.route('/api/guardian/<guardian_id>/driver-locations', methods=['GET'])
 def get_driver_locations(guardian_id):
-    """Get latest locations for all drivers of a guardian"""
-    # Handle preflight OPTIONS request
+    """Get latest locations for all drivers - WITH REAL-TIME DATA"""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
         response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'GET,OPTIONS')
-        response.headers.add('Access-Control-Allow-Credentials', 'true')
         return response, 200
     
     try:
         token = request.args.get('token')
         
         if not token:
-            return jsonify({
-                'success': False,
-                'error': 'Authentication token required'
-            }), 401
+            return jsonify({'success': False, 'error': 'Authentication required'}), 401
         
-        # Validate session
         if not validate_session(guardian_id, token):
-            return jsonify({
-                'success': False,
-                'error': 'Invalid or expired session'
-            }), 401
+            return jsonify({'success': False, 'error': 'Invalid or expired session'}), 401
         
         print(f"\n📍 [LOCATION] Getting driver locations for guardian {guardian_id}")
         
-        # Get all drivers for this guardian
-        drivers = get_guardian_drivers(guardian_id)
-        
         locations = {}
         
-        # First, check WebSocket connected drivers for real-time locations
+        # FIRST: Get real-time locations from connected clients
         current_time = datetime.now()
         for client_id, info in connected_clients.items():
             if (info.get('type') == 'driver' and 
-                str(info.get('guardian_id')) == str(guardian_id)):
+                str(info.get('guardian_id')) == str(guardian_id) and
+                info.get('authenticated') == True):
                 
                 driver_id = info.get('driver_id')
                 driver_name = info.get('driver_name', 'Unknown')
+                last_location = info.get('last_location')
+                last_location_time = info.get('last_location_time')
+                drowsiness = info.get('drowsiness', 0)
+                drowsiness_level = info.get('drowsiness_level', 'ALERT')
+                last_message = info.get('last_message')
                 
-                # Check if driver has location data in memory
-                driver_location = info.get('last_location')
-                if driver_location:
+                if last_location and last_location_time:
+                    # Calculate how recent this location is
+                    time_since = 0
+                    if last_message:
+                        if isinstance(last_message, datetime):
+                            time_since = (current_time - last_message).total_seconds()
+                    
                     locations[driver_id] = {
                         'driver_name': driver_name,
-                        'location': driver_location,
-                        'timestamp': info.get('last_location_time', current_time.isoformat()),
-                        'drowsiness': info.get('drowsiness', 0),
-                        'drowsiness_level': info.get('drowsiness_level', 'ALERT'),
-                        'source': 'websocket_realtime'
+                        'location': last_location,
+                        'timestamp': last_location_time,
+                        'drowsiness': drowsiness,
+                        'drowsiness_level': drowsiness_level,
+                        'source': 'realtime',
+                        'seconds_ago': int(time_since),
+                        'connected': True
                     }
+                    print(f"   ✓ {driver_name}: location from real-time ({time_since:.0f}s ago)")
         
-        # Then check database for latest locations
+        # SECOND: Fill in missing drivers from database
         if supabase:
             try:
-                for driver in drivers:
+                # Get all drivers for this guardian
+                drivers_result = supabase.table('drivers') \
+                    .select('driver_id, name') \
+                    .eq('guardian_id', guardian_id) \
+                    .eq('is_active', True) \
+                    .execute()
+                
+                for driver in drivers_result.data if drivers_result.data else []:
                     driver_id = driver['driver_id']
-                    
-                    # Skip if we already have real-time location
-                    if driver_id in locations:
-                        continue
-                    
-                    # Get latest location from database
-                    result = supabase.table('driver_locations') \
-                        .select('*') \
-                        .eq('driver_id', driver_id) \
-                        .eq('guardian_id', guardian_id) \
-                        .order('timestamp', desc=True) \
-                        .limit(1) \
-                        .execute()
-                    
-                    if result.data and len(result.data) > 0:
-                        loc_data = result.data[0]
-                        locations[driver_id] = {
-                            'driver_name': driver['name'],
-                            'location': {
-                                'lat': loc_data.get('latitude'),
-                                'lng': loc_data.get('longitude')
-                            },
-                            'timestamp': loc_data.get('timestamp'),
-                            'drowsiness': loc_data.get('drowsiness', 0),
-                            'drowsiness_level': loc_data.get('drowsiness_level', 'ALERT'),
-                            'source': 'database'
-                        }
+                    if driver_id not in locations:
+                        # Get latest location from database
+                        loc_result = supabase.table('driver_locations') \
+                            .select('*') \
+                            .eq('driver_id', driver_id) \
+                            .order('timestamp', desc=True) \
+                            .limit(1) \
+                            .execute()
+                        
+                        if loc_result.data and len(loc_result.data) > 0:
+                            loc_data = loc_result.data[0]
+                            locations[driver_id] = {
+                                'driver_name': driver['name'],
+                                'location': {
+                                    'lat': loc_data.get('latitude'),
+                                    'lng': loc_data.get('longitude')
+                                },
+                                'timestamp': loc_data.get('timestamp'),
+                                'drowsiness': loc_data.get('drowsiness', 0),
+                                'drowsiness_level': loc_data.get('drowsiness_level', 'ALERT'),
+                                'source': 'database',
+                                'connected': False
+                            }
+                            print(f"   ○ {driver['name']}: location from database")
             except Exception as db_error:
                 print(f"⚠️ [LOCATION] Database query error: {db_error}")
         
-        print(f"   Found {len(locations)} driver locations")
+        print(f"   Total locations found: {len(locations)}")
         
         return jsonify({
             'success': True,
@@ -3517,10 +3488,7 @@ def get_driver_locations(guardian_id):
         print(f"❌ [LOCATION] Error: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
     
 #end Region
 
@@ -5526,7 +5494,46 @@ def startup_tasks():
         print(f"   • {method:6} {path:30} - {desc}")
     
 
-    
+#end Region
+
+#region Cleanup
+def cleanup_stale_connections():
+    """Background task to clean up stale connections"""
+    while True:
+        time.sleep(30)  # Check every 30 seconds
+        try:
+            current_time = datetime.now()
+            stale_clients = []
+            
+            for client_id, info in connected_clients.items():
+                last_message = info.get('last_message')
+                if last_message:
+                    if isinstance(last_message, datetime):
+                        seconds_since = (current_time - last_message).total_seconds()
+                        # Only clean up if no messages for 2 minutes AND no location for 2 minutes
+                        if seconds_since > 120 and info.get('last_location') is None:
+                            stale_clients.append(client_id)
+                            print(f"🧹 Found stale client {client_id} - {seconds_since:.0f}s no messages")
+            
+            for client_id in stale_clients:
+                try:
+                    socketio.server.disconnect(client_id, silent=True)
+                    if client_id in connected_clients:
+                        del connected_clients[client_id]
+                except:
+                    pass
+            
+            if stale_clients:
+                print(f"   Cleaned up {len(stale_clients)} stale connections")
+                
+        except Exception as e:
+            print(f"⚠️ Error in cleanup task: {e}")
+
+# Start cleanup thread
+cleanup_thread = threading.Thread(target=cleanup_stale_connections, daemon=True)
+cleanup_thread.start()
+print("✅ Connection cleanup task started")
+
 #end Region
 
 #region Main Entry
