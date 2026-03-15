@@ -70,7 +70,7 @@ eventlet.monkey_patch()
 # Google OAuth Configuration
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
-
+JITSI_DOMAIN = os.getenv('JITSI_DOMAIN', 'meet.jit.si')
 # ==================== SUPABASE CONFIGURATION ====================
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
@@ -3491,6 +3491,154 @@ def get_driver_locations(guardian_id):
         return jsonify({'success': False, 'error': str(e)}), 500
     
 #end Region
+
+#region Jitsi
+@app.route('/api/jitsi/room', methods=['POST'])
+def create_jitsi_room():
+    """Create a Jitsi room for driver-guardian streaming"""
+    try:
+        data = request.json
+        guardian_id = data.get('guardian_id')
+        driver_id = data.get('driver_id')
+        token = data.get('token')
+        api_key = request.args.get('api_key')
+        
+        # Validate either session token (for guardian) or API key (for driver)
+        valid = False
+        if guardian_id and token:
+            valid = validate_session(guardian_id, token)
+        elif api_key == os.environ.get('CLIENT_API_KEY'):
+            valid = True
+        
+        if not valid:
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+        
+        # Get driver name
+        driver_name = "Unknown"
+        if supabase:
+            try:
+                result = supabase.table('drivers') \
+                    .select('name') \
+                    .eq('driver_id', driver_id) \
+                    .execute()
+                if result.data and len(result.data) > 0:
+                    driver_name = result.data[0]['name']
+            except:
+                pass
+        
+        # Create unique room name
+        import time
+        room_name = f"drivesafe_{driver_id}_{guardian_id}_{int(time.time())}"
+        
+        # Store room info in database
+        if supabase:
+            # Check if there's an existing active room
+            existing = supabase.table('jitsi_rooms') \
+                .select('*') \
+                .eq('driver_id', driver_id) \
+                .eq('guardian_id', guardian_id) \
+                .eq('status', 'active') \
+                .execute()
+            
+            if existing.data and len(existing.data) > 0:
+                # Return existing room
+                room_data = existing.data[0]
+                return jsonify({
+                    'success': True,
+                    'room_name': room_data['room_name'],
+                    'domain': JITSI_DOMAIN,
+                    'is_new': False
+                })
+            
+            # Create new room record
+            room_data = {
+                'room_name': room_name,
+                'driver_id': driver_id,
+                'guardian_id': int(guardian_id) if str(guardian_id).isdigit() else guardian_id,
+                'driver_name': driver_name,
+                'created_at': datetime.now().isoformat(),
+                'status': 'active'
+            }
+            supabase.table('jitsi_rooms').insert(room_data).execute()
+        
+        return jsonify({
+            'success': True,
+            'room_name': room_name,
+            'domain': JITSI_DOMAIN,
+            'is_new': True
+        })
+        
+    except Exception as e:
+        print(f"❌ Error creating Jitsi room: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/jitsi/rooms', methods=['GET'])
+def get_active_jitsi_rooms():
+    """Get all active Jitsi rooms for a guardian"""
+    try:
+        guardian_id = request.args.get('guardian_id')
+        token = request.args.get('token')
+        
+        if not validate_session(guardian_id, token):
+            return jsonify({'success': False, 'error': 'Invalid session'}), 401
+        
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Database not connected'}), 500
+        
+        # Get active rooms
+        result = supabase.table('jitsi_rooms') \
+            .select('*') \
+            .eq('guardian_id', int(guardian_id)) \
+            .eq('status', 'active') \
+            .order('created_at', desc=True) \
+            .execute()
+        
+        rooms = []
+        for room in result.data if result.data else []:
+            rooms.append({
+                'room_name': room['room_name'],
+                'driver_id': room['driver_id'],
+                'driver_name': room.get('driver_name', 'Unknown'),
+                'created_at': room['created_at'],
+                'domain': JITSI_DOMAIN
+            })
+        
+        return jsonify({
+            'success': True,
+            'rooms': rooms,
+            'count': len(rooms)
+        })
+        
+    except Exception as e:
+        print(f"❌ Error getting Jitsi rooms: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/jitsi/room/end', methods=['POST'])
+def end_jitsi_room():
+    """Mark a Jitsi room as ended"""
+    try:
+        data = request.json
+        room_name = data.get('room_name')
+        guardian_id = data.get('guardian_id')
+        token = data.get('token')
+        
+        if not validate_session(guardian_id, token):
+            return jsonify({'success': False, 'error': 'Invalid session'}), 401
+        
+        if supabase:
+            supabase.table('jitsi_rooms') \
+                .update({'status': 'ended', 'ended_at': datetime.now().isoformat()}) \
+                .eq('room_name', room_name) \
+                .execute()
+        
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+#end Region     
 
 #region Driver Management
 @app.route('/api/register-driver', methods=['POST'])
