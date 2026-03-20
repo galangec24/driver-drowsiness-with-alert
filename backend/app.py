@@ -140,6 +140,7 @@ else:
 
 #region Firebase CORS
 ALLOWED_ORIGINS = [
+    'https://driver-drowsiness-with-alert.onrender.com/api/facebook-login',
     'https://guardian-drive-app.web.app',
     'https://guardian-drive-app.firebaseapp.com',
     'https://guardian-drive.firebaseapp.com',
