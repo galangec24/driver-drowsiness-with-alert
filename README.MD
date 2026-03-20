@@ -1,68 +1,295 @@
-# Driver Drowsiness Detection System
+🚗 Driver Drowsiness Detection System
 
-A capstone project that detects driver drowsiness and sends alerts to registered guardians. 
 
-Architecture:
-The Driver Drowsiness Detection System employs a modular, cloud-native architecture composed of four main components: a Firebase-hosted PWA frontend, a Render-deployed Flask backend API, a PostgreSQL database, and a standalone Dockerized AI inference service, all integrated through Cloudinary for image storage and REST APIs for communication.
 
-The frontend is a Progressive Web Application (PWA) hosted on Firebase Hosting at guardian-drive-app.web.app. Built with vanilla JavaScript, Bootstrap 5, and WebSocket clients, it provides a mobile-responsive interface for guardians to register drivers, capture face images via device camera, monitor real-time alerts, and manage their accounts. The PWA can be installed on mobile home screens and includes a service worker for offline asset caching. All frontend communication with the backend occurs through authenticated REST API calls and WebSocket connections for instant alert delivery.
 
-The backend is a Flask-based REST API server deployed on Render.com that serves as the system's central orchestrator. It handles guardian authentication (both phone/password and Google OAuth), session management using JWT tokens, driver registration with Cloudinary image uploads, and alert management. The backend maintains persistent connections via Flask-SocketIO to push real-time drowsiness alerts to authenticated guardian dashboards. All critical data—guardians, drivers, alerts, face image references, and session tokens—is stored in a PostgreSQL database hosted on Neon.tech, with bcrypt password hashing and parameterized queries for security. The backend exposes REST endpoints for the frontend, admin dashboard, and AI service, all protected by session validation or admin authentication decorators.
 
-Cloudinary serves as the dedicated image management platform. When a guardian registers a driver, the frontend captures three or more face images from different angles, sends them as base64 strings to the backend, which then uploads them to Cloudinary. Critically, each upload is tagged with the unique driver_id, enabling efficient retrieval later. Cloudinary returns secure URLs that are stored in the database, while the original images are served via Cloudinary's global CDN for fast access. This offloads all image storage and bandwidth from the main backend.
 
-The AI Drowsiness Detection Service is a completely independent, self-contained Python application running in a Docker container with Python 3.10.11. It operates autonomously on a separate Linux server (or any Docker-capable machine) and communicates solely via HTTP with the main backend. The service runs an infinite loop that at regular intervals: (1) fetches the list of all active drivers from the backend's /api/guardian/active-drivers endpoint, (2) for each driver, retrieves their latest 5-10 face images from Cloudinary using the driver ID as a search tag, (3) downloads and decodes each image into OpenCV format, (4) applies dlib's pre-trained facial landmark detector (shape_predictor_68_face_landmarks.dat) to locate the eyes and compute the Eye Aspect Ratio (EAR), (5) if the EAR falls below 0.25 for 20 consecutive frames (simulated across the batch of images), classifies the driver as drowsy, and (6) sends an alert payload to the backend's /api/send-alert endpoint. The service implements per-driver cooldown logic to prevent alert spam and logs all activities to both console and persistent log files mounted via Docker volumes. It is configured with restart: unless-stopped policy, ensuring automatic recovery from crashes and system reboots.
 
-Data flow begins when a guardian registers a driver through the PWA. The face images are uploaded to Cloudinary with the driver ID as a tag, and the driver record is created in PostgreSQL. The AI service, running independently, periodically queries the backend for all active drivers. For each driver, it fetches their tagged images from Cloudinary, performs inference, and upon drowsiness detection, sends an alert back to the backend. The backend stores this alert in the database and simultaneously pushes it via WebSocket to all authenticated guardian clients associated with that driver. The guardian dashboard instantly displays the alert with visual indicators and sound notifications.
 
-This architecture provides complete separation of concerns: the main backend remains lightweight and responsive, focused on authentication, data management, and real-time communication; the AI service handles computationally intensive image processing in isolation and can be scaled horizontally by running multiple container instances; Cloudinary eliminates the need for local image storage and provides global CDN acceleration; and the PWA frontend delivers a native-app-like experience without requiring App Store deployment. The system is designed for high availability, with each component independently deployable and scalable, communicating through well-defined, versioned APIs.
 
+
+
+
+
+
+A cloud-based driver safety system that detects drowsiness using computer vision and delivers real-time alerts, SMS notifications, and live location tracking to guardians.
+
+🧠 Overview
+
+This system integrates:
+
+👁️ Computer Vision (EAR-based detection)
+
+☁️ Cloud-native architecture
+
+⚡ Real-time WebSocket communication
+
+🔐 Multi-provider authentication
+
+📍 Live location + 3D distance monitoring
+
+📩 SMS alert notifications
+
+Designed for real-time monitoring, scalability, and rapid emergency response.
+
+🏗️ System Architecture
+
+The system follows a modular, distributed architecture:
+
+Frontend (PWA) – Firebase Hosting
+
+Backend API – Flask on Render
+
+Database – PostgreSQL (Neon)
+
+AI Service – Dockerized microservice
+
+Image Storage – Cloudinary
+
+Authentication – Supabase
+
+🔄 Architecture Flow
+Diagram
+flowchart TD
+A[User Login] --> B[Auth System]
+B --> C[Session Created]
+C --> D[Driver Monitoring Starts]
+D --> E[AI Detection Service]
+E -->|Not Drowsy| D
+E -->|Drowsy Detected| F[Send Alert]
+F --> G[Backend API]
+G --> H[Database]
+G --> I[WebSocket Alert]
+G --> J[SMS Notification]
+I --> K[Guardian Dashboard]
+J --> K
+K --> L[Live Map + Distance View]
+
+🔐 Authentication System
+
+Multi-provider authentication:
+
+✅ Facebook Login
+
+✅ Email + Password + OTP
+
+🔄 (Planned) Microsoft Login
+
+🔒 Security
+
+OTP verification
+
+JWT session management
+
+bcrypt password hashing
+
+Persistent sessions (auto-login)
+
+📡 Core Components
+📱 Frontend (PWA)
+
+Vanilla JS + Bootstrap 5
+
+Installable mobile experience
+
+WebSocket-based real-time updates
 
 Features:
 
-👤 Guardian Features
+Driver registration (camera capture)
 
-✅ Account Registration - Register with phone number & password
+Live monitoring dashboard
 
-✅ Google OAuth - One-click login with Google account
+Alert visualization
 
-✅ Driver Management - Add, edit, delete drivers
+Location tracking interface
 
-✅ Real-time Dashboard - Monitor driver status and alerts
+⚙️ Backend API
 
-✅ Instant Notifications - Receive WebSocket alerts when drowsiness detected
+Flask REST API (Render)
 
-✅ Activity Logs - View complete history of alerts
+Handles:
 
-✅ Profile Management - Update personal information
+Authentication & sessions
 
+Driver & guardian management
 
-🚗 Driver Features
+Alert processing
 
-✅ Face Registration - Capture 3+ face images from different angles
+WebSocket communication
 
-✅ Cloudinary Storage - Secure face image storage in cloud
+SMS notification triggers
 
-✅ Drowsiness Detection - AI-powered EAR (Eye Aspect Ratio) analysis
+🧠 AI Detection Service
 
-✅ Alert Generation - Automatic alerts when drowsiness detected
+Dockerized Python microservice
 
+Pipeline:
 
-🛠 Admin Features
+Fetch drivers
 
-✅ System Overview - View all guardians, drivers, and alerts
+Retrieve images from Cloudinary
 
-✅ Database Management - Monitor system health and statistics
+Detect facial landmarks (dlib)
 
-✅ User Management - Admin dashboard for oversight
+Compute EAR
 
+Detect drowsiness
 
-📱 PWA Features
+Send alert
 
-✅ Installable - Works as a native mobile app
+Detection Logic:
 
-✅ Offline Support - Basic functionality without internet
+EAR Threshold: 0.25
 
-✅ Push Notifications - Alert notifications on mobile
+Frames: 20 consecutive
 
-✅ Responsive Design - Works on all screen sizes
+☁️ Image Storage
+
+Cloudinary (tagged by driver_id)
+
+CDN-optimized delivery
+
+No backend storage overhead
+
+🗺️ Live Monitoring & 3D Mapping
+
+Integrated with Google Maps Platform
+
+Real-time driver location tracking
+
+3D map visualization
+
+Distance calculation between:
+
+Driver ↔ Guardian
+
+Driver ↔ Alert location
+
+👉 Enables spatial awareness and faster response decisions
+
+📩 SMS Alert System
+
+Sends instant alerts to guardians
+
+Works even without internet access on client side
+
+Acts as fail-safe notification channel
+
+Alert Includes:
+
+Driver status
+
+Timestamp
+
+Location info
+
+🔄 Data Flow
+
+Guardian logs in
+
+Registers driver + uploads images
+
+Images stored in Cloudinary
+
+AI service processes images
+
+Drowsiness detected
+
+Backend:
+
+Stores alert
+
+Sends WebSocket update
+
+Sends SMS notification
+
+Dashboard updates with:
+
+Alert status
+
+Live map
+
+Distance tracking
+
+🚀 Features
+👤 Guardian
+
+OTP-based registration
+
+Facebook login
+
+Real-time monitoring dashboard
+
+WebSocket alerts
+
+SMS notifications
+
+Location & distance tracking
+
+Activity logs
+
+🚗 Driver
+
+Face registration (multi-angle)
+
+AI drowsiness detection
+
+Automatic alert triggering
+
+🛠 Admin
+
+System monitoring
+
+User & driver management
+
+Alert analytics
+
+📱 PWA
+
+Installable
+
+Offline support
+
+Responsive UI
+
+Real-time updates
+
+🧠 Key Design Strengths
+
+Microservice Architecture
+
+Real-Time Communication (WebSocket)
+
+Cloud Scalability
+
+Fail-safe Alerts (SMS + Web)
+
+Spatial Intelligence (3D Mapping + Distance)
+
+🔮 Future Enhancements
+
+Microsoft OAuth integration
+
+Face recognition login
+
+Mobile app version
+
+Edge AI (on-device detection)
+
+Predictive fatigue analytics
+
+📌 Summary
+
+A production-ready driver safety system combining:
+
+AI-based drowsiness detection
+
+Cloud-native infrastructure
+
+Real-time + SMS alerting
+
+Advanced location intelligence
+
+Built for scalability, reliability, and real-world deployment.
