@@ -49,6 +49,13 @@ import io
 
 import logging
 
+import random
+import string
+import smtplib
+import ssl
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
 # Setup logger (if not already done)
 logger = logging.getLogger(__name__)
 
@@ -72,6 +79,11 @@ GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 JITSI_DOMAIN = os.getenv('JITSI_DOMAIN', 'meet.jit.si')
 FACEBOOK_APP_ID = os.environ.get('FACEBOOK_APP_ID', '')
 FACEBOOK_APP_SECRET = os.environ.get('FACEBOOK_APP_SECRET', '')
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
+EMAIL_USER = os.environ.get('EMAIL_USER', '')
+EMAIL_PASSWORD = os.environ.get('EMAIL_PASSWORD', '')
+EMAIL_FROM = os.environ.get('EMAIL_FROM', EMAIL_USER)
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 SUPABASE_JWT_SECRET = os.environ.get('SUPABASE_JWT_SECRET', '')
@@ -881,6 +893,74 @@ def invalidate_session(guardian_id, token=None):
         return False
 
 #End Region
+
+#region Email OTP
+def generate_otp():
+    """Generate a 6-digit OTP code"""
+    return ''.join(random.choices(string.digits, k=6))
+
+def send_otp_via_email(email, code, name='User'):
+    """Send OTP via email"""
+    try:
+        if not EMAIL_USER or not EMAIL_PASSWORD:
+            print("⚠️ Email not configured - please add EMAIL_USER and EMAIL_PASSWORD to environment")
+            return False
+        
+        subject = "DriveSafe Guardian - Verification Code"
+        body = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+        </head>
+        <body style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f5f5f5; padding: 20px;">
+            <div style="background-color: #0a0f1e; border-radius: 24px; padding: 40px; color: #fff; box-shadow: 0 20px 40px rgba(0,0,0,0.1);">
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #ffb55a, #ff6a4d); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px;">
+                        <span style="font-size: 30px;">🚗</span>
+                    </div>
+                    <h1 style="margin: 0; font-size: 28px; background: linear-gradient(135deg, #ffe7c4, #ffcf9a); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">DriveSafe Guardian</h1>
+                    <p style="color: #b2c3e0; margin-top: 10px;">Verify your account</p>
+                </div>
+                
+                <p style="color: #fff; font-size: 16px;">Hello <strong>{name}</strong>,</p>
+                <p style="color: #b2c3e0;">Your verification code is:</p>
+                
+                <div style="background: rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 20px; text-align: center; margin: 25px 0; border: 1px solid rgba(255, 180, 60, 0.3);">
+                    <span style="font-size: 48px; font-weight: bold; letter-spacing: 8px; color: #ffb45e;">{code}</span>
+                </div>
+                
+                <p style="color: #b2c3e0;">This code will expire in <strong style="color: #ffb45e;">10 minutes</strong>.</p>
+                <p style="color: #b2c3e0; font-size: 12px;">If you didn't request this, please ignore this email.</p>
+                
+                <hr style="border-color: rgba(255,255,255,0.1); margin: 25px 0 15px;">
+                <p style="color: #6f82ac; font-size: 12px; text-align: center;">DriveSafe Guardian - Driver Drowsiness Alert System</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        msg = MIMEMultipart('alternative')
+        msg['From'] = EMAIL_FROM
+        msg['To'] = email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'html'))
+        
+        context = ssl.create_default_context()
+        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
+        server.starttls(context=context)
+        server.login(EMAIL_USER, EMAIL_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        
+        print(f"✅ OTP email sent to {email}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to send OTP email: {e}")
+        return False
+
+#end Region
 
 #region Guardian Auth
 def verify_guardian_credentials(identifier, password):
@@ -1738,8 +1818,6 @@ def handle_webrtc_stop(data):
     client_id = request.sid
     client_info = connected_clients.get(client_id, {})
     client_type = client_info.get('type')
-    
-    print(f"\n🛑 WebRTC STOP received from {client_type}: {client_id}")
     
     if client_type == 'guardian':
         driver_id = data.get('driver_id')
@@ -2912,12 +2990,11 @@ def facebook_login_simple():
 #region Guardian Auth
 @app.route('/api/login', methods=['POST'])
 def login():
-    """Guardian login with email/phone + password"""
+    """Guardian login with email/phone + password - with OTP verification check"""
     try:
         data = request.json
         identifier = data.get('identifier', '').strip()  
         password = data.get('password', '')
-
 
         if not identifier or not password:
             return jsonify({'success': False, 'error': 'Identifier and password required'}), 400
@@ -2931,34 +3008,96 @@ def login():
         guardian = verify_guardian_credentials(identifier, password)
 
         if guardian:
-            token = create_session(guardian['guardian_id'], request.remote_addr, request.headers.get('User-Agent'))
-            log_activity(guardian['guardian_id'], 'LOGIN', f'Logged in from {request.remote_addr}')
-
-            # Get full user details for response
-            if supabase:
-                user_result = supabase.table('guardians') \
-                    .select('guardian_id, full_name, email, phone') \
-                    .eq('guardian_id', guardian['guardian_id']) \
-                    .execute()
+            # Get user details including verification status
+            user_result = supabase.table('guardians') \
+                .select('guardian_id, full_name, email, phone, is_verified, auth_provider') \
+                .eq('guardian_id', guardian['guardian_id']) \
+                .execute()
+            
+            if not user_result.data:
+                return jsonify({'success': False, 'error': 'User not found'}), 404
+            
+            user_details = user_result.data[0]
+            is_verified = user_details.get('is_verified', True)
+            auth_provider = user_details.get('auth_provider', 'phone')
+            
+            print(f"🔐 [LOGIN] User: {guardian['full_name']}, Provider: {auth_provider}, Verified: {is_verified}")
+            
+            # CASE 1: Social login (Google/Facebook) - automatically verified
+            if auth_provider in ['google', 'facebook']:
+                token = create_session(guardian['guardian_id'], request.remote_addr, request.headers.get('User-Agent'))
+                log_activity(guardian['guardian_id'], 'LOGIN', f'Social login from {request.remote_addr}')
                 
-                if user_result.data and len(user_result.data) > 0:
-                    user_details = user_result.data[0]
+                return jsonify({
+                    'success': True,
+                    'guardian_id': guardian['guardian_id'],
+                    'full_name': guardian['full_name'],
+                    'email': user_details.get('email', ''),
+                    'phone': user_details.get('phone', ''),
+                    'session_token': token,
+                    'auth_provider': auth_provider,
+                    'is_verified': True,
+                    'message': 'Login successful',
+                    'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian["guardian_id"]}&token={token}'
+                })
+            
+            # CASE 2: Manual registration (phone) - check verification
+            elif auth_provider == 'phone':
+                if not is_verified:
+                    # User exists but not verified - create session and redirect to verification
+                    token = create_session(guardian['guardian_id'], request.remote_addr, request.headers.get('User-Agent'))
+                    log_activity(guardian['guardian_id'], 'LOGIN_UNVERIFIED', f'Unverified login attempt from {request.remote_addr}')
+                    
+                    print(f"⚠️ [LOGIN] User {guardian['full_name']} is not verified. Redirecting to verification.")
+                    
+                    return jsonify({
+                        'success': True,
+                        'guardian_id': guardian['guardian_id'],
+                        'full_name': guardian['full_name'],
+                        'email': user_details.get('email', ''),
+                        'phone': user_details.get('phone', ''),
+                        'session_token': token,
+                        'auth_provider': 'phone',
+                        'is_verified': False,
+                        'needs_verification': True,
+                        'message': 'Please verify your account first',
+                        'redirect_url': f'https://guardian-drive-app.web.app/verify.html?guardian_id={guardian["guardian_id"]}&token={token}'
+                    })
                 else:
-                    user_details = {}
+                    # Verified user - normal login
+                    token = create_session(guardian['guardian_id'], request.remote_addr, request.headers.get('User-Agent'))
+                    log_activity(guardian['guardian_id'], 'LOGIN', f'Logged in from {request.remote_addr}')
+                    
+                    return jsonify({
+                        'success': True,
+                        'guardian_id': guardian['guardian_id'],
+                        'full_name': guardian['full_name'],
+                        'email': user_details.get('email', ''),
+                        'phone': user_details.get('phone', ''),
+                        'session_token': token,
+                        'auth_provider': 'phone',
+                        'is_verified': True,
+                        'message': 'Login successful',
+                        'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian["guardian_id"]}&token={token}'
+                    })
+            
+            # CASE 3: Other providers - default behavior
             else:
-                user_details = {}
-
-            return jsonify({
-                'success': True,
-                'guardian_id': guardian['guardian_id'],
-                'full_name': guardian['full_name'],
-                'email': user_details.get('email', ''),
-                'phone': user_details.get('phone', ''),
-                'session_token': token,
-                'auth_provider': 'phone',
-                'message': 'Login successful',
-                'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian["guardian_id"]}&token={token}'
-            })
+                token = create_session(guardian['guardian_id'], request.remote_addr, request.headers.get('User-Agent'))
+                log_activity(guardian['guardian_id'], 'LOGIN', f'Login from {request.remote_addr}')
+                
+                return jsonify({
+                    'success': True,
+                    'guardian_id': guardian['guardian_id'],
+                    'full_name': guardian['full_name'],
+                    'email': user_details.get('email', ''),
+                    'phone': user_details.get('phone', ''),
+                    'session_token': token,
+                    'auth_provider': auth_provider,
+                    'is_verified': user_details.get('is_verified', True),
+                    'message': 'Login successful',
+                    'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian["guardian_id"]}&token={token}'
+                })
 
         return jsonify({'success': False, 'error': 'Invalid identifier or password'}), 401
 
@@ -3288,6 +3427,7 @@ def validate_session_endpoint():
 
 @app.route('/api/register-guardian', methods=['POST'])
 def register_guardian():
+    """Register a new guardian with OTP verification"""
     try:
         print("🔍 [REGISTRATION] Endpoint called")
         
@@ -3302,6 +3442,7 @@ def register_guardian():
         data = request.json
         print(f"🔍 [REGISTRATION] Received data: {data}")
         
+        # Required fields validation
         required = ['full_name', 'phone', 'password']
         for field in required:
             if field not in data or not str(data[field]).strip():
@@ -3315,12 +3456,13 @@ def register_guardian():
         full_name = data['full_name'].strip()
         phone = data['phone'].strip()
         password = data['password']
+        email = data.get('email', '').strip() if data.get('email') else ''
         
-        # 🔥 FIX: Clean password only once
+        # Clean password
         password = clean_password(password)
         print(f"🔍 [REGISTRATION] Password after cleaning: '{password}' (length: {len(password)})")
         
-        # Validate password length (after cleaning)
+        # Validate password length
         if len(password) < 6:
             print(f"❌ [REGISTRATION] Password too short: {len(password)} chars")
             return jsonify({
@@ -3328,6 +3470,7 @@ def register_guardian():
                 'error': 'Password must be at least 6 characters long'
             }), 400
         
+        # ==================== PHONE VALIDATION ====================
         # Clean phone number
         phone_clean = re.sub(r'[\s\-\(\)\+]', '', phone)
         
@@ -3340,24 +3483,20 @@ def register_guardian():
         # Convert to 09XXXXXXXXX format
         final_phone = phone_clean
         
-        # Check if it's already in 09XXXXXXXXX format (11 digits)
+        # Format conversion
         if len(final_phone) == 11 and final_phone.startswith('09'):
-            # Already in correct format, no conversion needed
+            # Already in correct format
             print(f"✅ [REGISTRATION] Phone already in correct 09XXXXXXXXX format")
         elif len(final_phone) == 12 and final_phone.startswith('639'):
-            # 639XXXXXXXXX -> 09XXXXXXXXX
             final_phone = '09' + final_phone[3:]
             print(f"✅ [REGISTRATION] Converted 639XXXXXXXXX -> {final_phone}")
         elif len(final_phone) == 11 and final_phone.startswith('63'):
-            # 63XXXXXXXXX -> 09XXXXXXXXX
             final_phone = '09' + final_phone[2:]
             print(f"✅ [REGISTRATION] Converted 63XXXXXXXXX -> {final_phone}")
         elif len(final_phone) == 10 and final_phone.startswith('9'):
-            # 9XXXXXXXXX -> 09XXXXXXXXX
             final_phone = '0' + final_phone
             print(f"✅ [REGISTRATION] Converted 9XXXXXXXXX -> {final_phone}")
         elif len(final_phone) == 10:
-            # XXXXXXXXXX -> 09XXXXXXXXX (assuming missing 09 prefix)
             final_phone = '09' + final_phone
             print(f"✅ [REGISTRATION] Added 09 prefix -> {final_phone}")
         else:
@@ -3377,7 +3516,17 @@ def register_guardian():
         
         print(f"✅ [REGISTRATION] Final phone to store: '{final_phone}'")
         
-        # Supabase operations
+        # ==================== EMAIL VALIDATION ====================
+        # Validate email if provided
+        if email:
+            if not re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', email):
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid email address format'
+                }), 400
+            email = email.lower()
+        
+        # ==================== DATABASE CHECKS ====================
         if not supabase:
             return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
         
@@ -3394,22 +3543,33 @@ def register_guardian():
                 'error': 'Phone number already registered'
             }), 409
         
-        # 🔑 Hash password (password is already cleaned)
-        password_hash = hash_password(password)
-        print(f"✅ [REGISTRATION] Password hash generated: {password_hash[:30]}...")
-        print(f"   Hash length: {len(password_hash)}")
-        print(f"   Is bcrypt format: {password_hash.startswith('$2')}")
+        # Check if email already exists (if provided)
+        if email:
+            email_check = supabase.table('guardians') \
+                .select('guardian_id') \
+                .eq('email', email) \
+                .execute()
+            
+            if email_check.data and len(email_check.data) > 0:
+                print(f"❌ [REGISTRATION] Email already registered: {email}")
+                return jsonify({
+                    'success': False,
+                    'error': 'Email address already registered'
+                }), 409
         
-        # Insert into Supabase
+        password_hash = hash_password(password)
+        print(f"✅ [REGISTRATION] Password hash generated")
+        
         new_guardian = {
             'full_name': full_name,
             'phone': final_phone,
-            'email': data.get('email', ''),
+            'email': email if email else None,
             'password_hash': password_hash,
             'address': data.get('address', ''),
             'registration_date': datetime.now().isoformat(),
             'last_login': datetime.now().isoformat(),
             'is_active': True,
+            'is_verified': False,  
             'auth_provider': 'phone'
         }
         
@@ -3421,17 +3581,66 @@ def register_guardian():
         else:
             raise Exception("Failed to insert guardian")
         
+        token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
+        
+        log_activity(guardian_id, 'REGISTER', f'New guardian registered from {request.remote_addr}')
+        
+        otp_code = generate_otp()
+        expires_at = datetime.now() + timedelta(minutes=10)
+        
+        # Store OTP in database
+        otp_data = {
+            'guardian_id': guardian_id,
+            'code': otp_code,
+            'method': 'email' if email else 'sms',
+            'destination': email if email else final_phone,
+            'expires_at': expires_at.isoformat(),
+            'used': False
+        }
+        
+        supabase.table('otp_codes').insert(otp_data).execute()
+        
+        # Store verification code in guardians table
+        supabase.table('guardians') \
+            .update({
+                'verification_code': otp_code,
+                'verification_code_expires': expires_at.isoformat(),
+                'verification_method': 'email' if email else 'sms'
+            }) \
+            .eq('guardian_id', guardian_id) \
+            .execute()
+        
+        # Send OTP via email (preferred) or SMS fallback
+        sent = False
+        if email:
+            sent = send_otp_via_email(email, otp_code, full_name)
+        
+        if not sent:
+            print(f"⚠️ [REGISTRATION] Could not send OTP via email")
+    
+        masked_destination = ""
+        if email:
+            masked_destination = email[:3] + '***' + email[email.find('@'):] if '@' in email else email[:3] + '***'
+        else:
+            masked_destination = final_phone[:3] + '***' + final_phone[-4:]
+        
         response_data = {
             'success': True,
             'guardian_id': guardian_id,
             'full_name': full_name,
             'phone': final_phone,
-            'email': data.get('email', ''),
-            'message': 'Registration successful! You can now login.',
-            'redirect_url': f'https://guardian-drive-app.web.app/login.html?registered=true&prefilled_phone={final_phone}'
+            'email': email if email else '',
+            'session_token': token,
+            'auth_provider': 'phone',
+            'is_verified': False,
+            'needs_verification': True,
+            'verification_sent': sent,
+            'verification_destination': masked_destination,
+            'verification_method': 'email' if email else 'sms',
+            'message': 'Registration successful! Please verify your account.',
+            'redirect_url': f'https://guardian-drive-app.web.app/verify.html?guardian_id={guardian_id}&token={token}'
         }
         
-        print(f"✅ [REGISTRATION] Registration complete for guardian_id: {guardian_id}")
         return jsonify(response_data)
     
     except Exception as e:
