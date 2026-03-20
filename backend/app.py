@@ -2005,6 +2005,8 @@ def get_google_config():
         'google_client_id': GOOGLE_CLIENT_ID,
         'firebase_domain': 'guardian-drive-app.web.app',
         'backend_url': 'https://driver-drowsiness-with-alert.onrender.com',
+        'facebook_app_id': FACEBOOK_APP_ID,
+        'facebook_app_secret': FACEBOOK_APP_SECRET,
         'websocket_url': 'wss://driver-drowsiness-with-alert.onrender.com',
         'message': 'Google OAuth configuration loaded',
         'cloudinary_enabled': CLOUDINARY_ENABLED
