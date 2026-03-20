@@ -1998,20 +1998,34 @@ def websocket_status():
         }), 200
 
 # ==================== GOOGLE AUTH CONFIG ====================
-@app.route('/api/config/google', methods=['GET'])
+@app.route('/api/config/google', methods=['GET', 'OPTIONS'])
 def get_google_config():
-    """Get Google OAuth configuration for frontend"""
-    return jsonify({
+    """Get Google and Facebook OAuth configuration for frontend"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'success': True})
+        response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response, 200
+    
+    response = jsonify({
         'success': True,
         'google_client_id': GOOGLE_CLIENT_ID,
+        'facebook_app_id': os.environ.get('FACEBOOK_APP_ID', ''),
         'firebase_domain': 'guardian-drive-app.web.app',
         'backend_url': 'https://driver-drowsiness-with-alert.onrender.com',
-        'facebook_app_id': FACEBOOK_APP_ID,
-        'facebook_app_secret': FACEBOOK_APP_SECRET,
         'websocket_url': 'wss://driver-drowsiness-with-alert.onrender.com',
-        'message': 'Google OAuth configuration loaded',
+        'message': 'OAuth configuration loaded',
         'cloudinary_enabled': CLOUDINARY_ENABLED
     })
+
+    origin = request.headers.get('Origin')
+    if origin:
+        response.headers.add('Access-Control-Allow-Origin', origin)
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+    
+    return response
 
 @app.route('/api/firebase-config', methods=['GET'])
 def get_firebase_config():
@@ -2537,10 +2551,19 @@ def debug_google_certs():
         return jsonify({'error': str(e)}), 500
 
 #region Facebook Auth
+
 # ==================== FACEBOOK AUTH ====================
-@app.route('/api/facebook-login', methods=['POST'])
+@app.route('/api/facebook-login', methods=['POST', 'OPTIONS'])
 def facebook_login():
-    """Handle Facebook OAuth login - Only stores name, email, and phone"""
+    """Handle Facebook OAuth login - With email conflict handling"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'success': True})
+        response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response, 200
+    
     try:
         data = request.json
         access_token = data.get('access_token')
@@ -2554,7 +2577,10 @@ def facebook_login():
         
         print(f"🔵 [FACEBOOK LOGIN] Received Facebook token for user: {user_id}")
         
-        # Verify token with Facebook
+        # Get Facebook App ID from environment
+        FACEBOOK_APP_ID = os.environ.get('FACEBOOK_APP_ID', '')
+        FACEBOOK_APP_SECRET = os.environ.get('FACEBOOK_APP_SECRET', '')
+        
         if not FACEBOOK_APP_ID or not FACEBOOK_APP_SECRET:
             print(f"❌ [FACEBOOK LOGIN] Facebook credentials not set")
             return jsonify({
@@ -2564,8 +2590,7 @@ def facebook_login():
         
         # Verify the access token with Facebook
         try:
-            # Use our custom session with retries
-            verification_url = f"https://graph.facebook.com/debug_token"
+            verification_url = "https://graph.facebook.com/debug_token"
             params = {
                 'input_token': access_token,
                 'access_token': f"{FACEBOOK_APP_ID}|{FACEBOOK_APP_SECRET}"
@@ -2582,10 +2607,10 @@ def facebook_login():
                     'error': f'Invalid Facebook token: {error_msg}'
                 }), 401
             
-            # Get user info from Facebook - ONLY requesting name and email
+            # Get user info from Facebook
             user_info_url = "https://graph.facebook.com/me"
             user_params = {
-                'fields': 'id,name,email',  # REMOVED 'picture' - only name and email
+                'fields': 'id,name,email,location,hometown',
                 'access_token': access_token
             }
             
@@ -2597,13 +2622,16 @@ def facebook_login():
             name = fb_user.get('name', 'Facebook User')
             facebook_id = fb_user.get('id')
             
-            if not email:
-                # Facebook may not provide email - this is common
-                print(f"⚠️ [FACEBOOK LOGIN] No email provided for user {facebook_id}")
-                # We'll continue without email - user can add it later
-                email = None
+            # Extract location
+            location = None
+            if fb_user.get('location'):
+                location_data = fb_user.get('location', {})
+                location = location_data.get('name') if isinstance(location_data, dict) else location_data
+            elif fb_user.get('hometown'):
+                hometown_data = fb_user.get('hometown', {})
+                location = hometown_data.get('name') if isinstance(hometown_data, dict) else hometown_data
             
-            print(f"✅ Facebook token verified successfully: {name} (ID: {facebook_id})")
+            print(f"✅ Facebook token verified: {name} (ID: {facebook_id})")
             
         except Exception as e:
             print(f"❌ Facebook token verification failed: {e}")
@@ -2613,162 +2641,132 @@ def facebook_login():
             }), 401
         
         # Database operations with Supabase
-        try:
-            if not supabase:
-                return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
-            
-            # Check if user exists by Facebook ID
-            result = supabase.table('guardians') \
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
+        
+        # Check if user exists by Facebook ID
+        fb_id_check = supabase.table('guardians') \
+            .select('*') \
+            .eq('facebook_id', facebook_id) \
+            .execute()
+        
+        existing_by_facebook_id = fb_id_check.data[0] if fb_id_check.data else None
+        
+        # Check if email exists
+        existing_by_email = None
+        if email:
+            email_check = supabase.table('guardians') \
                 .select('*') \
-                .eq('facebook_id', facebook_id) \
-                .limit(1) \
+                .eq('email', email) \
                 .execute()
+            existing_by_email = email_check.data[0] if email_check.data else None
+        
+        if existing_by_facebook_id:
+            # Existing Facebook user - login
+            guardian_id = existing_by_facebook_id['guardian_id']
+            full_name = existing_by_facebook_id['full_name']
             
-            if result.data and len(result.data) > 0:
-                # User exists - login
-                user_data = result.data[0]
-                guardian_id = user_data['guardian_id']
-                full_name = user_data['full_name']
-                stored_email = user_data.get('email')
-                
-                print(f"✅ Existing user found: {full_name}")
-                
-                # Update email if it was missing and now provided
-                if email and not stored_email:
-                    supabase.table('guardians') \
-                        .update({'email': email}) \
-                        .eq('guardian_id', guardian_id) \
-                        .execute()
-                    print(f"   Updated email for user: {email}")
-                
-                # Update last login
-                supabase.table('guardians') \
-                    .update({'last_login': datetime.now().isoformat()}) \
-                    .eq('guardian_id', guardian_id) \
-                    .execute()
-                
-            else:
-                # Check if user exists by email (if email provided)
-                existing_by_email = None
-                if email:
-                    email_result = supabase.table('guardians') \
-                        .select('*') \
-                        .eq('email', email) \
-                        .limit(1) \
-                        .execute()
-                    
-                    if email_result.data and len(email_result.data) > 0:
-                        existing_by_email = email_result.data[0]
-                
-                if existing_by_email:
-                    # Link Facebook ID to existing account
-                    guardian_id = existing_by_email['guardian_id']
-                    full_name = existing_by_email['full_name']
-                    
-                    # Update with Facebook ID
-                    supabase.table('guardians') \
-                        .update({
-                            'facebook_id': facebook_id,
-                            'auth_provider': 'facebook',
-                            'last_login': datetime.now().isoformat()
-                        }) \
-                        .eq('guardian_id', guardian_id) \
-                        .execute()
-                    
-                    print(f"✅ Linked Facebook to existing user: {full_name}")
-                    
-                else:
-                    # Create new user with Facebook data - ONLY name, email, and phone
-                    import random
-                    
-                    # Generate a unique phone number (required field)
-                    phone = None
-                    max_attempts = 10
-                    for attempt in range(max_attempts):
-                        test_phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
-                        # Check if phone exists
-                        phone_check = supabase.table('guardians') \
-                            .select('guardian_id') \
-                            .eq('phone', test_phone) \
-                            .execute()
-                        if not phone_check.data or len(phone_check.data) == 0:
-                            phone = test_phone
-                            break
-                    
-                    if not phone:
-                        # Fallback - use timestamp to ensure uniqueness
-                        import time
-                        phone = f"09{int(time.time())%1000000000:09d}"
-                    
-                    # Generate a random password hash (required field)
-                    import secrets
-                    temp_password = secrets.token_urlsafe(16)
-                    password_hash = hash_password(temp_password)
-                    
-                    new_user = {
-                        'full_name': name,
-                        'phone': phone,  # Auto-generated phone
-                        'password_hash': password_hash,  # Required field
-                        'is_active': True,
-                        'registration_date': datetime.now().isoformat(),
-                        'last_login': datetime.now().isoformat(),
-                        'facebook_id': facebook_id,
-                        'auth_provider': 'facebook'
-                    }
-                    
-                    # Only add email if provided by Facebook
-                    if email:
-                        new_user['email'] = email
-                    
-                    insert_result = supabase.table('guardians').insert(new_user).execute()
-                    
-                    if insert_result.data and len(insert_result.data) > 0:
-                        guardian_id = insert_result.data[0]['guardian_id']
-                    else:
-                        raise Exception("Failed to create user")
-                    
-                    full_name = name
-                    
-                    print(f"✅ New Facebook user created: {full_name} (ID: {guardian_id})")
-                    if email:
-                        print(f"   Email: {email}")
-                    print(f"   Phone: {phone} (auto-generated)")
-            
-            # Create session
-            token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
-            
-            # Log activity
-            log_activity(guardian_id, 'FACEBOOK_LOGIN', f'Facebook login from {request.remote_addr}')
-            
-            # Get user data for response
-            user_result = supabase.table('guardians') \
-                .select('guardian_id, full_name, email, phone') \
+            # Update last login
+            supabase.table('guardians') \
+                .update({'last_login': datetime.now().isoformat()}) \
                 .eq('guardian_id', guardian_id) \
                 .execute()
             
-            user_details = user_result.data[0] if user_result.data else {}
+            print(f"✅ Existing Facebook user: {full_name}")
             
-            return jsonify({
-                'success': True,
-                'guardian_id': guardian_id,
-                'full_name': full_name,
-                'email': user_details.get('email', ''),
-                'phone': user_details.get('phone', ''),
-                'session_token': token,
+        elif existing_by_email:
+            # Email exists - link Facebook account
+            guardian_id = existing_by_email['guardian_id']
+            full_name = existing_by_email['full_name']
+            
+            supabase.table('guardians') \
+                .update({
+                    'facebook_id': facebook_id,
+                    'auth_provider': 'facebook',
+                    'last_login': datetime.now().isoformat()
+                }) \
+                .eq('guardian_id', guardian_id) \
+                .execute()
+            
+            print(f"✅ Linked Facebook to existing account: {full_name}")
+            
+        else:
+            # Create new user
+            import random
+            import secrets
+            
+            # Generate unique phone
+            phone = None
+            for _ in range(10):
+                test_phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
+                phone_check = supabase.table('guardians') \
+                    .select('guardian_id') \
+                    .eq('phone', test_phone) \
+                    .execute()
+                if not phone_check.data:
+                    phone = test_phone
+                    break
+            
+            if not phone:
+                import time
+                phone = f"09{int(time.time())%1000000000:09d}"
+            
+            new_user = {
+                'full_name': name,
+                'phone': phone,
+                'password_hash': hash_password(secrets.token_urlsafe(16)),
+                'is_active': True,
+                'facebook_id': facebook_id,
                 'auth_provider': 'facebook',
-                'message': 'Facebook login successful',
-                'is_facebook_user': True,
-                'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
-            })
+                'registration_date': datetime.now().isoformat(),
+                'last_login': datetime.now().isoformat()
+            }
             
-        except Exception as db_error:
-            print(f"❌ Database error in facebook_login: {db_error}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({
-                'success': False,
-                'error': f'Database error: {str(db_error)}'
-            }), 500
+            if email:
+                new_user['email'] = email
+            if location:
+                new_user['address'] = location
+            
+            insert_result = supabase.table('guardians').insert(new_user).execute()
+            guardian_id = insert_result.data[0]['guardian_id']
+            full_name = name
+            
+            print(f"✅ New Facebook user created: {full_name}")
+        
+        # Create session
+        token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
+        
+        # Log activity
+        log_activity(guardian_id, 'FACEBOOK_LOGIN', f'Facebook login from {request.remote_addr}')
+        
+        # Get user data
+        user_result = supabase.table('guardians') \
+            .select('guardian_id, full_name, email, phone, address') \
+            .eq('guardian_id', guardian_id) \
+            .execute()
+        user_details = user_result.data[0] if user_result.data else {}
+        
+        # Add CORS headers to response
+        response = jsonify({
+            'success': True,
+            'guardian_id': guardian_id,
+            'full_name': full_name,
+            'email': user_details.get('email', ''),
+            'phone': user_details.get('phone', ''),
+            'address': user_details.get('address', ''),
+            'session_token': token,
+            'auth_provider': 'facebook',
+            'message': 'Facebook login successful',
+            'account_linked': bool(existing_by_email and not existing_by_facebook_id),
+            'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
+        })
+        
+        origin = request.headers.get('Origin')
+        if origin:
+            response.headers.add('Access-Control-Allow-Origin', origin)
+            response.headers.add('Access-Control-Allow-Credentials', 'true')
+        
+        return response
         
     except Exception as e:
         print(f"❌ Facebook login error: {e}")
@@ -2780,14 +2778,23 @@ def facebook_login():
         }), 500
 
 
-@app.route('/api/facebook-login-simple', methods=['POST'])
+@app.route('/api/facebook-login-simple', methods=['POST', 'OPTIONS'])
 def facebook_login_simple():
-    """Simplified Facebook login for when email isn't available"""
+    """Simplified Facebook login with location support"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'success': True})
+        response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response, 200
+    
     try:
         data = request.json
         facebook_id = data.get('facebook_id')
         name = data.get('name', 'Facebook User')
-        email = data.get('email')  # May be None
+        email = data.get('email')
+        location = data.get('location')
         
         if not facebook_id:
             return jsonify({'success': False, 'error': 'Facebook ID required'}), 400
@@ -2796,135 +2803,117 @@ def facebook_login_simple():
             return jsonify({'success': False, 'error': 'Supabase not initialized'}), 500
         
         # Check if user exists by Facebook ID
-        result = supabase.table('guardians') \
-            .select('guardian_id, full_name, email, phone') \
+        fb_id_check = supabase.table('guardians') \
+            .select('*') \
             .eq('facebook_id', facebook_id) \
-            .limit(1) \
             .execute()
         
-        if result.data and len(result.data) > 0:
-            user_data = result.data[0]
-            guardian_id = user_data['guardian_id']
-            full_name = user_data['full_name']
-            stored_email = user_data.get('email')
-            stored_phone = user_data.get('phone')
+        existing_by_facebook_id = fb_id_check.data[0] if fb_id_check.data else None
+        
+        # Check if email exists
+        existing_by_email = None
+        if email:
+            email_check = supabase.table('guardians') \
+                .select('*') \
+                .eq('email', email) \
+                .execute()
+            existing_by_email = email_check.data[0] if email_check.data else None
+        
+        if existing_by_facebook_id:
+            guardian_id = existing_by_facebook_id['guardian_id']
+            full_name = existing_by_facebook_id['full_name']
             
-            # Update email if provided and not stored
-            if email and not stored_email:
-                supabase.table('guardians') \
-                    .update({'email': email}) \
-                    .eq('guardian_id', guardian_id) \
-                    .execute()
-                print(f"   Updated email for user: {email}")
+            supabase.table('guardians') \
+                .update({'last_login': datetime.now().isoformat()}) \
+                .eq('guardian_id', guardian_id) \
+                .execute()
+                
+        elif existing_by_email:
+            guardian_id = existing_by_email['guardian_id']
+            full_name = existing_by_email['full_name']
             
-        else:
-            # Check if user exists by email (if email provided)
-            existing_by_email = None
-            if email:
-                email_result = supabase.table('guardians') \
-                    .select('*') \
-                    .eq('email', email) \
-                    .limit(1) \
-                    .execute()
-                
-                if email_result.data and len(email_result.data) > 0:
-                    existing_by_email = email_result.data[0]
-            
-            if existing_by_email:
-                # Link Facebook ID to existing account
-                guardian_id = existing_by_email['guardian_id']
-                full_name = existing_by_email['full_name']
-                
-                supabase.table('guardians') \
-                    .update({
-                        'facebook_id': facebook_id,
-                        'auth_provider': 'facebook',
-                        'last_login': datetime.now().isoformat()
-                    }) \
-                    .eq('guardian_id', guardian_id) \
-                    .execute()
-                
-                stored_phone = existing_by_email.get('phone')
-                
-            else:
-                # Create new user
-                import random
-                import secrets
-                
-                # Generate unique phone
-                phone = None
-                max_attempts = 10
-                for attempt in range(max_attempts):
-                    test_phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
-                    phone_check = supabase.table('guardians') \
-                        .select('guardian_id') \
-                        .eq('phone', test_phone) \
-                        .execute()
-                    if not phone_check.data or len(phone_check.data) == 0:
-                        phone = test_phone
-                        break
-                
-                if not phone:
-                    import time
-                    phone = f"09{int(time.time())%1000000000:09d}"
-                
-                new_user = {
-                    'full_name': name,
-                    'phone': phone,
-                    'password_hash': hash_password(secrets.token_urlsafe(16)),
-                    'is_active': True,
+            supabase.table('guardians') \
+                .update({
                     'facebook_id': facebook_id,
                     'auth_provider': 'facebook',
-                    'registration_date': datetime.now().isoformat(),
                     'last_login': datetime.now().isoformat()
-                }
+                }) \
+                .eq('guardian_id', guardian_id) \
+                .execute()
                 
-                # Only add email if provided
-                if email:
-                    new_user['email'] = email
-                
-                insert_result = supabase.table('guardians').insert(new_user).execute()
-                
-                if insert_result.data and len(insert_result.data) > 0:
-                    guardian_id = insert_result.data[0]['guardian_id']
-                else:
-                    raise Exception("Failed to create user")
-                
-                full_name = name
-                stored_phone = phone
+        else:
+            import random
+            import secrets
+            
+            phone = None
+            for _ in range(10):
+                test_phone = '09' + ''.join([str(random.randint(0, 9)) for _ in range(9)])
+                phone_check = supabase.table('guardians') \
+                    .select('guardian_id') \
+                    .eq('phone', test_phone) \
+                    .execute()
+                if not phone_check.data:
+                    phone = test_phone
+                    break
+            
+            if not phone:
+                import time
+                phone = f"09{int(time.time())%1000000000:09d}"
+            
+            new_user = {
+                'full_name': name,
+                'phone': phone,
+                'password_hash': hash_password(secrets.token_urlsafe(16)),
+                'is_active': True,
+                'facebook_id': facebook_id,
+                'auth_provider': 'facebook',
+                'registration_date': datetime.now().isoformat(),
+                'last_login': datetime.now().isoformat()
+            }
+            
+            if email:
+                new_user['email'] = email
+            if location:
+                new_user['address'] = location
+            
+            insert_result = supabase.table('guardians').insert(new_user).execute()
+            guardian_id = insert_result.data[0]['guardian_id']
+            full_name = name
         
-        # Create session
         token = create_session(guardian_id, request.remote_addr, request.headers.get('User-Agent'))
-        
-        # Log activity
         log_activity(guardian_id, 'FACEBOOK_LOGIN', f'Facebook simple login from {request.remote_addr}')
         
-        # Get updated user data
         user_result = supabase.table('guardians') \
-            .select('guardian_id, full_name, email, phone') \
+            .select('guardian_id, full_name, email, phone, address') \
             .eq('guardian_id', guardian_id) \
             .execute()
-        
         user_details = user_result.data[0] if user_result.data else {}
         
-        return jsonify({
+        response = jsonify({
             'success': True,
             'guardian_id': guardian_id,
             'full_name': full_name,
             'email': user_details.get('email', ''),
             'phone': user_details.get('phone', ''),
+            'address': user_details.get('address', ''),
             'session_token': token,
             'auth_provider': 'facebook',
             'message': 'Facebook login successful',
+            'account_linked': bool(existing_by_email and not existing_by_facebook_id),
             'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian_id}&token={token}'
         })
         
+        origin = request.headers.get('Origin')
+        if origin:
+            response.headers.add('Access-Control-Allow-Origin', origin)
+            response.headers.add('Access-Control-Allow-Credentials', 'true')
+        
+        return response
+        
     except Exception as e:
         print(f"❌ Facebook simple login error: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
+    
 #end Region
 
 #region Guardian Auth
