@@ -6733,6 +6733,40 @@ def startup_tasks():
 
 #end Region
 
+#region Cleanup
+def cleanup_stale_connections():
+    """Background task to clean up stale connections"""
+    while True:
+        time.sleep(30)  # Check every 30 seconds
+        try:
+            current_time = datetime.now()
+            stale_clients = []
+            
+            for client_id, info in connected_clients.items():
+                last_message = info.get('last_message')
+                if last_message:
+                    if isinstance(last_message, datetime):
+                        seconds_since = (current_time - last_message).total_seconds()
+                        # Only clean up if no messages for 2 minutes AND no location for 2 minutes
+                        if seconds_since > 120 and info.get('last_location') is None:
+                            stale_clients.append(client_id)
+                            print(f"🧹 Found stale client {client_id} - {seconds_since:.0f}s no messages")
+            
+            for client_id in stale_clients:
+                try:
+                    socketio.server.disconnect(client_id, silent=True)
+                    if client_id in connected_clients:
+                        del connected_clients[client_id]
+                except:
+                    pass
+            
+            if stale_clients:
+                print(f"   Cleaned up {len(stale_clients)} stale connections")
+                
+        except Exception as e:
+            print(f"⚠️ Error in cleanup task: {e}")
+
+# Start cleanup thread
 cleanup_thread = threading.Thread(target=cleanup_stale_connections, daemon=True)
 cleanup_thread.start()
 print("✅ Connection cleanup task started")
