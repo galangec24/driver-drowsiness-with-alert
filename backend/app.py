@@ -15,6 +15,7 @@ from flask import Flask, request, jsonify, Response
 from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
+from collections import defaultdict
 from datetime import datetime, timedelta
 import uuid
 import eventlet
@@ -64,7 +65,6 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
-# Set base directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = BASE_DIR
 
@@ -96,16 +96,13 @@ if SUPABASE_URL and SUPABASE_KEY:
 else:
     print("⚠️ Supabase not configured. Check SUPABASE_URL and SUPABASE_KEY environment variables.")
 
-# ==================== CLOUDINARY CONFIGURATION ====================
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME', '')
 CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY', '')
 CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET', '')
 
-# Initialize Cloudinary with Render DNS fix
 if all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
     print(f"☁️  Cloudinary configured for cloud: {CLOUDINARY_CLOUD_NAME}")
     
-    # Configure Cloudinary with timeout settings for Render
     cloudinary.config(
         cloud_name=CLOUDINARY_CLOUD_NAME,
         api_key=CLOUDINARY_API_KEY,
@@ -245,6 +242,122 @@ def monitor_webrtc_connections():
 threading.Thread(target=monitor_webrtc_connections, daemon=True).start()
 print("✅ WebRTC connection monitor started")
 
+#end Region
+
+#region Reset Password
+
+rate_limit_store = defaultdict(list)  # Stores timestamps of requests
+reset_attempts_store = defaultdict(int)  # Stores failed OTP attempts
+reset_lockout_store = defaultdict(datetime)  # Stores lockout expiry times
+
+def rate_limit_exceeded(identifier, limit=5, window=3600):
+    """
+    Check if rate limit is exceeded for an identifier.
+    
+    Args:
+        identifier: String identifier (email, IP, etc.)
+        limit: Maximum number of requests allowed
+        window: Time window in seconds
+    
+    Returns:
+        bool: True if limit exceeded
+    """
+    current_time = time.time()
+    key = f"rate_limit_{identifier}"
+    
+    # Clean old entries
+    rate_limit_store[key] = [t for t in rate_limit_store[key] if current_time - t < window]
+    
+    if len(rate_limit_store[key]) >= limit:
+        return True
+    
+    rate_limit_store[key].append(current_time)
+    return False
+
+def check_reset_attempts(email):
+    """Check if account is locked due to too many failed attempts"""
+    if email in reset_lockout_store:
+        if datetime.now() < reset_lockout_store[email]:
+            return True, reset_lockout_store[email]
+        else:
+            # Lockout expired, reset attempts
+            del reset_lockout_store[email]
+            reset_attempts_store[email] = 0
+    return False, None
+
+def record_failed_attempt(email):
+    """Record a failed OTP attempt"""
+    reset_attempts_store[email] += 1
+    
+    # Lock after 5 failed attempts
+    if reset_attempts_store[email] >= 5:
+        reset_lockout_store[email] = datetime.now() + timedelta(minutes=15)
+        return True  # Account locked
+    return False
+
+def clear_reset_attempts(email):
+    """Clear failed attempts after successful reset"""
+    if email in reset_attempts_store:
+        del reset_attempts_store[email]
+    if email in reset_lockout_store:
+        del reset_lockout_store[email]
+
+def validate_password_strength(password):
+    """
+    Validate password meets security requirements.
+    
+    Returns:
+        (bool, str): (is_valid, error_message)
+    """
+    errors = []
+    
+    if len(password) < 8:
+        errors.append("at least 8 characters")
+    
+    if not any(c.isupper() for c in password):
+        errors.append("an uppercase letter")
+    
+    if not any(c.islower() for c in password):
+        errors.append("a lowercase letter")
+    
+    if not any(c.isdigit() for c in password):
+        errors.append("a number")
+    
+    # Optional: special characters (recommended)
+    if not any(c in "!@#$%^&*" for c in password):
+        errors.append("a special character (!@#$%^&*)")
+    
+    if errors:
+        return False, f"Password must contain: {', '.join(errors)}"
+    
+    return True, None
+
+def save_password_history(guardian_id, password_hash):
+    """Save password to history and keep only last 10"""
+    try:
+        # Insert new password
+        supabase.table('password_history').insert({
+            'guardian_id': int(guardian_id),
+            'password_hash': password_hash
+        }).execute()
+        
+        # Keep only last 10 passwords
+        result = supabase.table('password_history') \
+            .select('id') \
+            .eq('guardian_id', int(guardian_id)) \
+            .order('created_at', desc=True) \
+            .execute()
+        
+        if result.data and len(result.data) > 10:
+            old_ids = [row['id'] for row in result.data[10:]]
+            for old_id in old_ids:
+                supabase.table('password_history') \
+                    .delete() \
+                    .eq('id', old_id) \
+                    .execute()
+                    
+    except Exception as e:
+        print(f"⚠️ Error saving password history: {e}")
 #end Region
 
 @app.route('/socket.io/', methods=['OPTIONS'])
@@ -899,6 +1012,67 @@ def generate_otp():
     """Generate a 6-digit OTP code"""
     return ''.join(random.choices(string.digits, k=6))
 
+def send_password_reset_email(email, code, name='User'):
+    """Send password reset OTP via email"""
+    try:
+        if not EMAIL_USER or not EMAIL_PASSWORD:
+            print("⚠️ Email not configured")
+            return False
+        
+        subject = "EyeDrive - Password Reset"
+        body = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+        </head>
+        <body style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f5f5f5; padding: 20px;">
+            <div style="background-color: #0a0f1e; border-radius: 24px; padding: 40px; color: #fff; box-shadow: 0 20px 40px rgba(0,0,0,0.1);">
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #ffb55a, #ff6a4d); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px;">
+                        <span style="font-size: 30px;">🔐</span>
+                    </div>
+                    <h1 style="margin: 0; font-size: 28px; background: linear-gradient(135deg, #ffe7c4, #ffcf9a); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">DriveSafe Guardian</h1>
+                    <p style="color: #b2c3e0; margin-top: 10px;">Password Reset Request</p>
+                </div>
+                
+                <p style="color: #fff; font-size: 16px;">Hello <strong>{name}</strong>,</p>
+                <p style="color: #b2c3e0;">We received a request to reset your password. Use the verification code below:</p>
+                
+                <div style="background: rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 20px; text-align: center; margin: 25px 0; border: 1px solid rgba(255, 180, 60, 0.3);">
+                    <span style="font-size: 48px; font-weight: bold; letter-spacing: 8px; color: #ffb45e;">{code}</span>
+                </div>
+                
+                <p style="color: #b2c3e0;">This code will expire in <strong style="color: #ffb45e;">10 minutes</strong>.</p>
+                <p style="color: #b2c3e0;">If you didn't request this, please ignore this email.</p>
+                
+                <hr style="border-color: rgba(255,255,255,0.1); margin: 25px 0 15px;">
+                <p style="color: #6f82ac; font-size: 12px; text-align: center;">DriveSafe Guardian - Driver Drowsiness Alert System</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        msg = MIMEMultipart('alternative')
+        msg['From'] = EMAIL_FROM
+        msg['To'] = email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'html'))
+        
+        context = ssl.create_default_context()
+        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
+        server.starttls(context=context)
+        server.login(EMAIL_USER, EMAIL_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        
+        print(f"✅ Password reset email sent to {email}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to send password reset email: {e}")
+        return False
+
 def send_otp_via_email(email, code, name='User'):
     """Send OTP via email"""
     try:
@@ -960,6 +1134,327 @@ def send_otp_via_email(email, code, name='User'):
         print(f"❌ Failed to send OTP email: {e}")
         return False
 
+#end Region
+
+#region Forgot Password
+# ==================== FORGOT PASSWORD WITH OTP ====================
+
+@app.route('/api/forgot-password', methods=['POST', 'OPTIONS'])
+def forgot_password():
+    """Send OTP to user's email for password reset"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'success': True})
+        response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response, 200
+    
+    try:
+        data = request.json
+        email = data.get('email', '').strip().lower()
+        
+        if not email:
+            return jsonify({
+                'success': False,
+                'error': 'Email address is required'
+            }), 400
+        
+        # Check if email exists in database
+        user_result = supabase.table('guardians') \
+            .select('guardian_id, full_name, email, auth_provider') \
+            .eq('email', email) \
+            .execute()
+        
+        if not user_result.data or len(user_result.data) == 0:
+            # For security, don't reveal if email exists
+            print(f"⚠️ Password reset requested for non-existent email: {email}")
+            return jsonify({
+                'success': True,
+                'message': 'If an account exists with this email, you will receive a reset code.'
+            })
+        
+        user = user_result.data[0]
+        guardian_id = user['guardian_id']
+        full_name = user['full_name']
+        auth_provider = user.get('auth_provider', 'phone')
+        
+        # For social logins (Google/Facebook), suggest using their native login
+        if auth_provider in ['google', 'facebook']:
+            return jsonify({
+                'success': False,
+                'error': f'This account uses {auth_provider} login. Please sign in with {auth_provider}.'
+            }), 400
+        
+        # Generate OTP code and token
+        otp_code = generate_otp()
+        reset_token = secrets.token_urlsafe(32)
+        expires_at = datetime.now() + timedelta(minutes=10)
+        
+        # Send OTP via email
+        sent = send_password_reset_email(email, otp_code, full_name)
+        
+        if not sent:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to send reset code. Please try again.'
+            }), 500
+        
+        # Store reset token in database
+        reset_data = {
+            'guardian_id': int(guardian_id),
+            'email': email,
+            'token': reset_token,   
+            'code': otp_code,
+            'expires_at': expires_at.isoformat(),
+            'used': False
+        }
+        
+        supabase.table('password_reset_tokens').insert(reset_data).execute()
+        
+        print(f"✅ Password reset OTP sent to {email} for user {full_name}")
+        
+        return jsonify({
+            'success': True,
+            'reset_token': reset_token,
+            'message': 'Reset code sent to your email',
+            'expires_in': 600
+        })
+        
+    except Exception as e:
+        print(f"❌ Forgot password error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/verify-reset-code', methods=['POST', 'OPTIONS'])
+def verify_reset_code():
+    """Verify OTP code for password reset"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'success': True})
+        response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response, 200
+    
+    try:
+        data = request.json
+        reset_token = data.get('reset_token')
+        code = data.get('code')
+        
+        if not reset_token or not code:
+            return jsonify({
+                'success': False,
+                'error': 'Reset token and code are required'
+            }), 400
+        
+        # Find the reset request
+        reset_result = supabase.table('password_reset_tokens') \
+            .select('*') \
+            .eq('token', reset_token) \
+            .eq('used', False) \
+            .execute()
+        
+        if not reset_result.data or len(reset_result.data) == 0:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid or expired reset request'
+            }), 400
+        
+        reset = reset_result.data[0]
+        
+        # Check if expired
+        expires_at = datetime.fromisoformat(reset['expires_at']) if isinstance(reset['expires_at'], str) else reset['expires_at']
+        if datetime.now() > expires_at:
+            return jsonify({
+                'success': False,
+                'error': 'Reset code has expired. Please request a new one.'
+            }), 400
+        
+        # Verify code
+        if code != reset['code']:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid verification code'
+            }), 400
+        
+        # Code is valid - return session token for password reset
+        session_token = secrets.token_urlsafe(32)
+        
+        return jsonify({
+            'success': True,
+            'session_token': session_token,
+            'guardian_id': reset['guardian_id'],
+            'message': 'Code verified. You can now reset your password.'
+        })
+        
+    except Exception as e:
+        print(f"❌ Verify reset code error: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/reset-password', methods=['POST', 'OPTIONS'])
+def reset_password():
+    """Reset password after OTP verification"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'success': True})
+        response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response, 200
+    
+    try:
+        data = request.json
+        guardian_id = data.get('guardian_id')
+        session_token = data.get('session_token')
+        new_password = data.get('new_password')
+        
+        if not guardian_id or not session_token or not new_password:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required fields'
+            }), 400
+        
+        if len(new_password) < 6:
+            return jsonify({
+                'success': False,
+                'error': 'Password must be at least 6 characters'
+            }), 400
+        
+        # Verify the session token (from verified reset)
+        # Find the most recent reset request for this guardian
+        reset_result = supabase.table('password_reset_tokens') \
+            .select('*') \
+            .eq('guardian_id', guardian_id) \
+            .eq('used', False) \
+            .order('created_at', desc=True) \
+            .limit(1) \
+            .execute()
+        
+        if not reset_result.data or len(reset_result.data) == 0:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid reset session'
+            }), 400
+        
+        # Mark the reset token as used
+        supabase.table('password_reset_tokens') \
+            .update({'used': True}) \
+            .eq('guardian_id', guardian_id) \
+            .execute()
+        
+        # Hash the new password
+        cleaned_password = clean_password(new_password)
+        password_hash = hash_password(cleaned_password)
+        
+        # Update user's password
+        supabase.table('guardians') \
+            .update({
+                'password_hash': password_hash,
+                'last_password_change': datetime.now().isoformat()
+            }) \
+            .eq('guardian_id', guardian_id) \
+            .execute()
+        
+        # Invalidate all existing sessions
+        supabase.table('session_tokens') \
+            .update({'is_valid': False}) \
+            .eq('guardian_id', guardian_id) \
+            .execute()
+        
+        # Clear memory cache
+        if guardian_id in active_sessions:
+            del active_sessions[guardian_id]
+        
+        # Log activity
+        log_activity(guardian_id, 'PASSWORD_RESET', 'Password reset via forgot password')
+        
+        print(f"✅ Password reset successful for guardian_id: {guardian_id}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Password reset successfully. Please login with your new password.'
+        })
+        
+    except Exception as e:
+        print(f"❌ Reset password error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+def send_password_reset_email(email, code, name='User'):
+    """Send password reset OTP via email"""
+    try:
+        if not EMAIL_USER or not EMAIL_PASSWORD:
+            print("⚠️ Email not configured")
+            return False
+        
+        subject = "EyeDrive - Password Reset"
+        body = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+        </head>
+        <body style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f5f5f5; padding: 20px;">
+            <div style="background-color: #0a0f1e; border-radius: 24px; padding: 40px; color: #fff; box-shadow: 0 20px 40px rgba(0,0,0,0.1);">
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #ffb55a, #ff6a4d); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px;">
+                        <span style="font-size: 30px;">🔐</span>
+                    </div>
+                    <h1 style="margin: 0; font-size: 28px; background: linear-gradient(135deg, #ffe7c4, #ffcf9a); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">DriveSafe Guardian</h1>
+                    <p style="color: #b2c3e0; margin-top: 10px;">Password Reset Request</p>
+                </div>
+                
+                <p style="color: #fff; font-size: 16px;">Hello <strong>{name}</strong>,</p>
+                <p style="color: #b2c3e0;">We received a request to reset your password. Use the verification code below:</p>
+                
+                <div style="background: rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 20px; text-align: center; margin: 25px 0; border: 1px solid rgba(255, 180, 60, 0.3);">
+                    <span style="font-size: 48px; font-weight: bold; letter-spacing: 8px; color: #ffb45e;">{code}</span>
+                </div>
+                
+                <p style="color: #b2c3e0;">This code will expire in <strong style="color: #ffb45e;">10 minutes</strong>.</p>
+                <p style="color: #b2c3e0;">If you didn't request this, please ignore this email.</p>
+                
+                <hr style="border-color: rgba(255,255,255,0.1); margin: 25px 0 15px;">
+                <p style="color: #6f82ac; font-size: 12px; text-align: center;">DriveSafe Guardian - Driver Drowsiness Alert System</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        msg = MIMEMultipart('alternative')
+        msg['From'] = EMAIL_FROM
+        msg['To'] = email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'html'))
+        
+        context = ssl.create_default_context()
+        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
+        server.starttls(context=context)
+        server.login(EMAIL_USER, EMAIL_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        
+        print(f"✅ Password reset email sent to {email}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to send password reset email: {e}")
+        return False
 #end Region
 
 #region Guardian Auth
@@ -2999,16 +3494,13 @@ def login():
         if not identifier or not password:
             return jsonify({'success': False, 'error': 'Identifier and password required'}), 400
 
-        # Rate limiting
         ip = request.remote_addr
         if rate_limit_exceeded(ip, 'guardian_login', limit=10):
             return jsonify({'success': False, 'error': 'Too many login attempts'}), 429
 
-        # Verify credentials (supports email or phone)
         guardian = verify_guardian_credentials(identifier, password)
 
         if guardian:
-            # Get user details including verification status
             user_result = supabase.table('guardians') \
                 .select('guardian_id, full_name, email, phone, is_verified, auth_provider') \
                 .eq('guardian_id', guardian['guardian_id']) \
@@ -3023,7 +3515,7 @@ def login():
             
             print(f"🔐 [LOGIN] User: {guardian['full_name']}, Provider: {auth_provider}, Verified: {is_verified}")
             
-            # CASE 1: Social login (Google/Facebook) - automatically verified
+            # ==================== SOCIAL LOGIN (Google/Facebook) ====================
             if auth_provider in ['google', 'facebook']:
                 token = create_session(guardian['guardian_id'], request.remote_addr, request.headers.get('User-Agent'))
                 log_activity(guardian['guardian_id'], 'LOGIN', f'Social login from {request.remote_addr}')
@@ -3037,18 +3529,18 @@ def login():
                     'session_token': token,
                     'auth_provider': auth_provider,
                     'is_verified': True,
+                    'needs_verification': False,
                     'message': 'Login successful',
                     'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian["guardian_id"]}&token={token}'
                 })
             
-            # CASE 2: Manual registration (phone) - check verification
             elif auth_provider == 'phone':
+                token = create_session(guardian['guardian_id'], request.remote_addr, request.headers.get('User-Agent'))
+                log_activity(guardian['guardian_id'], 'LOGIN_ATTEMPT', f'Login attempt from {request.remote_addr}, verified: {is_verified}')
+                
+                # Unverified user - redirect to verification page
                 if not is_verified:
-                    # User exists but not verified - create session and redirect to verification
-                    token = create_session(guardian['guardian_id'], request.remote_addr, request.headers.get('User-Agent'))
-                    log_activity(guardian['guardian_id'], 'LOGIN_UNVERIFIED', f'Unverified login attempt from {request.remote_addr}')
-                    
-                    print(f"⚠️ [LOGIN] User {guardian['full_name']} is not verified. Redirecting to verification.")
+                    print(f"⚠️ [LOGIN] User {guardian['full_name']} is NOT verified. Redirecting to verification.")
                     
                     return jsonify({
                         'success': True,
@@ -3060,13 +3552,13 @@ def login():
                         'auth_provider': 'phone',
                         'is_verified': False,
                         'needs_verification': True,
+                        'verification_destination': user_details.get('email', ''),
                         'message': 'Please verify your account first',
                         'redirect_url': f'https://guardian-drive-app.web.app/verify.html?guardian_id={guardian["guardian_id"]}&token={token}'
                     })
                 else:
-                    # Verified user - normal login
-                    token = create_session(guardian['guardian_id'], request.remote_addr, request.headers.get('User-Agent'))
-                    log_activity(guardian['guardian_id'], 'LOGIN', f'Logged in from {request.remote_addr}')
+                    # Verified user - normal login to dashboard
+                    print(f"✅ [LOGIN] Verified user {guardian['full_name']} logging in")
                     
                     return jsonify({
                         'success': True,
@@ -3077,11 +3569,11 @@ def login():
                         'session_token': token,
                         'auth_provider': 'phone',
                         'is_verified': True,
+                        'needs_verification': False,
                         'message': 'Login successful',
                         'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian["guardian_id"]}&token={token}'
                     })
             
-            # CASE 3: Other providers - default behavior
             else:
                 token = create_session(guardian['guardian_id'], request.remote_addr, request.headers.get('User-Agent'))
                 log_activity(guardian['guardian_id'], 'LOGIN', f'Login from {request.remote_addr}')
@@ -3095,6 +3587,7 @@ def login():
                     'session_token': token,
                     'auth_provider': auth_provider,
                     'is_verified': user_details.get('is_verified', True),
+                    'needs_verification': not user_details.get('is_verified', True),
                     'message': 'Login successful',
                     'redirect_url': f'https://guardian-drive-app.web.app/guardian-dashboard.html?guardian_id={guardian["guardian_id"]}&token={token}'
                 })
@@ -3470,8 +3963,6 @@ def register_guardian():
                 'error': 'Password must be at least 6 characters long'
             }), 400
         
-        # ==================== PHONE VALIDATION ====================
-        # Clean phone number
         phone_clean = re.sub(r'[\s\-\(\)\+]', '', phone)
         
         if not phone_clean.isdigit():
@@ -3588,9 +4079,8 @@ def register_guardian():
         otp_code = generate_otp()
         expires_at = datetime.now() + timedelta(minutes=10)
         
-        # Store OTP in database
         otp_data = {
-            'guardian_id': guardian_id,
+            'guardian_id': int(guardian_id),
             'code': otp_code,
             'method': 'email' if email else 'sms',
             'destination': email if email else final_phone,
@@ -3651,6 +4141,69 @@ def register_guardian():
             'success': False,
             'error': 'Registration failed. Please try again.'
         }), 500
+
+#region OTP Forgot Password
+def send_password_reset_email(email, code, name='User'):
+    """Send password reset OTP via email"""
+    try:
+        if not EMAIL_USER or not EMAIL_PASSWORD:
+            print("⚠️ Email not configured")
+            return False
+        
+        subject = "DriveSafe Guardian - Password Reset"
+        body = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+        </head>
+        <body style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f5f5f5; padding: 20px;">
+            <div style="background-color: #0a0f1e; border-radius: 24px; padding: 40px; color: #fff; box-shadow: 0 20px 40px rgba(0,0,0,0.1);">
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #ffb55a, #ff6a4d); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px;">
+                        <span style="font-size: 30px;">🔐</span>
+                    </div>
+                    <h1 style="margin: 0; font-size: 28px; background: linear-gradient(135deg, #ffe7c4, #ffcf9a); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">DriveSafe Guardian</h1>
+                    <p style="color: #b2c3e0; margin-top: 10px;">Password Reset Request</p>
+                </div>
+                
+                <p style="color: #fff; font-size: 16px;">Hello <strong>{name}</strong>,</p>
+                <p style="color: #b2c3e0;">We received a request to reset your password. Use the verification code below:</p>
+                
+                <div style="background: rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 20px; text-align: center; margin: 25px 0; border: 1px solid rgba(255, 180, 60, 0.3);">
+                    <span style="font-size: 48px; font-weight: bold; letter-spacing: 8px; color: #ffb45e;">{code}</span>
+                </div>
+                
+                <p style="color: #b2c3e0;">This code will expire in <strong style="color: #ffb45e;">10 minutes</strong>.</p>
+                <p style="color: #b2c3e0;">If you didn't request this, please ignore this email.</p>
+                
+                <hr style="border-color: rgba(255,255,255,0.1); margin: 25px 0 15px;">
+                <p style="color: #6f82ac; font-size: 12px; text-align: center;">DriveSafe Guardian - Driver Drowsiness Alert System</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        msg = MIMEMultipart('alternative')
+        msg['From'] = EMAIL_FROM
+        msg['To'] = email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'html'))
+        
+        context = ssl.create_default_context()
+        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
+        server.starttls(context=context)
+        server.login(EMAIL_USER, EMAIL_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        
+        print(f"✅ Password reset email sent to {email}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to send password reset email: {e}")
+        return False
+#end Region
 
 #region Guardian Data
 @app.route('/api/guardian/dashboard', methods=['GET'])
@@ -4110,8 +4663,6 @@ def create_jitsi_room():
             except Exception as e:
                 print(f"❌ Error fetching driver name: {e}")
         
-        # Create unique room name
-        import time
         room_name = f"drivesafe_{driver_id}_{guardian_id}_{int(time.time())}"
         
         # Store room info in database
@@ -4280,8 +4831,6 @@ def register_driver():
             print("⚠️ [DRIVER REGISTRATION] Cloudinary not enabled, using local storage")
             # Continue with local storage
         
-        # Generate unique driver ID
-        import time
         timestamp = int(time.time() * 1000)
         driver_id = f"DRV{str(timestamp)[-8:].upper()}"
         
