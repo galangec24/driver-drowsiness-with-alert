@@ -784,6 +784,135 @@ _certs_cache = None
 _certs_cache_time = 0
 CERTS_REFRESH_INTERVAL = 6 * 3600  # refresh every 6 hours
 
+#region Email OTP
+def generate_otp():
+    """Generate a 6-digit OTP code"""
+    return ''.join(random.choices(string.digits, k=6))
+
+def send_otp_via_email(email, code, name='User'):
+    """Send OTP via email"""
+    try:
+        if not EMAIL_USER or not EMAIL_PASSWORD:
+            print("⚠️ Email not configured - please add EMAIL_USER and EMAIL_PASSWORD to environment")
+            return False
+        
+        subject = "DriveSafe Guardian - Verification Code"
+        body = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+        </head>
+        <body style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f5f5f5; padding: 20px;">
+            <div style="background-color: #0a0f1e; border-radius: 24px; padding: 40px; color: #fff; box-shadow: 0 20px 40px rgba(0,0,0,0.1);">
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #ffb55a, #ff6a4d); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px;">
+                        <span style="font-size: 30px;">🚗</span>
+                    </div>
+                    <h1 style="margin: 0; font-size: 28px; background: linear-gradient(135deg, #ffe7c4, #ffcf9a); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">DriveSafe Guardian</h1>
+                    <p style="color: #b2c3e0; margin-top: 10px;">Verify your account</p>
+                </div>
+                
+                <p style="color: #fff; font-size: 16px;">Hello <strong>{name}</strong>,</p>
+                <p style="color: #b2c3e0;">Your verification code is:</p>
+                
+                <div style="background: rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 20px; text-align: center; margin: 25px 0; border: 1px solid rgba(255, 180, 60, 0.3);">
+                    <span style="font-size: 48px; font-weight: bold; letter-spacing: 8px; color: #ffb45e;">{code}</span>
+                </div>
+                
+                <p style="color: #b2c3e0;">This code will expire in <strong style="color: #ffb45e;">10 minutes</strong>.</p>
+                <p style="color: #b2c3e0; font-size: 12px;">If you didn't request this, please ignore this email.</p>
+                
+                <hr style="border-color: rgba(255,255,255,0.1); margin: 25px 0 15px;">
+                <p style="color: #6f82ac; font-size: 12px; text-align: center;">DriveSafe Guardian - Driver Drowsiness Alert System</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        msg = MIMEMultipart('alternative')
+        msg['From'] = EMAIL_FROM
+        msg['To'] = email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'html'))
+        
+        context = ssl.create_default_context()
+        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
+        server.starttls(context=context)
+        server.login(EMAIL_USER, EMAIL_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        
+        print(f"✅ OTP email sent to {email}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to send OTP email: {e}")
+        return False
+
+def send_password_reset_email(email, code, name='User'):
+    """Send password reset OTP via email"""
+    try:
+        if not EMAIL_USER or not EMAIL_PASSWORD:
+            print("⚠️ Email not configured")
+            return False
+        
+        subject = "DriveSafe Guardian - Password Reset"
+        body = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+        </head>
+        <body style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f5f5f5; padding: 20px;">
+            <div style="background-color: #0a0f1e; border-radius: 24px; padding: 40px; color: #fff; box-shadow: 0 20px 40px rgba(0,0,0,0.1);">
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #ffb55a, #ff6a4d); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px;">
+                        <span style="font-size: 30px;">🔐</span>
+                    </div>
+                    <h1 style="margin: 0; font-size: 28px; background: linear-gradient(135deg, #ffe7c4, #ffcf9a); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">DriveSafe Guardian</h1>
+                    <p style="color: #b2c3e0; margin-top: 10px;">Password Reset Request</p>
+                </div>
+                
+                <p style="color: #fff; font-size: 16px;">Hello <strong>{name}</strong>,</p>
+                <p style="color: #b2c3e0;">We received a request to reset your password. Use the verification code below:</p>
+                
+                <div style="background: rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 20px; text-align: center; margin: 25px 0; border: 1px solid rgba(255, 180, 60, 0.3);">
+                    <span style="font-size: 48px; font-weight: bold; letter-spacing: 8px; color: #ffb45e;">{code}</span>
+                </div>
+                
+                <p style="color: #b2c3e0;">This code will expire in <strong style="color: #ffb45e;">10 minutes</strong>.</p>
+                <p style="color: #b2c3e0;">If you didn't request this, please ignore this email.</p>
+                
+                <hr style="border-color: rgba(255,255,255,0.1); margin: 25px 0 15px;">
+                <p style="color: #6f82ac; font-size: 12px; text-align: center;">DriveSafe Guardian - Driver Drowsiness Alert System</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        msg = MIMEMultipart('alternative')
+        msg['From'] = EMAIL_FROM
+        msg['To'] = email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'html'))
+        
+        context = ssl.create_default_context()
+        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
+        server.starttls(context=context)
+        server.login(EMAIL_USER, EMAIL_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        
+        print(f"✅ Password reset email sent to {email}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to send password reset email: {e}")
+        return False
+
+#end Region
+
 def verify_google_token_hybrid(token, client_id):
     """
     Verify Google token using Google's library but with custom HTTP transport.
@@ -1007,134 +1136,6 @@ def invalidate_session(guardian_id, token=None):
 
 #End Region
 
-#region Email OTP
-def generate_otp():
-    """Generate a 6-digit OTP code"""
-    return ''.join(random.choices(string.digits, k=6))
-
-def send_password_reset_email(email, code, name='User'):
-    """Send password reset OTP via email"""
-    try:
-        if not EMAIL_USER or not EMAIL_PASSWORD:
-            print("⚠️ Email not configured")
-            return False
-        
-        subject = "EyeDrive - Password Reset"
-        body = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-        </head>
-        <body style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f5f5f5; padding: 20px;">
-            <div style="background-color: #0a0f1e; border-radius: 24px; padding: 40px; color: #fff; box-shadow: 0 20px 40px rgba(0,0,0,0.1);">
-                <div style="text-align: center; margin-bottom: 30px;">
-                    <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #ffb55a, #ff6a4d); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px;">
-                        <span style="font-size: 30px;">🔐</span>
-                    </div>
-                    <h1 style="margin: 0; font-size: 28px; background: linear-gradient(135deg, #ffe7c4, #ffcf9a); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">DriveSafe Guardian</h1>
-                    <p style="color: #b2c3e0; margin-top: 10px;">Password Reset Request</p>
-                </div>
-                
-                <p style="color: #fff; font-size: 16px;">Hello <strong>{name}</strong>,</p>
-                <p style="color: #b2c3e0;">We received a request to reset your password. Use the verification code below:</p>
-                
-                <div style="background: rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 20px; text-align: center; margin: 25px 0; border: 1px solid rgba(255, 180, 60, 0.3);">
-                    <span style="font-size: 48px; font-weight: bold; letter-spacing: 8px; color: #ffb45e;">{code}</span>
-                </div>
-                
-                <p style="color: #b2c3e0;">This code will expire in <strong style="color: #ffb45e;">10 minutes</strong>.</p>
-                <p style="color: #b2c3e0;">If you didn't request this, please ignore this email.</p>
-                
-                <hr style="border-color: rgba(255,255,255,0.1); margin: 25px 0 15px;">
-                <p style="color: #6f82ac; font-size: 12px; text-align: center;">DriveSafe Guardian - Driver Drowsiness Alert System</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        msg = MIMEMultipart('alternative')
-        msg['From'] = EMAIL_FROM
-        msg['To'] = email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'html'))
-        
-        context = ssl.create_default_context()
-        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
-        server.starttls(context=context)
-        server.login(EMAIL_USER, EMAIL_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        
-        print(f"✅ Password reset email sent to {email}")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Failed to send password reset email: {e}")
-        return False
-
-def send_otp_via_email(email, code, name='User'):
-    """Send OTP via email"""
-    try:
-        if not EMAIL_USER or not EMAIL_PASSWORD:
-            print("⚠️ Email not configured - please add EMAIL_USER and EMAIL_PASSWORD to environment")
-            return False
-        
-        subject = "DriveSafe Guardian - Verification Code"
-        body = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-        </head>
-        <body style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f5f5f5; padding: 20px;">
-            <div style="background-color: #0a0f1e; border-radius: 24px; padding: 40px; color: #fff; box-shadow: 0 20px 40px rgba(0,0,0,0.1);">
-                <div style="text-align: center; margin-bottom: 30px;">
-                    <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #ffb55a, #ff6a4d); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px;">
-                        <span style="font-size: 30px;">🚗</span>
-                    </div>
-                    <h1 style="margin: 0; font-size: 28px; background: linear-gradient(135deg, #ffe7c4, #ffcf9a); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">DriveSafe Guardian</h1>
-                    <p style="color: #b2c3e0; margin-top: 10px;">Verify your account</p>
-                </div>
-                
-                <p style="color: #fff; font-size: 16px;">Hello <strong>{name}</strong>,</p>
-                <p style="color: #b2c3e0;">Your verification code is:</p>
-                
-                <div style="background: rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 20px; text-align: center; margin: 25px 0; border: 1px solid rgba(255, 180, 60, 0.3);">
-                    <span style="font-size: 48px; font-weight: bold; letter-spacing: 8px; color: #ffb45e;">{code}</span>
-                </div>
-                
-                <p style="color: #b2c3e0;">This code will expire in <strong style="color: #ffb45e;">10 minutes</strong>.</p>
-                <p style="color: #b2c3e0; font-size: 12px;">If you didn't request this, please ignore this email.</p>
-                
-                <hr style="border-color: rgba(255,255,255,0.1); margin: 25px 0 15px;">
-                <p style="color: #6f82ac; font-size: 12px; text-align: center;">DriveSafe Guardian - Driver Drowsiness Alert System</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        msg = MIMEMultipart('alternative')
-        msg['From'] = EMAIL_FROM
-        msg['To'] = email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'html'))
-        
-        context = ssl.create_default_context()
-        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
-        server.starttls(context=context)
-        server.login(EMAIL_USER, EMAIL_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        
-        print(f"✅ OTP email sent to {email}")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Failed to send OTP email: {e}")
-        return False
-
-#end Region
 
 #region Forgot Password
 
@@ -1150,13 +1151,10 @@ def forgot_password():
         return response, 200
     
     try:
-        # Log the request
         print("🔵 [FORGOT PASSWORD] Endpoint called")
         
-        # Get JSON data
         data = request.get_json()
         if not data:
-            print("❌ No JSON data received")
             return jsonify({
                 'success': False,
                 'error': 'Invalid request. Please provide email address.'
@@ -1182,14 +1180,12 @@ def forgot_password():
         
         # Rate limiting checks
         if rate_limit_exceeded(f"ip_{ip}", limit=5, window=3600):
-            print(f"⚠️ Rate limit exceeded for IP: {ip}")
             return jsonify({
                 'success': False,
                 'error': 'Too many requests. Please try again later.'
             }), 429
         
         if rate_limit_exceeded(f"email_{email}", limit=3, window=3600):
-            print(f"⚠️ Rate limit exceeded for email: {email}")
             return jsonify({
                 'success': False,
                 'error': 'Too many reset requests for this email. Please try again later.'
@@ -1223,11 +1219,8 @@ def forgot_password():
         # Handle non-existent email
         if not user_result.data or len(user_result.data) == 0:
             print(f"⚠️ Password reset requested for non-existent email: {email}")
-            
-            # Record failed attempt (to prevent brute force email discovery)
             record_failed_attempt(email)
             
-            # Return error for non-existent email
             return jsonify({
                 'success': False,
                 'error': 'No account found with this email address. Please check and try again.',
@@ -1246,7 +1239,7 @@ def forgot_password():
                 'error': f'This account uses {auth_provider} login. Please sign in with {auth_provider}.'
             }), 400
         
-        # Clear any previous failed attempts for this email (since email exists)
+        # Clear any previous failed attempts
         clear_reset_attempts(email)
         
         # Invalidate previous unused tokens
@@ -1258,7 +1251,6 @@ def forgot_password():
                 .execute()
         except Exception as e:
             print(f"⚠️ Error invalidating old tokens: {e}")
-            # Continue anyway - table might not exist yet
         
         # Generate OTP and token
         otp_code = generate_otp()
@@ -1285,11 +1277,9 @@ def forgot_password():
                 'expires_at': expires_at.isoformat(),
                 'used': False
             }
-            
             supabase.table('password_reset_tokens').insert(reset_data).execute()
         except Exception as e:
             print(f"❌ Error storing reset token: {e}")
-            # If table doesn't exist, create it (you'll need to run SQL manually)
             return jsonify({
                 'success': False,
                 'error': 'System error. Please contact support.'
@@ -1407,18 +1397,19 @@ def reset_password():
                 'error': 'Missing required fields'
             }), 400
         
-        if len(new_password) < 6:
+        # Validate password strength
+        is_valid, error_msg = validate_password_strength(new_password)
+        if not is_valid:
             return jsonify({
                 'success': False,
-                'error': 'Password must be at least 6 characters'
+                'error': error_msg
             }), 400
         
         # Verify the session token (from verified reset)
-        # Find the most recent reset request for this guardian
         reset_result = supabase.table('password_reset_tokens') \
             .select('*') \
             .eq('guardian_id', guardian_id) \
-            .eq('used', False) \
+            .eq('used', True) \
             .order('created_at', desc=True) \
             .limit(1) \
             .execute()
@@ -1429,24 +1420,42 @@ def reset_password():
                 'error': 'Invalid reset session'
             }), 400
         
+        # Check password history (last 5 passwords)
+        history_result = supabase.table('password_history') \
+            .select('password_hash') \
+            .eq('guardian_id', int(guardian_id)) \
+            .order('created_at', desc=True) \
+            .limit(5) \
+            .execute()
+        
+        cleaned_password = clean_password(new_password)
+        new_hash = hash_password(cleaned_password)
+        
+        if history_result.data:
+            for h in history_result.data:
+                if verify_password(new_password, h['password_hash']):
+                    return jsonify({
+                        'success': False,
+                        'error': 'You cannot reuse a recent password. Please choose a different password.'
+                    }), 400
+        
         # Mark the reset token as used
         supabase.table('password_reset_tokens') \
             .update({'used': True}) \
             .eq('guardian_id', guardian_id) \
             .execute()
         
-        # Hash the new password
-        cleaned_password = clean_password(new_password)
-        password_hash = hash_password(cleaned_password)
-        
         # Update user's password
         supabase.table('guardians') \
             .update({
-                'password_hash': password_hash,
+                'password_hash': new_hash,
                 'last_password_change': datetime.now().isoformat()
             }) \
             .eq('guardian_id', guardian_id) \
             .execute()
+        
+        # Save to password history
+        save_password_history(guardian_id, new_hash)
         
         # Invalidate all existing sessions
         supabase.table('session_tokens') \
@@ -1455,8 +1464,8 @@ def reset_password():
             .execute()
         
         # Clear memory cache
-        if guardian_id in active_sessions:
-            del active_sessions[guardian_id]
+        if str(guardian_id) in active_sessions:
+            del active_sessions[str(guardian_id)]
         
         # Log activity
         log_activity(guardian_id, 'PASSWORD_RESET', 'Password reset via forgot password')
@@ -1477,67 +1486,6 @@ def reset_password():
             'error': str(e)
         }), 500
 
-
-def send_password_reset_email(email, code, name='User'):
-    """Send password reset OTP via email"""
-    try:
-        if not EMAIL_USER or not EMAIL_PASSWORD:
-            print("⚠️ Email not configured")
-            return False
-        
-        subject = "EyeDrive - Password Reset"
-        body = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-        </head>
-        <body style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f5f5f5; padding: 20px;">
-            <div style="background-color: #0a0f1e; border-radius: 24px; padding: 40px; color: #fff; box-shadow: 0 20px 40px rgba(0,0,0,0.1);">
-                <div style="text-align: center; margin-bottom: 30px;">
-                    <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #ffb55a, #ff6a4d); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px;">
-                        <span style="font-size: 30px;">🔐</span>
-                    </div>
-                    <h1 style="margin: 0; font-size: 28px; background: linear-gradient(135deg, #ffe7c4, #ffcf9a); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">DriveSafe Guardian</h1>
-                    <p style="color: #b2c3e0; margin-top: 10px;">Password Reset Request</p>
-                </div>
-                
-                <p style="color: #fff; font-size: 16px;">Hello <strong>{name}</strong>,</p>
-                <p style="color: #b2c3e0;">We received a request to reset your password. Use the verification code below:</p>
-                
-                <div style="background: rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 20px; text-align: center; margin: 25px 0; border: 1px solid rgba(255, 180, 60, 0.3);">
-                    <span style="font-size: 48px; font-weight: bold; letter-spacing: 8px; color: #ffb45e;">{code}</span>
-                </div>
-                
-                <p style="color: #b2c3e0;">This code will expire in <strong style="color: #ffb45e;">10 minutes</strong>.</p>
-                <p style="color: #b2c3e0;">If you didn't request this, please ignore this email.</p>
-                
-                <hr style="border-color: rgba(255,255,255,0.1); margin: 25px 0 15px;">
-                <p style="color: #6f82ac; font-size: 12px; text-align: center;">DriveSafe Guardian - Driver Drowsiness Alert System</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        msg = MIMEMultipart('alternative')
-        msg['From'] = EMAIL_FROM
-        msg['To'] = email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'html'))
-        
-        context = ssl.create_default_context()
-        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
-        server.starttls(context=context)
-        server.login(EMAIL_USER, EMAIL_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        
-        print(f"✅ Password reset email sent to {email}")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Failed to send password reset email: {e}")
-        return False
 #end Region
 
 #region Guardian Auth
