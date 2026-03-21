@@ -1189,13 +1189,16 @@ def forgot_password():
                 'error': 'Database error. Please try again later.'
             }), 500
         
-        # Handle non-existent email
+        # Handle non-existent email - DON'T expose if email exists
         if not user_result.data or len(user_result.data) == 0:
             print(f"⚠️ Password reset requested for non-existent email: {email}")
+            # Return 200 with success=False but keep modal open
             return jsonify({
                 'success': False,
-                'error': 'No account found with this email address.'
-            }), 404  # ← Changed to 404 for clarity
+                'error': 'No account found with this email address. Please check and try again.',
+                'email_not_found': True,
+                'keep_modal_open': True  # Tell frontend to keep modal open
+            }), 200  # Use 200 to avoid modal closing
         
         user = user_result.data[0]
         guardian_id = user['guardian_id']
@@ -1204,34 +1207,40 @@ def forgot_password():
         
         print(f"✅ User found: {full_name}, auth_provider: {auth_provider}")
         
-        # Check for social login accounts
+        # Check for social login accounts - Return with special flag
         if auth_provider == 'facebook':
             print(f"⚠️ Facebook account detected for {email}")
             return jsonify({
                 'success': False,
                 'error': 'This account uses Facebook login. Please sign in with Facebook.',
-                'auth_provider': 'facebook'
-            }), 400
+                'auth_provider': 'facebook',
+                'keep_modal_open': False,  # Can close modal since we redirect
+                'redirect_to_facebook': True
+            }), 200
         
         if auth_provider == 'google':
             print(f"⚠️ Google account detected for {email}")
             return jsonify({
                 'success': False,
                 'error': 'This account uses Google login. Please sign in with Google.',
-                'auth_provider': 'google'
-            }), 400
+                'auth_provider': 'google',
+                'keep_modal_open': False,
+                'redirect_to_google': True
+            }), 200
         
         # Rate limiting checks
         if rate_limit_exceeded(f"ip_{ip}", limit=5, window=3600):
             return jsonify({
                 'success': False,
-                'error': 'Too many requests. Please try again later.'
+                'error': 'Too many requests. Please try again later.',
+                'keep_modal_open': True
             }), 429
         
         if rate_limit_exceeded(f"email_{email}", limit=3, window=3600):
             return jsonify({
                 'success': False,
-                'error': 'Too many reset requests for this email. Please try again later.'
+                'error': 'Too many reset requests for this email. Please try again later.',
+                'keep_modal_open': True
             }), 429
         
         # Clear any previous failed attempts
@@ -1254,7 +1263,7 @@ def forgot_password():
         expires_at = datetime.now() + timedelta(minutes=10)
         
         print(f"📧 Attempting to send OTP to {email}")
-        print(f"   OTP Code: {otp_code}")  # For debugging
+        print(f"   OTP Code: {otp_code}")
         
         # Send email
         sent = send_password_reset_email(email, otp_code, full_name)
@@ -1263,7 +1272,8 @@ def forgot_password():
             print(f"❌ Failed to send password reset email to {email}")
             return jsonify({
                 'success': False,
-                'error': 'Unable to send email. Please check your email address or try again later.'
+                'error': 'Unable to send email. Please check your email address or try again later.',
+                'keep_modal_open': True
             }), 500
         
         print(f"✅ Email sent successfully to {email}")
@@ -1281,23 +1291,22 @@ def forgot_password():
             }
             result = supabase.table('password_reset_tokens').insert(reset_data).execute()
             print(f"✅ Reset token stored for {email}, token: {reset_token[:20]}...")
-            print(f"   Insert result: {result.data if result.data else 'No data'}")
         except Exception as e:
             print(f"❌ Error storing reset token: {e}")
             import traceback
             traceback.print_exc()
             # Still return success because email was sent
-            # User can still use the OTP even if storage fails
             pass
         
         print(f"✅ Password reset OTP sent to {email}")
         
-        # IMPORTANT: Return success with reset_token
+        # Return success with reset_token
         return jsonify({
             'success': True,
             'reset_token': reset_token,
             'message': 'Reset code sent to your email',
-            'expires_in': 600
+            'expires_in': 600,
+            'keep_modal_open': True  
         })
         
     except Exception as e:
@@ -1306,7 +1315,8 @@ def forgot_password():
         traceback.print_exc()
         return jsonify({
             'success': False,
-            'error': 'An error occurred. Please try again.'
+            'error': 'An error occurred. Please try again.',
+            'keep_modal_open': True
         }), 500
 
 
