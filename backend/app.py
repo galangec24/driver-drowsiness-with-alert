@@ -1137,11 +1137,10 @@ def send_otp_via_email(email, code, name='User'):
 #end Region
 
 #region Forgot Password
-# ==================== FORGOT PASSWORD WITH OTP ====================
 
 @app.route('/api/forgot-password', methods=['POST', 'OPTIONS'])
 def forgot_password():
-    """Send OTP to user's email for password reset"""
+    """Send OTP to user's email for password reset with rate limiting"""
     if request.method == 'OPTIONS':
         response = jsonify({'success': True})
         response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
@@ -1153,6 +1152,7 @@ def forgot_password():
     try:
         data = request.json
         email = data.get('email', '').strip().lower()
+        ip = request.remote_addr
         
         if not email:
             return jsonify({
@@ -1160,51 +1160,102 @@ def forgot_password():
                 'error': 'Email address is required'
             }), 400
         
+        # Validate email format
+        if not re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', email):
+            return jsonify({
+                'success': False,
+                'error': 'Please enter a valid email address'
+            }), 400
+        
+        # Rate limiting checks
+        if rate_limit_exceeded(f"ip_{ip}", limit=5, window=3600):
+            print(f"⚠️ Rate limit exceeded for IP: {ip}")
+            return jsonify({
+                'success': False,
+                'error': 'Too many requests. Please try again later.'
+            }), 429
+        
+        if rate_limit_exceeded(f"email_{email}", limit=3, window=3600):
+            print(f"⚠️ Rate limit exceeded for email: {email}")
+            return jsonify({
+                'success': False,
+                'error': 'Too many reset requests for this email. Please try again later.'
+            }), 429
+        
+        # Check if account is locked due to failed attempts
+        is_locked, lockout_until = check_reset_attempts(email)
+        if is_locked:
+            minutes_left = int((lockout_until - datetime.now()).total_seconds() / 60) + 1
+            return jsonify({
+                'success': False,
+                'error': f'Too many failed attempts. Account locked for {minutes_left} minutes.'
+            }), 429
+        
         # Check if email exists in database
         user_result = supabase.table('guardians') \
             .select('guardian_id, full_name, email, auth_provider') \
             .eq('email', email) \
             .execute()
         
+        # ==================== CRITICAL: Handle unregistered email ====================
         if not user_result.data or len(user_result.data) == 0:
-            # For security, don't reveal if email exists
+            # Email does NOT exist in database
             print(f"⚠️ Password reset requested for non-existent email: {email}")
+            
+            # Record failed attempt (to prevent brute force email discovery)
+            is_locked_now = record_failed_attempt(email)
+            
+            # Return error so frontend knows this email is not registered
+            # For security, we don't reveal that the email doesn't exist,
+            # but we return an error that the frontend can handle
             return jsonify({
-                'success': True,
-                'message': 'If an account exists with this email, you will receive a reset code.'
-            })
+                'success': False,
+                'error': 'No account found with this email address. Please check and try again.',
+                'email_not_found': True  # Flag for frontend to handle
+            }), 404
         
         user = user_result.data[0]
         guardian_id = user['guardian_id']
         full_name = user['full_name']
         auth_provider = user.get('auth_provider', 'phone')
         
-        # For social logins (Google/Facebook), suggest using their native login
+        # Social logins use their native login
         if auth_provider in ['google', 'facebook']:
             return jsonify({
                 'success': False,
                 'error': f'This account uses {auth_provider} login. Please sign in with {auth_provider}.'
             }), 400
         
-        # Generate OTP code and token
+        # Clear any previous failed attempts for this email (since email exists)
+        clear_reset_attempts(email)
+        
+        # Invalidate previous unused tokens
+        supabase.table('password_reset_tokens') \
+            .update({'used': True}) \
+            .eq('guardian_id', guardian_id) \
+            .eq('used', False) \
+            .execute()
+        
+        # Generate OTP and token
         otp_code = generate_otp()
         reset_token = secrets.token_urlsafe(32)
         expires_at = datetime.now() + timedelta(minutes=10)
         
-        # Send OTP via email
+        # Send email
         sent = send_password_reset_email(email, otp_code, full_name)
         
         if not sent:
+            print(f"❌ Failed to send password reset email to {email}")
             return jsonify({
                 'success': False,
-                'error': 'Failed to send reset code. Please try again.'
+                'error': 'Unable to send email. Please try again later.'
             }), 500
         
-        # Store reset token in database
+        # Store reset token
         reset_data = {
             'guardian_id': int(guardian_id),
             'email': email,
-            'token': reset_token,   
+            'token': reset_token,
             'code': otp_code,
             'expires_at': expires_at.isoformat(),
             'used': False
@@ -1212,7 +1263,7 @@ def forgot_password():
         
         supabase.table('password_reset_tokens').insert(reset_data).execute()
         
-        print(f"✅ Password reset OTP sent to {email} for user {full_name}")
+        print(f"✅ Password reset OTP sent to {email}")
         
         return jsonify({
             'success': True,
@@ -1227,7 +1278,7 @@ def forgot_password():
         traceback.print_exc()
         return jsonify({
             'success': False,
-            'error': str(e)
+            'error': 'An error occurred. Please try again.'
         }), 500
 
 
