@@ -842,6 +842,8 @@ def send_password_reset_email(email, code, name='User'):
             print("⚠️ Email not configured")
             return False
         
+        print(f"📧 Sending password reset email to {email}")
+        
         subject = "DriveSafe Guardian - Password Reset"
         body = f"""
         <!DOCTYPE html>
@@ -883,9 +885,15 @@ def send_password_reset_email(email, code, name='User'):
         msg.attach(MIMEText(body, 'html'))
         
         context = ssl.create_default_context()
-        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
+        
+        print(f"   Connecting to SMTP server {EMAIL_HOST}:{EMAIL_PORT}")
+        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT, timeout=30)
         server.starttls(context=context)
+        
+        print(f"   Logging in as {EMAIL_USER}")
         server.login(EMAIL_USER, EMAIL_PASSWORD)
+        
+        print(f"   Sending email...")
         server.send_message(msg)
         server.quit()
         
@@ -894,6 +902,8 @@ def send_password_reset_email(email, code, name='User'):
         
     except Exception as e:
         print(f"❌ Failed to send password reset email: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 #end Region
@@ -1179,23 +1189,24 @@ def forgot_password():
                 'error': 'Database error. Please try again later.'
             }), 500
         
-        # Handle non-existent email - don't reveal if email exists
+        # Handle non-existent email
         if not user_result.data or len(user_result.data) == 0:
             print(f"⚠️ Password reset requested for non-existent email: {email}")
-            # Return generic message for security
             return jsonify({
                 'success': False,
-                'error': 'If an account exists with this email, a reset code will be sent.'
-            }), 200
+                'error': 'No account found with this email address.'
+            }), 404  # ← Changed to 404 for clarity
         
         user = user_result.data[0]
         guardian_id = user['guardian_id']
         full_name = user['full_name']
         auth_provider = user.get('auth_provider', 'phone')
         
-        # ========== CRITICAL: Check for social login accounts ==========
+        print(f"✅ User found: {full_name}, auth_provider: {auth_provider}")
+        
+        # Check for social login accounts
         if auth_provider == 'facebook':
-            print(f"⚠️ [FORGOT PASSWORD] Facebook account detected for {email}")
+            print(f"⚠️ Facebook account detected for {email}")
             return jsonify({
                 'success': False,
                 'error': 'This account uses Facebook login. Please sign in with Facebook.',
@@ -1203,14 +1214,13 @@ def forgot_password():
             }), 400
         
         if auth_provider == 'google':
-            print(f"⚠️ [FORGOT PASSWORD] Google account detected for {email}")
+            print(f"⚠️ Google account detected for {email}")
             return jsonify({
                 'success': False,
                 'error': 'This account uses Google login. Please sign in with Google.',
                 'auth_provider': 'google'
             }), 400
         
-        # ========== Only proceed for phone/email accounts ==========
         # Rate limiting checks
         if rate_limit_exceeded(f"ip_{ip}", limit=5, window=3600):
             return jsonify({
@@ -1224,15 +1234,6 @@ def forgot_password():
                 'error': 'Too many reset requests for this email. Please try again later.'
             }), 429
         
-        # Check if account is locked due to failed attempts
-        is_locked, lockout_until = check_reset_attempts(email)
-        if is_locked:
-            minutes_left = int((lockout_until - datetime.now()).total_seconds() / 60) + 1
-            return jsonify({
-                'success': False,
-                'error': f'Too many failed attempts. Account locked for {minutes_left} minutes.'
-            }), 429
-        
         # Clear any previous failed attempts
         clear_reset_attempts(email)
         
@@ -1243,6 +1244,7 @@ def forgot_password():
                 .eq('guardian_id', guardian_id) \
                 .eq('used', False) \
                 .execute()
+            print(f"✅ Invalidated old tokens for guardian {guardian_id}")
         except Exception as e:
             print(f"⚠️ Error invalidating old tokens: {e}")
         
@@ -1251,6 +1253,9 @@ def forgot_password():
         reset_token = secrets.token_urlsafe(32)
         expires_at = datetime.now() + timedelta(minutes=10)
         
+        print(f"📧 Attempting to send OTP to {email}")
+        print(f"   OTP Code: {otp_code}")  # For debugging
+        
         # Send email
         sent = send_password_reset_email(email, otp_code, full_name)
         
@@ -1258,8 +1263,10 @@ def forgot_password():
             print(f"❌ Failed to send password reset email to {email}")
             return jsonify({
                 'success': False,
-                'error': 'Unable to send email. Please try again later.'
+                'error': 'Unable to send email. Please check your email address or try again later.'
             }), 500
+        
+        print(f"✅ Email sent successfully to {email}")
         
         # Store reset token
         try:
@@ -1269,15 +1276,23 @@ def forgot_password():
                 'token': reset_token,
                 'code': otp_code,
                 'expires_at': expires_at.isoformat(),
-                'used': False
+                'used': False,
+                'created_at': datetime.now().isoformat()
             }
-            supabase.table('password_reset_tokens').insert(reset_data).execute()
+            result = supabase.table('password_reset_tokens').insert(reset_data).execute()
+            print(f"✅ Reset token stored for {email}, token: {reset_token[:20]}...")
+            print(f"   Insert result: {result.data if result.data else 'No data'}")
         except Exception as e:
             print(f"❌ Error storing reset token: {e}")
-            # Continue anyway since email was sent
+            import traceback
+            traceback.print_exc()
+            # Still return success because email was sent
+            # User can still use the OTP even if storage fails
+            pass
         
         print(f"✅ Password reset OTP sent to {email}")
         
+        # IMPORTANT: Return success with reset_token
         return jsonify({
             'success': True,
             'reset_token': reset_token,
@@ -1477,6 +1492,28 @@ def reset_password():
             'error': str(e)
         }), 500
 
+
+@app.route('/api/test-email', methods=['GET'])
+def test_email():
+    """Test email sending functionality"""
+    try:
+        email = request.args.get('email', 'test@example.com')
+        code = '123456'
+        name = 'Test User'
+        
+        sent = send_password_reset_email(email, code, name)
+        
+        return jsonify({
+            'success': sent,
+            'email': email,
+            'message': 'Email sent' if sent else 'Failed to send email',
+            'email_configured': bool(EMAIL_USER and EMAIL_PASSWORD)
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 #end Region
 
 #region Guardian Auth
