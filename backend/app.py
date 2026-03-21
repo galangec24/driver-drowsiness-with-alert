@@ -1163,6 +1163,54 @@ def forgot_password():
                 'error': 'Please enter a valid email address'
             }), 400
         
+        # Check if email exists in database
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
+        
+        try:
+            user_result = supabase.table('guardians') \
+                .select('guardian_id, full_name, email, auth_provider') \
+                .eq('email', email) \
+                .execute()
+        except Exception as db_error:
+            print(f"❌ Database error: {db_error}")
+            return jsonify({
+                'success': False,
+                'error': 'Database error. Please try again later.'
+            }), 500
+        
+        # Handle non-existent email - don't reveal if email exists
+        if not user_result.data or len(user_result.data) == 0:
+            print(f"⚠️ Password reset requested for non-existent email: {email}")
+            # Return generic message for security
+            return jsonify({
+                'success': False,
+                'error': 'If an account exists with this email, a reset code will be sent.'
+            }), 200
+        
+        user = user_result.data[0]
+        guardian_id = user['guardian_id']
+        full_name = user['full_name']
+        auth_provider = user.get('auth_provider', 'phone')
+        
+        # ========== CRITICAL: Check for social login accounts ==========
+        if auth_provider == 'facebook':
+            print(f"⚠️ [FORGOT PASSWORD] Facebook account detected for {email}")
+            return jsonify({
+                'success': False,
+                'error': 'This account uses Facebook login. Please sign in with Facebook.',
+                'auth_provider': 'facebook'
+            }), 400
+        
+        if auth_provider == 'google':
+            print(f"⚠️ [FORGOT PASSWORD] Google account detected for {email}")
+            return jsonify({
+                'success': False,
+                'error': 'This account uses Google login. Please sign in with Google.',
+                'auth_provider': 'google'
+            }), 400
+        
+        # ========== Only proceed for phone/email accounts ==========
         # Rate limiting checks
         if rate_limit_exceeded(f"ip_{ip}", limit=5, window=3600):
             return jsonify({
@@ -1184,45 +1232,6 @@ def forgot_password():
                 'success': False,
                 'error': f'Too many failed attempts. Account locked for {minutes_left} minutes.'
             }), 429
-        
-        # Check if email exists in database
-        if not supabase:
-            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
-        
-        try:
-            user_result = supabase.table('guardians') \
-                .select('guardian_id, full_name, email, auth_provider') \
-                .eq('email', email) \
-                .execute()
-        except Exception as db_error:
-            print(f"❌ Database error: {db_error}")
-            return jsonify({
-                'success': False,
-                'error': 'Database error. Please try again later.'
-            }), 500
-        
-        # Handle non-existent email
-        if not user_result.data or len(user_result.data) == 0:
-            print(f"⚠️ Password reset requested for non-existent email: {email}")
-            record_failed_attempt(email)
-            
-            return jsonify({
-                'success': False,
-                'error': 'No account found with this email address. Please check and try again.',
-                'email_not_found': True
-            }), 404
-        
-        user = user_result.data[0]
-        guardian_id = user['guardian_id']
-        full_name = user['full_name']
-        auth_provider = user.get('auth_provider', 'phone')
-        
-        # Social logins use their native login
-        if auth_provider in ['google', 'facebook']:
-            return jsonify({
-                'success': False,
-                'error': f'This account uses {auth_provider} login. Please sign in with {auth_provider}.'
-            }), 400
         
         # Clear any previous failed attempts
         clear_reset_attempts(email)
@@ -1265,10 +1274,7 @@ def forgot_password():
             supabase.table('password_reset_tokens').insert(reset_data).execute()
         except Exception as e:
             print(f"❌ Error storing reset token: {e}")
-            return jsonify({
-                'success': False,
-                'error': 'System error. Please contact support.'
-            }), 500
+            # Continue anyway since email was sent
         
         print(f"✅ Password reset OTP sent to {email}")
         
