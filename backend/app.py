@@ -1150,9 +1150,22 @@ def forgot_password():
         return response, 200
     
     try:
-        data = request.json
+        # Log the request
+        print("🔵 [FORGOT PASSWORD] Endpoint called")
+        
+        # Get JSON data
+        data = request.get_json()
+        if not data:
+            print("❌ No JSON data received")
+            return jsonify({
+                'success': False,
+                'error': 'Invalid request. Please provide email address.'
+            }), 400
+        
         email = data.get('email', '').strip().lower()
         ip = request.remote_addr
+        
+        print(f"📧 [FORGOT PASSWORD] Email: {email}, IP: {ip}")
         
         if not email:
             return jsonify({
@@ -1192,26 +1205,33 @@ def forgot_password():
             }), 429
         
         # Check if email exists in database
-        user_result = supabase.table('guardians') \
-            .select('guardian_id, full_name, email, auth_provider') \
-            .eq('email', email) \
-            .execute()
+        if not supabase:
+            return jsonify({'success': False, 'error': 'Database not initialized'}), 500
         
-        # ==================== CRITICAL: Handle unregistered email ====================
+        try:
+            user_result = supabase.table('guardians') \
+                .select('guardian_id, full_name, email, auth_provider') \
+                .eq('email', email) \
+                .execute()
+        except Exception as db_error:
+            print(f"❌ Database error: {db_error}")
+            return jsonify({
+                'success': False,
+                'error': 'Database error. Please try again later.'
+            }), 500
+        
+        # Handle non-existent email
         if not user_result.data or len(user_result.data) == 0:
-            # Email does NOT exist in database
             print(f"⚠️ Password reset requested for non-existent email: {email}")
             
             # Record failed attempt (to prevent brute force email discovery)
-            is_locked_now = record_failed_attempt(email)
+            record_failed_attempt(email)
             
-            # Return error so frontend knows this email is not registered
-            # For security, we don't reveal that the email doesn't exist,
-            # but we return an error that the frontend can handle
+            # Return error for non-existent email
             return jsonify({
                 'success': False,
                 'error': 'No account found with this email address. Please check and try again.',
-                'email_not_found': True  # Flag for frontend to handle
+                'email_not_found': True
             }), 404
         
         user = user_result.data[0]
@@ -1230,11 +1250,15 @@ def forgot_password():
         clear_reset_attempts(email)
         
         # Invalidate previous unused tokens
-        supabase.table('password_reset_tokens') \
-            .update({'used': True}) \
-            .eq('guardian_id', guardian_id) \
-            .eq('used', False) \
-            .execute()
+        try:
+            supabase.table('password_reset_tokens') \
+                .update({'used': True}) \
+                .eq('guardian_id', guardian_id) \
+                .eq('used', False) \
+                .execute()
+        except Exception as e:
+            print(f"⚠️ Error invalidating old tokens: {e}")
+            # Continue anyway - table might not exist yet
         
         # Generate OTP and token
         otp_code = generate_otp()
@@ -1252,16 +1276,24 @@ def forgot_password():
             }), 500
         
         # Store reset token
-        reset_data = {
-            'guardian_id': int(guardian_id),
-            'email': email,
-            'token': reset_token,
-            'code': otp_code,
-            'expires_at': expires_at.isoformat(),
-            'used': False
-        }
-        
-        supabase.table('password_reset_tokens').insert(reset_data).execute()
+        try:
+            reset_data = {
+                'guardian_id': int(guardian_id),
+                'email': email,
+                'token': reset_token,
+                'code': otp_code,
+                'expires_at': expires_at.isoformat(),
+                'used': False
+            }
+            
+            supabase.table('password_reset_tokens').insert(reset_data).execute()
+        except Exception as e:
+            print(f"❌ Error storing reset token: {e}")
+            # If table doesn't exist, create it (you'll need to run SQL manually)
+            return jsonify({
+                'success': False,
+                'error': 'System error. Please contact support.'
+            }), 500
         
         print(f"✅ Password reset OTP sent to {email}")
         
@@ -4192,69 +4224,6 @@ def register_guardian():
             'success': False,
             'error': 'Registration failed. Please try again.'
         }), 500
-
-#region OTP Forgot Password
-def send_password_reset_email(email, code, name='User'):
-    """Send password reset OTP via email"""
-    try:
-        if not EMAIL_USER or not EMAIL_PASSWORD:
-            print("⚠️ Email not configured")
-            return False
-        
-        subject = "DriveSafe Guardian - Password Reset"
-        body = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-        </head>
-        <body style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f5f5f5; padding: 20px;">
-            <div style="background-color: #0a0f1e; border-radius: 24px; padding: 40px; color: #fff; box-shadow: 0 20px 40px rgba(0,0,0,0.1);">
-                <div style="text-align: center; margin-bottom: 30px;">
-                    <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #ffb55a, #ff6a4d); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 20px;">
-                        <span style="font-size: 30px;">🔐</span>
-                    </div>
-                    <h1 style="margin: 0; font-size: 28px; background: linear-gradient(135deg, #ffe7c4, #ffcf9a); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">DriveSafe Guardian</h1>
-                    <p style="color: #b2c3e0; margin-top: 10px;">Password Reset Request</p>
-                </div>
-                
-                <p style="color: #fff; font-size: 16px;">Hello <strong>{name}</strong>,</p>
-                <p style="color: #b2c3e0;">We received a request to reset your password. Use the verification code below:</p>
-                
-                <div style="background: rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 20px; text-align: center; margin: 25px 0; border: 1px solid rgba(255, 180, 60, 0.3);">
-                    <span style="font-size: 48px; font-weight: bold; letter-spacing: 8px; color: #ffb45e;">{code}</span>
-                </div>
-                
-                <p style="color: #b2c3e0;">This code will expire in <strong style="color: #ffb45e;">10 minutes</strong>.</p>
-                <p style="color: #b2c3e0;">If you didn't request this, please ignore this email.</p>
-                
-                <hr style="border-color: rgba(255,255,255,0.1); margin: 25px 0 15px;">
-                <p style="color: #6f82ac; font-size: 12px; text-align: center;">DriveSafe Guardian - Driver Drowsiness Alert System</p>
-            </div>
-        </body>
-        </html>
-        """
-        
-        msg = MIMEMultipart('alternative')
-        msg['From'] = EMAIL_FROM
-        msg['To'] = email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'html'))
-        
-        context = ssl.create_default_context()
-        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
-        server.starttls(context=context)
-        server.login(EMAIL_USER, EMAIL_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        
-        print(f"✅ Password reset email sent to {email}")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Failed to send password reset email: {e}")
-        return False
-#end Region
 
 #region Guardian Data
 @app.route('/api/guardian/dashboard', methods=['GET'])
