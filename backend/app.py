@@ -517,21 +517,6 @@ def require_admin_auth(f):
     decorated_function.__name__ = f.__name__
     return decorated_function
 
-def rate_limit_exceeded(ip, endpoint_type='general', limit=100):
-    """Check if rate limit is exceeded"""
-    current_time = time.time()
-    key = f"{ip}_{endpoint_type}"
-    
-    if key not in admin_rate_limit:
-        admin_rate_limit[key] = []
-    
-    admin_rate_limit[key] = [t for t in admin_rate_limit[key] if current_time - t < 60]
-    
-    if len(admin_rate_limit[key]) >= limit:
-        return True
-    
-    admin_rate_limit[key].append(current_time)
-    return False
 #end Region
 
 #region Database - Supabase
@@ -6748,40 +6733,6 @@ def startup_tasks():
 
 #end Region
 
-#region Cleanup
-def cleanup_stale_connections():
-    """Background task to clean up stale connections"""
-    while True:
-        time.sleep(30)  # Check every 30 seconds
-        try:
-            current_time = datetime.now()
-            stale_clients = []
-            
-            for client_id, info in connected_clients.items():
-                last_message = info.get('last_message')
-                if last_message:
-                    if isinstance(last_message, datetime):
-                        seconds_since = (current_time - last_message).total_seconds()
-                        # Only clean up if no messages for 2 minutes AND no location for 2 minutes
-                        if seconds_since > 120 and info.get('last_location') is None:
-                            stale_clients.append(client_id)
-                            print(f"🧹 Found stale client {client_id} - {seconds_since:.0f}s no messages")
-            
-            for client_id in stale_clients:
-                try:
-                    socketio.server.disconnect(client_id, silent=True)
-                    if client_id in connected_clients:
-                        del connected_clients[client_id]
-                except:
-                    pass
-            
-            if stale_clients:
-                print(f"   Cleaned up {len(stale_clients)} stale connections")
-                
-        except Exception as e:
-            print(f"⚠️ Error in cleanup task: {e}")
-
-# Start cleanup thread
 cleanup_thread = threading.Thread(target=cleanup_stale_connections, daemon=True)
 cleanup_thread.start()
 print("✅ Connection cleanup task started")
